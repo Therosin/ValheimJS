@@ -32,9 +32,17 @@ const all = readdirSync(pluginsDir, { withFileTypes: true })
     .map((entry) => entry.name);
 
 const targets = names.length > 0 ? names : all;
+
+// dist is a mirror of plugins/: anything not built this run must not survive, or a deleted
+// plugin would keep deploying forever.
+if (names.length === 0 && existsSync(distDir)) {
+    rmSync(distDir, { recursive: true, force: true });
+}
+
 if (targets.length === 0) {
-    console.error("no plugins found under js/plugins");
-    process.exit(1);
+    // An empty plugins folder is a valid state (the runtime ships without examples).
+    console.log("no plugins to bundle");
+    process.exit(0);
 }
 
 mkdirSync(tmpDir, { recursive: true });

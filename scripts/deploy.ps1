@@ -64,8 +64,9 @@ foreach ($file in $runtimeFiles) {
     }
 }
 
+# An empty plugin set is valid: deploying then clears the target instead of adding to it.
 if (-not (Test-Path -LiteralPath $jsOut)) {
-    throw "Missing JS bundles: $jsOut (run 'task bundle' first)"
+    New-Item -ItemType Directory -Force -Path $jsOut | Out-Null
 }
 
 # Only the process this target belongs to can lock the files we are about to replace.
@@ -82,7 +83,12 @@ foreach ($file in $runtimeFiles) {
 }
 
 New-Item -ItemType Directory -Force -Path $pluginRoot | Out-Null
-Copy-Item -Path (Join-Path $jsOut '*') -Destination $pluginRoot -Recurse -Force
+# Mirror, don't merge: a plugin removed from the repo must disappear from the target too.
+Get-ChildItem -LiteralPath $pluginRoot -Force | Remove-Item -Recurse -Force
+$jsItems = @(Get-ChildItem -LiteralPath $jsOut -Force -ErrorAction SilentlyContinue)
+if ($jsItems.Count -gt 0) {
+    Copy-Item -Path (Join-Path $jsOut '*') -Destination $pluginRoot -Recurse -Force
+}
 
 Write-Output "Deployed $Target plugin -> $pluginDir"
 Write-Output "Deployed $Target plugins -> $pluginRoot"

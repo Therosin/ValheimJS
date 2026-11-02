@@ -82,28 +82,45 @@ export default definePlugin({
 `ValheimJS/data/status/status.json` is then readable by a website, a monitor, or a backup
 script — no server access needed.
 
-## Keep a per-player counter
+## Keep a per-player profile
+
+Key on `steamId`, not on the name or the uid: names change and uids are per-connection, while the
+SteamID is stable across sessions (it is also the only identifier you can match against an
+external list).
 
 ```ts
-const FILE = "joins.json";
-
-function load(ctx): Record<string, number> {
-    return JSON.parse(ctx.host.api.fs.read(FILE) ?? "{}");
+interface Profile {
+    id: string;
+    name: string;
+    visits: number;
+    lastSeen: number;
 }
+
+const profiles = (ctx: PluginContext) => ctx.db.use<Profile>("profiles");
 
 export default definePlugin({
     version: "1.0.0",
+
     onPlayerJoin(ctx, player) {
-        const counts = load(ctx);
-        counts[player.name] = (counts[player.name] ?? 0) + 1;
-        ctx.host.api.fs.write(FILE, JSON.stringify(counts, null, 2));
-        ctx.host.api.chat.send(`Welcome back, ${player.name} (visit #${counts[player.name]}).`);
+        const key = ctx.host.api.players.steamId(player.uid) ?? String(player.uid);
+        const profile = profiles(ctx).upsert(
+            key,
+            () => ({ id: key, name: player.name, visits: 0, lastSeen: Date.now() }),
+            (doc) => ({ name: player.name, visits: doc.visits + 1, lastSeen: Date.now() })
+        );
+
+        ctx.host.api.chat.send(
+            profile.visits === 0
+                ? `Welcome to the server, ${player.name}!`
+                : `Welcome back, ${player.name}! Visit #${profile.visits + 1}`
+        );
     }
 });
 ```
 
-The server does not give you a stable id across sessions, so name-based counting is the practical
-option; note the caveat when you publish such a plugin.
+Data lands in `<plugin data>/db/profiles/<steamId>.json`, one document per player, written
+atomically. Non-Steam platforms return `null` from `players.steamId`, which is why the fallback
+to the uid is there — treat those players as unpersistable rather than guessing.
 
 ## Daily announcement without a scheduler
 
