@@ -1,0 +1,122 @@
+# Automation for ValheimJS. Machine-specific paths come from .env; everything else is relative.
+# Deploy targets are read by scripts/deploy.ps1, which keeps this file free of shell quoting.
+
+version: '3'
+
+dotenv:
+  - .env
+
+vars:
+  ps: pwsh
+  project: ValheimJS
+  buildDir: bin/Release/netstandard2.1
+  jsRoot: scripting
+  jsOut: scripting/dist
+
+tasks:
+  default:
+    desc: List tasks
+    cmds:
+      - task --list
+
+  env:check:
+    desc: Show the target paths resolved from .env
+    cmds:
+      - '{{.ps}} -NoProfile -Command "Write-Output ''client plugins: {{.CLIENT_PLUGINS}}''"'
+      - '{{.ps}} -NoProfile -Command "Write-Output ''server bepinex: {{.SERVER_BEPINEX_PATH}}''"'
+      - '{{.ps}} -NoProfile -Command "Write-Output ''server plugins: {{.SERVER_PLUGINS}}''"'
+
+  build:
+    desc: Compile the plugin (no deploy)
+    cmd: dotnet build -c Release
+    generates:
+      - ./{{.buildDir}}/{{.project}}.dll
+    sources:
+      - ./**/*.cs
+      - ./{{.project}}.csproj
+
+  bundle:
+    desc: Bundle TypeScript plugins into scripting/dist
+    dir: '{{.jsRoot}}'
+    cmds:
+      - bun install
+      - bun run build.ts
+    generates:
+      - ./dist/*/plugin.js
+    sources:
+      - ./sdk/**/*.ts
+      - ./plugins/**/*.ts
+      - ./build.ts
+
+  typecheck:
+    desc: TypeScript typecheck
+    dir: '{{.jsRoot}}'
+    cmd: bun run typecheck
+
+  test:
+    desc: JS unit tests
+    dir: '{{.jsRoot}}'
+    cmd: bun test
+
+  check:
+    desc: Typecheck, test, build, bundle
+    cmds:
+      - task: typecheck
+      - task: test
+      - task: build
+      - task: bundle
+
+  deploy:
+    desc: Deploy to client and dedicated server
+    cmds:
+      - task: deploy:client
+      - task: deploy:server
+
+  deploy:client:
+    desc: Push plugin + JS plugins to the client
+    prompt: "Overwrite the client plugin and JS plugin folders?"
+    deps: [build, bundle]
+    preconditions:
+      - sh: 'pwsh -NoProfile -Command "Test-Path ''{{.BEPINEX_PLUGINS}}''"'
+        msg: BEPINEX_PLUGINS is missing from .env
+    cmd: '{{.ps}} -NoProfile -File ./scripts/deploy.ps1 -Target client'
+
+  deploy:server:
+    desc: Push plugin + JS plugins to the dedicated server
+    prompt: "Overwrite the server plugin and JS plugin folders? Close the server first."
+    deps: [build, bundle]
+    preconditions:
+      - sh: 'pwsh -NoProfile -Command "Test-Path ''{{.SERVER_BEPINEX_PATH}}''"'
+        msg: SERVER_BEPINEX_PATH is missing from .env
+    cmd: '{{.ps}} -NoProfile -File ./scripts/deploy.ps1 -Target server'
+
+  start:
+    desc: Start the dedicated server detached
+    vars:
+      name: '{{.name | default "VJSTest"}}'
+      port: '{{.port | default "2466"}}'
+      world: '{{.world | default "VJSTest"}}'
+      password: '{{.password | default "secret123"}}'
+    preconditions:
+      - sh: 'pwsh -NoProfile -Command "Test-Path ''{{.SERVER_GAME_PATH}}/valheim_server.exe''"'
+        msg: SERVER_GAME_PATH does not contain valheim_server.exe
+    cmd: '{{.ps}} -NoProfile -Command "Start-Process -FilePath valheim_server.exe -ArgumentList ''-nolog'',''-name'',''{{.name}}'',''-port'',''{{.port}}'',''-world'',''{{.world}}'',''-password'',''{{.password}}'' -WorkingDirectory ''{{.SERVER_GAME_PATH}}'' -WindowStyle Hidden -PassThru | Select-Object -ExpandProperty Id"'
+
+  stop:
+    desc: Stop the dedicated server
+    prompt: "Kill the dedicated server?"
+    cmd: '{{.ps}} -NoProfile -Command "Stop-Process -Name valheim_server -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 2; ''remaining: '' + (Get-Process valheim_server -ErrorAction SilentlyContinue | Measure-Object).Count"'
+
+  restart:
+    desc: Stop then start the dedicated server
+    cmds:
+      - task: stop
+      - task: start
+
+  logs:server:
+    desc: Follow the dedicated server log
+    cmd: '{{.ps}} -NoProfile -Command "Get-Content ''{{.SERVER_BEPINEX_PATH}}/LogOutput.log'' -Wait -Tail 40"'
+
+  logs:client:
+    desc: Follow the client log
+    cmd: '{{.ps}} -NoProfile -Command "Get-Content ''{{.BEPINEX_PATH}}/LogOutput.log'' -Wait -Tail 40"'

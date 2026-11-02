@@ -1,0 +1,102 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Jint/Acornima must sit next to the plugin in the game: BepInEx resolves plugin-folder
+       assemblies, and the game does not ship them. System.Runtime.CompilerServices.Unsafe 6.0.0
+       is already present in the game, so it stays out of the deploy list. -->
+  <ItemGroup>
+    <None Include="$(PkgJint)\lib\netstandard2.1\Jint.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(PkgAcornima)\lib\netstandard2.1\Acornima.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <!-- Machine-specific target paths, generated from .env by Set-TargetEnv.ps1 (gitignored). -->
+  <Import Project="$(MSBuildProjectDirectory)\target.env.props" Condition="Exists('$(MSBuildProjectDirectory)\target.env.props')" />
+
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>ValheimJS</AssemblyName>
+    <!-- Reverse-DNS plugin id: names the config file and identifies the plugin to BepInEx. -->
+    <BepInExPluginGuid>com.svaltek.valheimjs</BepInExPluginGuid>
+    <Product>ValheimJS</Product>
+    <Version>1.0.0</Version>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Game assemblies are net4x/netstandard2.1 mixtures; conflicts are expected. -->
+    <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277</MSBuildWarningsAsMessages>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <!-- harness/ is its own project (shares src/Js), scripting/ is TypeScript; keep both out of this glob. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);harness/**;scripting/**</DefaultItemExcludes>
+    <RestoreAdditionalProjectSources>
+      https://api.nuget.org/v3/index.json;
+      https://nuget.bepinex.dev/v3/index.json;
+      https://nuget.samboy.dev/v3/index.json
+    </RestoreAdditionalProjectSources>
+    <RootNamespace>ValheimJS</RootNamespace>
+
+    <!-- Override with -p:GameDir=... or the GAME_DIR environment variable (see .env). -->
+    <GameDir Condition="'$(GameDir)' == ''">$(GAME_DIR)</GameDir>
+    <GameDir Condition="'$(GameDir)' == ''">G:\SteamLibrary\SteamApps\common\Valheim</GameDir>
+    <ValheimManagedDir>$(GameDir)\valheim_Data\Managed</ValheimManagedDir>
+
+    <!-- Where the plugin is copied after each build.
+         Precedence: -p:DeployDir=... > BEPINEX_PLUGINS (from .env/environment) > the fallback below. -->
+    <BepInExPlugins Condition="'$(BepInExPlugins)' == ''">$(BEPINEX_PLUGINS)</BepInExPlugins>
+    <DeployDir Condition="'$(DeployDir)' == '' and '$(BepInExPlugins)' != ''">$(BepInExPlugins)\$(AssemblyName)</DeployDir>
+    <DeployDir Condition="'$(DeployDir)' == ''">$(GameDir)\BepInEx\plugins\$(AssemblyName)</DeployDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BepInEx.Analyzers" Version="1.*" PrivateAssets="all" />
+    <PackageReference Include="BepInEx.Core" Version="5.*" />
+    <PackageReference Include="BepInEx.PluginInfoProps" Version="2.*" />
+    <PackageReference Include="Jint" Version="4.17.0" GeneratePathProperty="true" />
+    <PackageReference Include="Acornima" Version="1.7.0" GeneratePathProperty="true" />
+  </ItemGroup>
+
+  <!-- Unity 6 game assemblies (Valheim 0.220.x / Unity 6000.0.75f1) come from the install, not NuGet. -->
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp"><HintPath>$(ValheimManagedDir)\Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Splatform"><HintPath>$(ValheimManagedDir)\Splatform.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_valheim"><HintPath>$(ValheimManagedDir)\assembly_valheim.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_utils"><HintPath>$(ValheimManagedDir)\assembly_utils.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_guiutils"><HintPath>$(ValheimManagedDir)\assembly_guiutils.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_lux"><HintPath>$(ValheimManagedDir)\assembly_lux.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_postprocessing"><HintPath>$(ValheimManagedDir)\assembly_postprocessing.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_simplemeshcombine"><HintPath>$(ValheimManagedDir)\assembly_simplemeshcombine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_sunshafts"><HintPath>$(ValheimManagedDir)\assembly_sunshafts.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_googleanalytics"><HintPath>$(ValheimManagedDir)\assembly_googleanalytics.dll</HintPath><Private>false</Private></Reference>
+
+    <Reference Include="UnityEngine"><HintPath>$(ValheimManagedDir)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(ValheimManagedDir)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AssetBundleModule"><HintPath>$(ValheimManagedDir)\UnityEngine.AssetBundleModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AnimationModule"><HintPath>$(ValheimManagedDir)\UnityEngine.AnimationModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AudioModule"><HintPath>$(ValheimManagedDir)\UnityEngine.AudioModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.ImageConversionModule"><HintPath>$(ValheimManagedDir)\UnityEngine.ImageConversionModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(ValheimManagedDir)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(ValheimManagedDir)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.ParticleSystemModule"><HintPath>$(ValheimManagedDir)\UnityEngine.ParticleSystemModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(ValheimManagedDir)\UnityEngine.PhysicsModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.TerrainModule"><HintPath>$(ValheimManagedDir)\UnityEngine.TerrainModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(ValheimManagedDir)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UI"><HintPath>$(ValheimManagedDir)\UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UIModule"><HintPath>$(ValheimManagedDir)\UnityEngine.UIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UnityWebRequestModule"><HintPath>$(ValheimManagedDir)\UnityEngine.UnityWebRequestModule.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <Target Name="ValidateValheimReferences" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(ValheimManagedDir)\Assembly-CSharp.dll')" Text="Game assemblies not found. Set GameDir (or GAME_DIR) to the install root, e.g. -p:GameDir=&quot;D:\Games\SomeGame&quot;. Looked in: $(ValheimManagedDir)" />
+  </Target>
+
+  <Target Name="Deploy" AfterTargets="Build" Condition="'$(Deploy)' == 'true'">
+    <ItemGroup>
+      <DeployFiles Include="$(TargetDir)$(AssemblyName).dll;$(TargetDir)$(AssemblyName).pdb;$(TargetDir)Jint.dll;$(TargetDir)Acornima.dll" />
+    </ItemGroup>
+    <MakeDir Directories="$(DeployDir)" />
+    <Copy SourceFiles="@(DeployFiles)" DestinationFolder="$(DeployDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Deployed $(AssemblyName) -&gt; $(DeployDir)" />
+  </Target>
+
+  <ItemGroup Condition="'$(TargetFramework.TrimEnd(`0123456789`))' == 'net'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.2" PrivateAssets="all" />
+  </ItemGroup>
+</Project>
