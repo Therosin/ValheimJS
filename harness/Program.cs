@@ -15,6 +15,10 @@ if (args.Contains("--probe-bindings"))
 }
 
 if (args.Contains("--probe-process")) return ProcessProbe.Run();
+if (args.Contains("--probe-networking")) return NetworkingProbe.Run();
+if (args.Contains("--probe-commands")) return CommandProbe.Run();
+if (args.Contains("--probe-accounts")) return AccountProbe.Run();
+if (args.Contains("--probe-management")) return ManagementProbe.Run();
 
 // Headless smoke test for the JS host: loads bundles from a directory, pumps timers,
 // dispatches hooks, reloads. No Unity, no BepInEx — same code the plugin runs.
@@ -42,7 +46,11 @@ if (!Directory.Exists(Path.Combine(root, "plugins")) &&
 }
 
 var log = new ConsoleLog();
-var host = new JsHost(root, ProcessSide.Server, log, bindingFilter: type => !BindingProbe.IsFixture(type));
+var commandQueue = new System.Collections.Concurrent.ConcurrentQueue<Action>();
+using var commands = new ValheimJS.Core.ChatCommands(commandQueue.Enqueue);
+var host = new JsHost(root, ProcessSide.Server, log,
+    bindingFilter: type => !BindingProbe.IsFixture(type) || type == typeof(ValheimJS.Bindings.ChatCommandsBindings),
+    commands: commands);
 
 Console.WriteLine($"root: {root}");
 host.Load();
@@ -61,6 +69,7 @@ while (elapsed.Elapsed < TimeSpan.FromSeconds(4))
 {
     Thread.Sleep(200);
     host.Tick();
+    while (commandQueue.TryDequeue(out var action)) action();
 }
 
 var results = host.DispatchAll("onServerTick", _ => "{}");

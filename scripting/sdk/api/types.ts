@@ -29,3 +29,35 @@ export interface RpcMeta {
 
 /** Alias kept for hook payload naming. */
 export type ServerTickSnapshot = GameSnapshot;
+/** Partial transient state carried by the native binary sync path. */
+export interface SyncEntity {
+    id: number;
+    x?: number;
+    y?: number;
+    z?: number;
+    rotY?: number;
+    flags?: number;
+}
+export interface ChatCommandDefinition {
+    name: string;
+    namespace?: string | null;
+    description?: string;
+    /** Static help or synchronous contextual help, requested with !help command [query]. */
+    help?: string | ((query: string) => string);
+    /** Explicit routes without !, for example "hello" or "tools:hello". */
+    aliases?: string[];
+    /** Requires any listed role, before validation and again before execution. */
+    roles?: string[];
+    /** Requires every listed permission. Explicit account denials take precedence. */
+    permissions?: string[];
+}
+
+/** Host-owned account snapshot. Mutating this object never changes the stored account. */
+export interface Account {
+    id: string;
+    platformId: string;
+    knownName: string;
+    createdAt: number;
+    lastSeenAt: number;
+    profile: { displayName: string; locale: string };
+}

@@ -21,6 +21,12 @@ export type { Collection, Db as Database, Doc } from "./database";
 export { database, Db } from "./database";
 export { input, type KeyboardHandler, type KeyboardPhase } from "./input";
 export { Rpc, RpcChannel } from "./net";
+export { Sync } from "./sync";
+export { ChatCommand, ChatCommands, type ChatCommandContext, type ChatCommandUser } from "./commands";
+export { AccountService, PermissionService } from "./accounts";
+export type { Account } from "./api/types";
+export type { ChatCommandDefinition } from "./api/types";
+export type { SyncEntity } from "./api/types";
 export { fs, game, world } from "./access";
 export type {
     Handler,

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using ValheimJS.Scripting.Binding;
+using Network = ValheimJS.Core.Networking;
 
 namespace ValheimJS.Scripting;
 
@@ -36,6 +37,10 @@ public sealed class JsHost
     private readonly string _side;
     private readonly ProcessSide _processSide;
     private readonly Func<Type, bool>? _bindingFilter;
+    private readonly Network? _networking;
+    private readonly Core.ChatCommands? _commands;
+    private readonly Services.AccountService? _accounts;
+    private readonly Services.PermissionService? _permissions;
     private readonly Dictionary<string, JsPlugin> _plugins = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _errors = new();
     private int _pumpErrors;
@@ -49,12 +54,20 @@ public sealed class JsHost
         ProcessSide side,
         IJsLog log,
         JsRuntimeOptions? options = null,
-        Func<Type, bool>? bindingFilter = null)
+        Func<Type, bool>? bindingFilter = null,
+        Network? networking = null,
+        Core.ChatCommands? commands = null,
+        Services.AccountService? accounts = null,
+        Services.PermissionService? permissions = null)
     {
         if (!Enum.IsDefined(typeof(ProcessSide), side)) throw new ArgumentOutOfRangeException(nameof(side));
         _processSide = side;
         _side = side == ProcessSide.Server ? "server" : "client";
         _bindingFilter = bindingFilter;
+        _networking = networking;
+        _commands = commands;
+        _accounts = accounts;
+        _permissions = permissions;
         _options = options ?? new JsRuntimeOptions();
         _root = root;
         _pluginsDir = Path.Combine(root, "plugins");
@@ -216,25 +229,9 @@ public sealed class JsHost
         }
     }
 
-    /// <summary>Raises a host event. Chat is offered to command handling before plugins see it.</summary>
+    /// <summary>Raises a host event. Private commands use CommandService, outside public chat.</summary>
     public void Emit(string hook, string payloadJson)
     {
-        var interceptor = _bindings?.ChatInterceptor;
-        if (hook == "onChat" && interceptor != null)
-        {
-            try
-            {
-                if (interceptor(payloadJson))
-                {
-                    return;
-                }
-            }
-            catch (Exception exception)
-            {
-                _log.Write("error", "host", "command handling failed: " + Describe(exception));
-            }
-        }
-
         DispatchAll(hook, _ => payloadJson);
     }
 
@@ -333,7 +330,11 @@ public sealed class JsHost
         _logsDir,
         DataDirectoryFor,
         ConfigDirectoryFor,
-        (level, message) => _log.Write(level, "bindings", message));
+        (level, message) => _log.Write(level, "bindings", message),
+        _networking,
+        _commands,
+        _accounts,
+        _permissions);
 
     private PluginServices ServicesFor(PluginManifest manifest, string directory)
     {

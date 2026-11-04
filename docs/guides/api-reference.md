@@ -13,6 +13,10 @@ has the exact signatures.
 | [`game`](#game) | process side, world identity, live snapshot |
 | [`world`](#world) | object counts, spawning, per-object data |
 | [`net`](#net) | routed RPC channels |
+| [`sync`](#sync) | explicit transient binary frames |
+| [`ChatCommands`](#chatcommands) | private command registry and replies |
+| [`AccountService`](accounts.md) | account queries and publisher-owned shared data |
+| [`PermissionService`](accounts.md#roles-and-permissions) | live role and permission queries |
 | [`input`](#input) | keyboard bindings and phase callbacks |
 | [`fs`](#fs) | sandboxed files |
 | [`db`](#db) | per-plugin document collections |
@@ -107,7 +111,39 @@ sender is a routed peer id, not proof of authorisation — check permission your
 
 See the [networking guide](../networking.md).
 
+## `sync`
+
+```ts
+import { Sync } from "../../../sdk/index";
+Sync.on(stream, (entities, meta) => void): () => void
+Sync.send(stream, entities, target?: number): void
+```
+
+`SyncEntity` has a u16 `id` and optional f32 `x`, `y`, `z`, `rotY` and u8 `flags`. The native
+`Core/NetworkSync` service owns framing, decoding, validation and subscription cleanup. Explicit
+sends use raw bytes over RpcBus; omitted `target` broadcasts. There is no automatic cadence,
+late-join replay or authority policy; validate the sender. Prefer ZDOs for world replication.
+
+The optional `scripting/lib/sync.ts` helpers delegate `encodeFrame`, `decodeFrame`, `diffEntity`
+and `quantise` to the host. Base64 encoding is for inspection/storage; `Sync.send` sends bytes.
+See [Networking](../networking.md#explicit-binary-sync).
+
+## `ChatCommands`
+
+Use the SDK's `ChatCommand` base class and `ChatCommands.registerCommand(instance)` in plugin
+setup. The native registry owns routes, invocation lifetimes and unload cleanup. Registration
+returns an id; `ChatCommands.unregisterCommand(id)` removes it and cancels its invocations.
+`ChatCommands.list()` returns registered metadata. `roles` requires any listed role; `permissions`
+requires every listed permission, checked through the native PermissionService.
+Optional `help` is text or a synchronous `(query: string) => string` callback. Players request it
+with `!help command [query]`; `!help` lists accessible commands. See the
+[command help guide](chat-commands.md#help-text-and-contextual-help).
+
+Commands use `!name` or `!category:name`; replies and errors stay private. Async validation and
+execution are supported. See [Chat commands](chat-commands.md) for parsing rules and examples.
+
 ## `input`
+
 
 Client-only. Actions are namespaced by the calling plugin, so two plugins can both use `"toggle"`
 without colliding.
@@ -221,13 +257,16 @@ There is no player API yet. When you need a durable player key, address it with 
 utility in C# (`ValheimJS.Core.PlayerIdentity`) or wait for the player binding; the session `uid`
 in `onPlayerJoin` is not stable across restarts.
 
+For persistent account identity use [AccountService](accounts.md), which resolves verified platform
+identities to stable account ids. Profile and policy editing remain host-owned.
+
 ## Not available yet
 
 Do not work around these by guessing:
 
 - player stats, inventory, teleporting and permission APIs
 - item catalogue access and item grants
-- chat output and host-side chat commands
+- general chat output outside command replies
 - intercepting or cancelling damage
 - creating new prefabs, items or assets from script
 

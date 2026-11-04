@@ -14,7 +14,22 @@
     <Compile Include="..\src\Scripting\**\*.cs" LinkBase="Shared\Scripting" />
     <Compile Include="..\src\Utils\Json.cs" LinkBase="Shared\Utils" />
     <Compile Include="..\src\Utils\CompilerSupport.cs" LinkBase="Shared\Utils" />
-          </ItemGroup>
+    <Compile Include="..\src\Core\Networking.cs" LinkBase="Shared\Core" />
+    <Compile Include="..\src\Core\NetworkSync.cs" LinkBase="Shared\Core" />
+    <Compile Include="..\src\Networking\IRpcTransport.cs" LinkBase="Shared\Networking" />
+    <Compile Include="..\src\Networking\NetworkJson.cs" LinkBase="Shared\Networking" />
+    <Compile Include="..\src\Bindings\NetBindings.cs" LinkBase="Shared\Bindings" />
+    <Compile Include="..\src\Bindings\SyncBindings.cs" LinkBase="Shared\Bindings" />
+    <Compile Include="..\src\Bindings\ChatCommandsBindings.cs" LinkBase="Shared\Bindings" />
+    <Compile Include="..\src\Core\ChatCommands.cs" LinkBase="Shared\Core" />
+    <Compile Include="..\src\Storage\**\*.cs" LinkBase="Shared\Storage" />
+    <Compile Include="..\src\Services\AccountService.cs" LinkBase="Shared\Services" />
+    <Compile Include="..\src\Services\AccountModels.cs" LinkBase="Shared\Services" />
+    <Compile Include="..\src\Services\PermissionService.cs" LinkBase="Shared\Services" />
+    <Compile Include="..\src\Bindings\AccountBindings.cs" LinkBase="Shared\Bindings" />
+    <Compile Include="..\src\Bindings\PermissionBindings.cs" LinkBase="Shared\Bindings" />
+    <Compile Include="..\src\Commands\**\*.cs" LinkBase="Shared\Commands" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Jint" Version="4.17.0" />

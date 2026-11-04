@@ -3,7 +3,7 @@
 // Do not edit by hand; run `task declarations:check` to verify drift.
 // </auto-generated>
 
-import type { GameSnapshot, KeyState } from "./types";
+import type { Account, ChatCommandDefinition, GameSnapshot, KeyState, SyncEntity } from "./types";
 
 /**
  * Which process this is and what world it is running.
@@ -237,6 +237,20 @@ export interface InputApi {
 }
 
 /**
+ * Authoritative account queries and publisher-owned shared metadata. No account management API.
+ */
+export interface AccountServiceApi {
+    available(): boolean;
+    deleteData(id: string): void;
+    findByPlatform(platformId: string): Account | null;
+    fromPeer(peerId: string): Account | null;
+    get(id: string): Account | null;
+    getData(id: string): Record<string, unknown> | null;
+    readPublishedData(id: string, publisher: string): Record<string, unknown> | null;
+    setData(id: string, json: string): void;
+}
+
+/**
  * Named RPC channels between peers: notifications and requests.
  */
 export interface NetApi {
@@ -270,6 +284,77 @@ export interface NetApi {
     serverPeer(): number;
 }
 
+/**
+ * Live account role and permission queries. Policy editing is host-owned.
+ */
+export interface PermissionServiceApi {
+    available(): boolean;
+    hasPermission(id: string, permission: string): boolean;
+    hasRole(id: string, role: string): boolean;
+}
+
+/**
+ * Explicit compact binary streams for transient non-ZDO state.
+ */
+export interface SyncApi {
+    /**
+     * Decodes a base64 frame for inspection.
+     */
+    decode(frame: string): SyncEntity[];
+    /**
+     * Changed fields only, or null for an unchanged entity.
+     */
+    diff(previousJson: string, nextJson: string, step: number): SyncEntity | null;
+    /**
+     * Encodes entities as a base64 frame for storage or inspection; send() uses raw bytes on the wire.
+     */
+    encode(entitiesJson: string): string;
+    /**
+     * Removes a binary stream subscription owned by this plugin.
+     */
+    off(id: number): void;
+    /**
+     * Receives decoded binary frames on a named stream; returns a subscription id.
+     */
+    on(stream: string, handler: (...args: unknown[]) => unknown): number;
+    /**
+     * Rounds a finite value to a positive precision step.
+     */
+    quantise(value: number, step: number): number;
+    /**
+     * Sends one binary frame; entitiesJson is an array of SyncEntity. No automatic cadence or late-join replay.
+     */
+    send(target: number, stream: string, entitiesJson: string): void;
+}
+
+/**
+ * Private chat-command registry with account role and permission checks.
+ */
+export interface ChatCommandsApi {
+    hasPermission(invocationId: string, permission: string): boolean;
+    hasRole(invocationId: string, role: string): boolean;
+    /**
+     * Lists command definitions.
+     */
+    list(): ChatCommandDefinition[];
+    /**
+     * Registers a command definition with async-capable validation and execution callbacks.
+     */
+    registerCommand(definitionJson: string, validate: (...args: unknown[]) => unknown, execute: (...args: unknown[]) => unknown): number;
+    /**
+     * Sends a private reply from an active invocation owned by this plugin.
+     */
+    reply(invocationId: string, text: string): void;
+    /**
+     * Attaches synchronous contextual help to a command owned by this plugin.
+     */
+    setHelp(id: number, help: (...args: unknown[]) => unknown): void;
+    /**
+     * Unregisters a command and its aliases; cancels in-flight invocations owned by it.
+     */
+    unregisterCommand(id: number): void;
+}
+
 /** Everything the C# binding classes install under `ctx.host.api`. */
 export interface Api {
     game: GameApi;
@@ -278,5 +363,9 @@ export interface Api {
     world: WorldApi;
     /** Availability: client only. */
     input: InputApi;
+    AccountService: AccountServiceApi;
     net: NetApi;
+    PermissionService: PermissionServiceApi;
+    sync: SyncApi;
+    ChatCommands: ChatCommandsApi;
 }

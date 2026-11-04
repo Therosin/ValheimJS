@@ -18,10 +18,10 @@ internal sealed class SharedEntry : IStartupModule
 [ClientOnly]
 internal sealed class ClientEntry : IStartupModule
 {
-    public void Start(Plugin plugin) => Core.ChatAgent.Install();
+    // ChatService is deliberately dormant. Its implementation is retained without registration.
+    public void Start(Plugin plugin) { }
     public void Stop(Plugin plugin)
     {
-        Core.ChatAgent.Shutdown();
 #if USE_INPUT
         Input.KeyboardManager.Clear();
 #endif

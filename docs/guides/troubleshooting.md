@@ -93,7 +93,7 @@ at most every few seconds, and send one event per change.
 
 ## Networking: I listen, but nothing arrives
 
-- Confirm both peers run ValheimJS 2 and register the matching channel/event; names are
+- Confirm both peers run ValheimJS and register the matching channel/event; names are
   case-sensitive.
 - `Rpc.available()` must be true before sending; messages are not queued during startup.
 - Requests need a specific peer and a synchronous responder. Notifications are fire-and-forget.

@@ -5,14 +5,6 @@ using ValheimJS.Scripting;
 using ValheimJS.Harness.Fixtures;
 using ValheimJS.Scripting.Binding;
 
-namespace ValheimJS.Storage
-{
-    internal static class DocumentStore
-    {
-        internal static void Configure(string root) { }
-    }
-}
-
 /// <summary>Representative binder used by the harness probe: renames, scoping, JSON, callbacks, errors.</summary>
 [JsBinder("probe", Phase = JsBindPhase.Engine, Description = "Harness probe surface.")]
 internal sealed class ProbeBindings : JsBindings
@@ -127,7 +119,7 @@ namespace ValheimJS.Harness.Fixtures.Duplicate
 internal static class BindingProbe
 {
     internal static bool IsFixture(Type type) =>
-        type.Namespace != null && type.Namespace.StartsWith("ValheimJS.Harness.Fixtures", StringComparison.Ordinal);
+        type.Namespace != null && (type.Namespace.StartsWith("ValheimJS.Harness.Fixtures", StringComparison.Ordinal) || type.Namespace == "ValheimJS.Bindings");
 
     public static int Run()
     {

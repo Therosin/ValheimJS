@@ -40,10 +40,13 @@ authors only (TypeScript, no engine internals). This README is for working on th
 | `src/Scripting/Binding/` | Binding attributes, discovery, Jint bridge, declaration writer |
 | `src/Bindings/` | Game API classes (`[JsBinder]`), one file per namespace |
 | `src/Core/` | typed registries, bridge seam, identity helpers |
+| `src/Core/Networking.cs` | native channel/event scopes, requests and completion pump |
+| `src/Core/NetworkSync.cs` | binary frame streams, codec and deltas |
+| `src/Networking/` | networked services (`CommandService`), dormant `ChatService`, RpcBus adapter and DTO conversion |
 | `src/Hooks/` | Harmony capture points — register live singletons, emit events |
 | `src/Utils/` | RPC bus, JSON helpers, netstandard shims |
 | `scripting/sdk/` | TypeScript SDK: generated declarations + thin facades |
-| `scripting/lib/` | Optional imported libraries (binary sync codec) |
+| `scripting/lib/` | Optional imported helpers (host-backed sync facade) |
 | `scripting/plugins/` | example plugin sources |
 | `docs/guides/` | modder-facing guides |
 | `harness/` | net8 console running the real host code without Unity |
@@ -150,7 +153,8 @@ export default definePlugin(Greeter);
 |---|---|---|
 | `game` | `GameBindings` | side, world identity, live snapshot |
 | `world` | `WorldBindings` | ZDO counts, spawning, per-object data |
-| `net` | `NetBindings` | routed RPC: register, dispatch, requests |
+| `net` | `NetBindings` | adapter over `Core/Networking` channels/events |
+| `sync` | `SyncBindings` | adapter over `Core/NetworkSync` binary frames |
 | `input` | `InputBindings` | keyboard bindings + phase callbacks (client) |
 | `fs` | `FileSystemBindings` | sandboxed files |
 | `db` | `DatabaseBindings` | per-plugin document collections |

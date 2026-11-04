@@ -81,10 +81,22 @@ tasks:
     desc: Verify process gates, component lifecycle, dependencies and cleanup
     cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-process
 
+  probe:networking:
+    desc: Verify native event ownership, request cleanup, binary sync and JS adapters
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-networking
+
+  probe:commands:
+    desc: Verify command parsing, private dispatch, async JS callbacks and cleanup
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-commands
+
   test:
     desc: JS unit tests
     dir: '{{.jsRoot}}'
     cmd: bun test
+
+  probe:accounts:
+    desc: Verify account persistence, shared metadata ownership, permissions and command access
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-accounts
 
   check:
     desc: Typecheck, declarations, tests, build, bundle, harness
@@ -96,7 +108,15 @@ tasks:
       - task: bundle
       - task: probe
       - task: probe:process
+      - task: probe:networking
+      - task: probe:commands
+      - task: probe:accounts
+      - task: probe:management
       - task: harness
+
+  probe:management:
+    desc: Verify native management commands, authorization and role/permission/user edits
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-management
 
   deploy:
     desc: Deploy to client and dedicated server

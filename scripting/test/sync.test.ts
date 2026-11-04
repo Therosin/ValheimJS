@@ -1,46 +1,54 @@
-import { describe, expect, test } from "bun:test";
-import { decodeFrame, diffEntity, encodeFrame, quantise } from "../lib/sync";
+import { afterEach, describe, expect, test } from "bun:test";
+import { Sync, decodeFrame, diffEntity, encodeFrame, quantise } from "../lib/sync";
+import type { PluginContext } from "../sdk/runtime";
 
-describe("sync frames", () => {
-    test("round-trips partial entities", () => {
-        const entities = [
-            { id: 1, x: 1.5, y: 2.25, z: -3.75, rotY: 0.5 },
-            { id: 2, flags: 3 },
-            { id: 3, x: 0.01 }
-        ];
-
-        const decoded = decodeFrame(encodeFrame(entities));
-        expect(decoded).toHaveLength(3);
-        expect(decoded[0].id).toBe(1);
-        expect(decoded[0].x).toBeCloseTo(1.5, 5);
-        expect(decoded[0].rotY).toBeCloseTo(0.5, 5);
-        expect(decoded[1]).toEqual({ id: 2, flags: 3 });
-        expect(decoded[2].x).toBeCloseTo(0.01, 5);
-        expect(decoded[2].y).toBeUndefined();
-    });
-
-    test("stays compact", () => {
-        const entities = Array.from({ length: 100 }, (_, id) => ({ id, x: id * 0.5, y: 1, z: -id * 0.5 }));
-        const frame = encodeFrame(entities);
-        const json = JSON.stringify(entities);
-
-        // 15 raw bytes per entity (u16 id + u8 mask + 3 * f32) -> 20 base64 chars.
-        expect(frame.length / entities.length).toBeLessThan(21);
-        // Roughly 1.6x smaller than the equivalent JSON on this shape; the gap widens with more
-        // fields because JSON repeats their names per entity.
-        expect(frame.length).toBeLessThan(json.length * 0.7);
-    });
-
-    test("diff skips sub-threshold movement", () => {
-        const previous = { id: 7, x: 10, y: 2, z: 10, rotY: 0 };
-        expect(diffEntity(previous, { id: 7, x: 10.004, y: 2, z: 10, rotY: 0 })).toBeNull();
-        const moved = diffEntity(previous, { id: 7, x: 10.4, y: 2, z: 10, rotY: 0 });
-        expect(moved).not.toBeNull();
-        expect(moved!.x).toBe(10.4);
-        expect(moved!.y).toBeUndefined();
-    });
-
-    test("quantise snaps", () => {
+const globals = globalThis as { __vjs_context?: PluginContext };
+afterEach(() => { delete globals.__vjs_context; });
+function install() {
+    const calls: unknown[][] = [];
+    const entities = [{ id: 7, x: 1.5 }];
+    const api = {
+        net: { everybody: () => 0 },
+        sync: {
+            on: (...args: unknown[]) => { calls.push(["on", ...args]); return 8; },
+            off: (id: number) => calls.push(["off", id]),
+            send: (...args: unknown[]) => calls.push(["send", ...args]),
+            encode: (json: string) => { calls.push(["encode", json]); return "frame"; },
+            decode: (frame: string) => { calls.push(["decode", frame]); return entities; },
+            diff: (...args: unknown[]) => { calls.push(["diff", ...args]); return null; },
+            quantise: (...args: unknown[]) => { calls.push(["quantise", ...args]); return 1.23; }
+        }
+    };
+    globals.__vjs_context = { host: { api } } as unknown as PluginContext;
+    return { calls, entities };
+}
+describe("native sync facade", () => {
+    test("delegates codec and delta work to the host", () => {
+        const { calls, entities } = install();
+        expect(encodeFrame(entities)).toBe("frame");
+        expect(decodeFrame("frame")).toBe(entities);
+        expect(diffEntity({ id: 7 }, entities[0])).toBeNull();
         expect(quantise(1.23456)).toBe(1.23);
+        expect(calls).toEqual([
+            ["encode", JSON.stringify(entities)], ["decode", "frame"],
+            ["diff", '{"id":7}', JSON.stringify(entities[0]), 0.01], ["quantise", 1.23456, 0.01]
+        ]);
+    });
+    test("sends a frame through the binary service and preserves explicit targets", () => {
+        const { calls, entities } = install();
+        Sync.send("positions", entities);
+        Sync.send("positions", entities, 42);
+        expect(calls).toEqual([["send", 0, "positions", JSON.stringify(entities)], ["send", 42, "positions", JSON.stringify(entities)]]);
+    });
+    test("adapts callbacks and returns native unsubscription", () => {
+        const { calls, entities } = install();
+        let received: unknown;
+        const off = Sync.on("positions", (frame, meta) => { received = [frame, meta]; });
+        const callback = calls[0][2] as (frame: unknown, meta: unknown) => void;
+        const meta = { sender: 42, channel: "ValheimJS:Sync", event: "positions" };
+        callback(entities, meta);
+        expect(received).toEqual([entities, meta]);
+        off();
+        expect(calls[1]).toEqual(["off", 8]);
     });
 });

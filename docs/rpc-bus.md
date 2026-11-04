@@ -37,8 +37,10 @@ Payloads use `DataContractJsonSerializer`: use compatible serializable DTOs on b
 
 ## JavaScript binding
 
-The `net` binding (`NetBindings`) registers on the same bus but uses the raw-byte paths
-(`RpcBus.Add`, `RpcBus.SendRaw`, `RpcBus.NotifyRaw`) with UTF-8 JSON, so JS peers and C# peers can
-interoperate by using a `string` payload DTO on the C# side. Incoming handlers run synchronously on
-the routed call; outgoing request completion is marshalled to the game thread through the host
-queue before the JS callback runs.
+`Core/Networking.cs` uses the bus through `Networking/RoutedRpcTransport.cs`; `NetBindings` only
+adapts JS values/callbacks to that service. JSON payloads interoperate with matching typed C# DTOs
+on the same channel/event (a C# string corresponds to a JS string, not arbitrary JSON objects).
+Incoming handlers run on the routed call; outgoing callbacks run through the native networking
+main-thread pump. Scopes own registrations and cancel pending requests when their owner unloads.
+`Core/NetworkSync.cs` uses the same raw-byte transport for compact binary frames, independently of
+the JSON event facade. See [networking.md](networking.md) for service usage and payload choices.

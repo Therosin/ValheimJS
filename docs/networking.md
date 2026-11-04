@@ -4,11 +4,40 @@ description: Send events and request replies between ValheimJS peers.
 ---
 
 `Rpc` gives JavaScript plugins named channels and events over Valheim's routed RPC. A channel is a
-logical namespace, not a separate socket. Both peers need ValheimJS 2 and matching event and
+logical namespace, not a separate socket. Both peers need ValheimJS and matching event and
 payload conventions.
 
-Registration, dispatch, request completion and cleanup are host-owned; the JS facade only encodes
-JSON and returns unsubscribe functions.
+`Core/Networking.cs` owns channels, registration scopes, dispatch adaptation, request completion,
+and cleanup over `Utils.RpcBus`. The JS binding only adapts JS values and callbacks; the SDK only
+shapes calls. This is a socket-style event API, not a Socket.IO wire protocol or a TCP socket.
+
+## Native services
+
+`Plugin` creates one process-owned `Networking` service and pumps its completion queue on the
+Unity thread. Services open their own scopes and dispose them when they stop. JS binding scopes
+additionally release registrations and cancel pending transport requests on plugin unload.
+
+```csharp
+// network is the shared ValheimJS.Core.Networking instance supplied by the host.
+using var scope = network.OpenScope();
+var channel = scope.Channel("my_mod.controller");
+channel.On<string>("notice", (message, text) => { /* validate message.Sender */ });
+channel.Handle<int, int>("double", (message, value) => value * 2);
+channel.Emit(peerId, "notice", "hello");
+```
+
+`OnJson`, `HandleJson`, `EmitJson` and `RequestJson` accept JSON text for consumers such as
+binding adapters. Requests finish through the main-thread pump; a scope's disposal suppresses
+late callbacks. `Networking/CommandService.cs` receives private command submissions on
+`valheimjs:commands`, resolves the caller from the actual peer and sends replies only to that
+caller. The native registry and execution lifecycle live in `Core/ChatCommands.cs`.
+See [Chat commands](guides/chat-commands.md).
+
+`Networking/ChatService.cs` is retained but dormant: startup never constructs it. Its existing
+code listens for `valheimjs:chat/message`, accepts announcements from the server peer and shows
+them as a `Server` chat line with the shout style. It does not parse or execute commands.
+
+## JavaScript events
 
 ```ts
 import { definePlugin, Rpc } from "../../../sdk/index";
@@ -66,3 +95,29 @@ The C# API and transport lifecycle are described in [rpc-bus.md](rpc-bus.md). Pr
 replication for persistent world state and late joiners; bus notifications are transient. Joining
 peers may not yet have registered their handlers, so use an application-level readiness handshake
 where delivery at join time matters.
+
+## Explicit binary sync
+
+`Core/NetworkSync.cs` owns the compact frame codec, delta calculation and binary stream scopes.
+It shares RpcBus's byte transport, bypassing the JSON event payload conversion. `Sync.send` crosses
+the JS boundary as JSON once, then transmits native bytes: there is no JSON/base64 frame on the
+wire. `encodeFrame`/`decodeFrame` in `scripting/lib/sync.ts` are thin host-backed inspection helpers.
+
+```ts
+import { Sync } from "../../../sdk/index";
+
+const off = Sync.on("my_mod.markers", (entities, meta) => {
+    // Validate meta.sender before applying transient presentation state.
+});
+Sync.send("my_mod.markers", [{ id: 7, x: 10, z: 20 }], peerId);
+```
+
+Each frame has a version byte, a big-endian u16 entity count, and partial entities with u16 ids,
+field masks, optional f32 x/y/z/rotY values and optional u8 flags. Ids and flags must fit their
+wire ranges; duplicate ids, invalid masks, non-finite values, truncation and trailing bytes are
+rejected. The maximum frame is 256 KiB. Float precision is f32; ids belong to the caller's stream.
+
+This is a compact payload path over the same routed RPC delivery, not an unreliable socket or
+a priority transport. Sending is explicit: no automatic per-tick broadcast, state cache,
+authority policy, persistence or late-join replay. Use real ZDOs for replicated world objects;
+use binary streams sparingly for transient state that the game does not already replicate.

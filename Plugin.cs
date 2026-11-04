@@ -33,6 +33,16 @@ public class Plugin : BaseUnityPlugin
     private volatile bool _reloadRequested;
     private float _tickAccumulator;
     private readonly List<IStartupModule> _modules = new();
+    private Core.Networking? _network;
+    internal Core.Networking Network => _network ?? throw new InvalidOperationException("Networking has not started.");
+    private Core.ChatCommands? _commands;
+    private Commands.ManagementCommands? _managementCommands;
+    private Core.ChatCommandScope? _helpCommands;
+    internal static Services.AccountService? Accounts { get; private set; }
+    internal static Services.PermissionService? Permissions { get; private set; }
+    private static Services.AccountSessions? _accountSessions;
+    internal static void RefreshAccounts() => _accountSessions?.Refresh();
+    internal static global::ValheimJS.Networking.CommandService? CommandTransport { get; private set; }
 
     private void Awake()
     {
@@ -93,6 +103,19 @@ public class Plugin : BaseUnityPlugin
 
     internal void StartShared()
     {
+        Utils.RpcBus.Install();
+        _network = new Core.Networking(new global::ValheimJS.Networking.RoutedRpcTransport(), message => Logger.LogError(message));
+        _commands = new Core.ChatCommands(_network.Post, message => Logger.LogError(message));
+        Accounts = new Services.AccountService(Path.Combine(_pluginRoot.Value, "services", "accounts"),
+            () => ZNet.instance != null && ZNet.instance.IsServer());
+        _accountSessions = new Services.AccountSessions(Accounts);
+        Permissions = new Services.PermissionService(Path.Combine(_pluginRoot.Value, "services", "permissions"), Accounts);
+        _managementCommands = new Commands.ManagementCommands(_commands, Accounts, Permissions,
+            user => ZNet.instance != null && ZNet.instance.IsServer() && user.PlatformId != null && ZNet.instance.IsAdmin(user.PlatformId),
+            message => Logger.LogInfo(message));
+        _helpCommands = _commands.OpenScope();
+        _helpCommands.Register("host", new Commands.HelpCommand(_commands));
+        CommandTransport = new global::ValheimJS.Networking.CommandService(_network, _commands, Accounts, Permissions);
         _host = new JsHost(
             _pluginRoot.Value,
             GameEnvironment.Side,
@@ -102,11 +125,9 @@ public class Plugin : BaseUnityPlugin
                 MaxStatements = _maxStatements.Value,
                 TimeoutMs = _timeoutMs.Value,
                 LimitRecursion = _limitRecursion.Value
-            });
+            }, networking: _network, commands: _commands, accounts: Accounts, permissions: Permissions);
         ValheimBridge.Emit = _host.Emit;
         ValheimBridge.WorldSnapshot = BuildWorldSnapshot;
-
-        Utils.RpcBus.Install();
     }
 
     internal void StopShared()
@@ -114,6 +135,19 @@ public class Plugin : BaseUnityPlugin
         ValheimBridge.Emit = null;
         ValheimBridge.WorldSnapshot = null;
         Hooks.PlayerWatcher.Reset();
+        CommandTransport?.Dispose();
+        CommandTransport = null;
+        _managementCommands?.Dispose();
+        _managementCommands = null;
+        _helpCommands?.Dispose();
+        _helpCommands = null;
+        _commands?.Dispose();
+        _commands = null;
+        _accountSessions = null;
+        Accounts = null;
+        Permissions = null;
+        _network?.Dispose();
+        _network = null;
         Utils.RpcBus.Shutdown();
         global::Core.Container.Container.ClearAll();
     }
@@ -130,6 +164,7 @@ public class Plugin : BaseUnityPlugin
     private void Update()
     {
         Utils.RpcBus.Refresh();
+        _network?.Pump();
         if (_host == null)
         {
             return;
@@ -150,6 +185,7 @@ public class Plugin : BaseUnityPlugin
         }
 
         _tickAccumulator = 0f;
+        RefreshAccounts();
         _host.Tick();
     }
 

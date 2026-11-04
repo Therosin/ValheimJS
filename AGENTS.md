@@ -39,6 +39,18 @@ optional imported libraries · `docs/guides` modder docs · `harness/` host with
 
 ## Rules
 
+Networking ownership: `src/Core/Networking.cs` owns the channel/event service and consumer
+scopes over `Utils.RpcBus`; `src/Core/NetworkSync.cs` owns binary sync and delta/codec logic.
+`src/Networking` contains networked services (such as `CommandService`) and the transport adapter.
+`ChatService` is deliberately dormant; keep its code without constructing it at startup.
+The native command registry belongs in `Core/ChatCommands`; JS `ChatCommands` is an adapter.
+`Services/AccountService` owns identity/profile records and small publisher-owned shared metadata;
+`Services/PermissionService` separately owns roles, grants and denials. Both reuse DocumentDatabase
+under `services/`, outside plugin data sandboxes. Plugins may query accounts/policy and read other
+publishers' metadata, but only write their own. Do not expose profile or policy management to JS.
+Bindings only adapt JS values/callbacks and delegate; never put networking registries or peer
+discovery in bindings, and never let native services depend on binding classes.
+
 - Plugin code is untrusted: bound engine work, keep hooks cheap, never do per-tick broadcasts.
 - The C# side is authoritative. Add a `[JsBinder]` class, then run `task declarations`; never
   hand-edit `generated.ts`.

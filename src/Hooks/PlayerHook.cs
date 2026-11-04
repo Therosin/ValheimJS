@@ -23,6 +23,7 @@ internal static class PlayerWatcher
 
     internal static void Poll()
     {
+        Plugin.RefreshAccounts();
         var peers = ZNet.instance?.GetPeers();
         if (peers == null)
         {

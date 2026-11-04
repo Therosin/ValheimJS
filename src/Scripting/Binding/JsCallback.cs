@@ -1,8 +1,11 @@
 using System;
-using System.Collections.Generic;
 using Jint;
 using Jint.Native;
 using Jint.Native.Function;
+using System.Threading;
+using System.Threading.Tasks;
+using Jint.Runtime.Interop;
+using Jint.Runtime.Descriptors;
 
 namespace ValheimJS.Scripting.Binding;
 
@@ -16,12 +19,14 @@ public sealed class JsCallback
     private readonly Engine _engine;
     private readonly Function _function;
     private readonly string _description;
+    private readonly JsValue _context;
 
     internal JsCallback(Engine engine, Function function, string description)
     {
         _engine = engine;
         _function = function;
         _description = description;
+        _context = engine.GetValue("__vjs_context");
     }
 
     internal Engine Engine => _engine;
@@ -40,7 +45,13 @@ public sealed class JsCallback
 
         try
         {
-            return _function.Call(JsValue.Undefined, values);
+            var previous = _engine.GetValue("__vjs_context");
+            try
+            {
+                _engine.SetValue("__vjs_context", _context);
+                return _function.Call(JsValue.Undefined, values);
+            }
+            finally { _engine.SetValue("__vjs_context", previous); }
         }
         catch (Exception exception)
         {
@@ -50,6 +61,38 @@ public sealed class JsCallback
     }
 
     public bool InvokeBoolean(params object?[] arguments) => Invoke(arguments).AsBoolean();
+
+    /// <summary>Await a JS command's promise without blocking Unity's main thread.</summary>
+    public Task InvokeAsync(CancellationToken cancellation, params object?[] arguments)
+    {
+        cancellation.ThrowIfCancellationRequested();
+        var result = Invoke(arguments);
+        if (result is not Jint.Native.Object.ObjectInstance promise || promise.Get("then") is not Function then) return Task.CompletedTask;
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var registration = cancellation.Register(() => completion.TrySetCanceled());
+        var resolve = new ClrFunction(_engine, "commandResolved", (_, _) => { completion.TrySetResult(true); return JsValue.Undefined; }, 1, PropertyFlag.Configurable);
+        var reject = new ClrFunction(_engine, "commandRejected", (_, values) =>
+        {
+            var error = values.Length == 0 ? JsValue.Undefined : values[0];
+            var message = error is Jint.Native.Object.ObjectInstance obj ? obj.Get("message").ToString() : error.ToString();
+            completion.TrySetException(new InvalidOperationException(message));
+            return JsValue.Undefined;
+        }, 1, PropertyFlag.Configurable);
+        try { then.Call(promise, new JsValue[] { resolve, reject }); }
+        catch (Exception error) { completion.TrySetException(error); }
+        completion.Task.ContinueWith(_ => registration.Dispose(), TaskScheduler.Default);
+        return completion.Task;
+    }
+
+    /// <summary>Adapt a JSON responder without exposing engine types to native services.</summary>
+    public string? InvokeJson(bool response, params object?[] arguments)
+    {
+        var result = Invoke(arguments);
+        if (!response) return null;
+        if (result is Jint.Native.Object.ObjectInstance instance && instance.Get("then") is Function)
+            throw new InvalidOperationException("RPC responders must return synchronously.");
+        return Stringify(result);
+    }
 
     public string? InvokeString(params object?[] arguments)
     {

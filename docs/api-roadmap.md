@@ -16,12 +16,14 @@ the "what to build next and why" document, not modder docs.
 | Game | `game.side/dedicated/isServer/isClient/singlePlayer/peers/instance/worldName/day/dayFraction/timeOfDay/snapshot` |
 | World | `world.zdoCount/zdoAvailable/spawn/destroy/prefabs/exists/getData/setData/alive` |
 | Messaging | `Rpc` channels (notifications + synchronous requests) over the host `net` binding |
+| Commands | `ChatCommand` classes and `ChatCommands` registry, private replies, async validation/execution and role/permission gates |
+| Accounts | `AccountService` identity and shared metadata; `PermissionService` access queries, native policy management |
 | Input | `input.bind/on/off/state/...` (client only) |
 | Events | `setup`, `teardown`, `onServerTick` (~1 Hz), `onChat`, `onPlayerJoin/Leave`, `onPlayerSpawned/Despawned`, `onDamage` |
 
 Useful for: spawnable objects and object data, rules and policy, metrics, cross-process events,
 client-side input, persistence. **Not** useful yet for: changing players, inventories, items, chat
-output, host commands, NPC behaviour, UI.
+output outside command replies, NPC behaviour, UI.
 
 ## How the installed mods actually do it
 
@@ -50,8 +52,7 @@ Everything below is a small binding module; game APIs verified in
 | God mode / invulnerable | `players.setGodMode(uid, on)` | `Player.SetGodMode(bool)` |
 | Skills | `players.raiseSkill(uid, name, factor)` | `Skills.RaiseSkill(SkillType, float)` |
 | Inventory read/write | `players.inventory(uid)`, `players.giveItem(...)`, `players.takeItem(...)` | `Inventory.*`, `ObjectDB.GetItemPrefab` |
-| Chat output | `chat.send/sendTo` | routed `ChatMessage` / `ChatAgent` |
-| Chat commands | host-registered handlers (`commands.register`) | `Chat` capture + host dispatch |
+| Chat output | `chat.send/sendTo` | routed `ChatMessage` / `Networking/ChatService` |
 | Events: interaction | `onInteract` | `Interactable.Interact` |
 | Events: container | `onContainerChanged` | `Container`/`Inventory` patch |
 | Events: craft | `onCraft` | `InventoryGui.DoCrafting` / `CraftingStation` *verify server path* |

@@ -72,5 +72,5 @@ depend on you use the manifest value.
 - RPC notifications have no delivery confirmation; do not build flows that need acknowledgement.
 - Never store credentials in `ValheimJS/data/` — it is plain text next to the world files.
 - Do not assume a player's name is unique or persistent; the session `uid` is not stable across restarts.
-- If you need an API that does not exist yet (player state, item grants, commands), say so
+- If you need an API that does not exist yet (player state, item grants), say so
   rather than shipping a plugin that pretends to have it.

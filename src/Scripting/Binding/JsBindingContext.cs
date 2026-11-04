@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Network = ValheimJS.Core.Networking;
 
 namespace ValheimJS.Scripting.Binding;
 
@@ -15,6 +16,10 @@ public sealed class JsBindingContext : IDisposable
     private readonly List<JsBindings> _binders = new();
     private readonly Queue<Action> _posted = new();
     private readonly object _gate = new();
+    private readonly Network? _networking;
+    private readonly Core.ChatCommands? _commands;
+    private readonly Services.AccountService? _accounts;
+    private readonly Services.PermissionService? _permissions;
 
     public JsBindingContext(
         ProcessSide side,
@@ -24,7 +29,11 @@ public sealed class JsBindingContext : IDisposable
         string logsRoot,
         Func<string, string> dataDirectoryFor,
         Func<string, string> configDirectoryFor,
-        Action<string, string> log)
+        Action<string, string> log,
+        Network? networking = null,
+        Core.ChatCommands? commands = null,
+        Services.AccountService? accounts = null,
+        Services.PermissionService? permissions = null)
     {
         if (!Enum.IsDefined(typeof(ProcessSide), side)) throw new ArgumentOutOfRangeException(nameof(side));
         ProcessSide = side;
@@ -35,6 +44,10 @@ public sealed class JsBindingContext : IDisposable
         DataDirectoryFor = dataDirectoryFor;
         ConfigDirectoryFor = configDirectoryFor;
         _log = log ?? throw new ArgumentNullException(nameof(log));
+        _networking = networking;
+        _commands = commands;
+        _accounts = accounts;
+        _permissions = permissions;
     }
 
     /// <summary><c>server</c> on a dedicated process, <c>client</c> otherwise.</summary>
@@ -43,6 +56,11 @@ public sealed class JsBindingContext : IDisposable
 
     /// <summary>True for the dedicated-server process branch.</summary>
     public bool Dedicated => ProcessSide == ProcessSide.Server;
+    /// <summary>Process-owned services; engine disposal releases consumer scopes, not the service.</summary>
+    public Network Networking => _networking ?? throw new InvalidOperationException("Networking service was not supplied by the host.");
+    public Core.ChatCommands ChatCommands => _commands ?? throw new InvalidOperationException("Command registry was not supplied by the host.");
+    public Services.AccountService Accounts => _accounts ?? throw new InvalidOperationException("AccountService was not supplied by the host.");
+    public Services.PermissionService Permissions => _permissions ?? throw new InvalidOperationException("PermissionService was not supplied by the host.");
 
     /// <summary>Root of the script data area: <c>&lt;plugin root&gt;/data</c>.</summary>
     public string DataRoot { get; }
@@ -62,12 +80,6 @@ public sealed class JsBindingContext : IDisposable
     /// <summary>Resolves (and creates) a plugin's config directory.</summary>
     public Func<string, string> ConfigDirectoryFor { get; }
 
-
-    /// <summary>
-    /// Set by the command binding. The host offers every chat message here first; returning
-    /// true means it was a command and must not reach <c>onChat</c> handlers.
-    /// </summary>
-    public Func<string, bool>? ChatInterceptor { get; set; }
 
     /// <summary>Per-plugin folder (bundle + manifest).</summary>
     public string PluginDirectoryFor(string plugin) => Path.Combine(PluginRoot, plugin);

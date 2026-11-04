@@ -71,6 +71,8 @@ public static class RpcBus
     private static ZRoutedRpc? _registered;
     private static bool _installed;
 
+    public static bool Available => _installed && ZRoutedRpc.instance != null && ReferenceEquals(ZRoutedRpc.instance, _registered);
+
     public static void Install()
     {
         if (!_installed) { ZNet.s_onZNetStart += Refresh; _installed = true; }

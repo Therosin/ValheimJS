@@ -113,6 +113,7 @@ internal sealed class JsRuntime : IDisposable
 
         _engine = new Engine(opt =>
         {
+            opt.Host.JobCallbacks = new PluginJobCallbacks();
             // Plugins are untrusted: bound the engine instead of trusting plugin authors. CLR
             // access stays off unless a binding explicitly hands a function over.
             if (options.MaxStatements > 0)
@@ -389,7 +390,34 @@ internal sealed class JsRuntime : IDisposable
 
     private double Now() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-    private string CurrentPlugin => _active.Count > 0 ? _active[_active.Count - 1] : "host";
+    private string CurrentPlugin
+    {
+        get
+        {
+            // Binding callbacks restore context without entering Run; promise reactions also
+            // carry their own context. Timers created there must belong to that plugin.
+            var context = _engine.GetValue("__vjs_context");
+            if (context is ObjectInstance obj && obj.Get("name").IsString()) return obj.Get("name").AsString();
+            return _active.Count > 0 ? _active[_active.Count - 1] : "host";
+        }
+    }
+
+    private sealed class PluginJobCallbacks : Jint.Runtime.JobCallbackHooks
+    {
+        protected override object? Capture(Engine engine)
+        {
+            var context = engine.GetValue("__vjs_context");
+            return context is ObjectInstance ? context : null;
+        }
+        protected override object? Enter(Engine engine, object hostDefined)
+        {
+            var previous = engine.GetValue("__vjs_context");
+            engine.SetValue("__vjs_context", (JsValue)hostDefined);
+            return previous;
+        }
+        protected override void Exit(Engine engine, object? token)
+            => engine.SetValue("__vjs_context", token as JsValue ?? JsValue.Undefined);
+    }
 
     /// <summary>Marks the executing plugin so timers, context lookups and errors are attributed correctly.</summary>
     private T Run<T>(string plugin, Func<T> action)
