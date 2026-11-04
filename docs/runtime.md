@@ -1,0 +1,96 @@
+---
+title: Runtime ownership and limits
+description: How the current native services, scripting host and adapters fit together.
+---
+
+# Runtime ownership and limits
+
+ValheimJS ships one BepInEx DLL. It classifies the executable once, initializes shared and selected
+side modules, registers matching Harmony patches, then loads JS plugins. A player host uses the
+client branch; session authority is checked live. See [Process branches](guides/process-branches.md).
+
+## Native services own the behavior
+
+| Responsibility | Owner | JS surface |
+|---|---|---|
+| Channel/event scopes, request completion and consumer cleanup | `Core/Networking.cs` | `net` binding and `Rpc` facade |
+| Binary frame validation, codec, deltas and stream scopes | `Core/NetworkSync.cs` | `sync` binding and `Sync` facade |
+| Routed RPC registration and wire-level request correlation | `Utils/RpcBus.cs`, `Networking/RoutedRpcTransport.cs` | Reached through native networking services |
+| Identity/profile records and small publisher-owned account metadata | `Services/AccountService.cs` | `AccountService` queries and metadata operations |
+| Verified connections mapped to persistent accounts | `Services/AccountSessions.cs`, `Core/PlayerIdentity.cs` | `AccountService.fromPeer(...)` |
+| Default roles, role grants, direct grants/denials and permission catalogue | `Services/PermissionService.cs` | `PermissionService` queries; no JS editing methods |
+| Command routes, aliases, access checks, async stages and invocation lifetime | `Core/ChatCommands.cs`, `Commands/` | `ChatCommand` and `ChatCommands` |
+| Private command submission/replies over `valheimjs:commands` | `Networking/CommandService.cs`, `Hooks/CommandInputHook.cs` | `!` input and private `Commands` lines |
+| Script engine, branch components, dependency order, contexts and timers | `Scripting/` | Plugin descriptors and host API |
+| Atomic per-document persistence | `Storage/DocumentDatabase.cs` | Plugin document store and host service stores |
+
+Bindings adapt values and callbacks. The SDK shapes calls and types; it does not own subsystem
+registries. Native services do not depend on JS binding classes. Game-specific hooks, transport
+and connection adapters surround engine-independent cores tested by the headless harness.
+
+`Networking/ChatService.cs` is deliberately dormant and is never constructed at startup. Its
+retained code only receives server announcements on `valheimjs:chat/message` and displays a
+`Server` shout-style chat line. It does not implement commands or the active command transport.
+
+## Execution and failure boundaries
+
+The main-thread update pumps native network completions every frame. JS timers/promise jobs pump
+at `Runtime.TickMs` (200 ms by default). The `onServerTick` hook comes from a separate ~1 Hz
+`ZNet.Update` patch and also fires on connected clients. Neither its name nor process side proves
+authority; account/policy services require `ZNet.IsServer()` in a live session.
+
+Setup/teardown, RPC responders and help callbacks are synchronous contracts. Commands await
+their validation/execution tasks and recheck role/permission policy before both stages.
+Ordinary event-hook promises are not awaited for results or command-style error handling.
+Synchronous hook failures unload that plugin; a failing interval stops that interval; command
+failure ends the invocation; request responder failure fails that request.
+
+Callbacks and promise jobs restore their owning plugin context. Cross-plugin exports are ordinary
+JS calls: capture provider-owned collections or scoped APIs when exporting operations. `use`
+does not change the executing provider automatically or perform an RPC.
+
+Shutdown unloads scripts while services remain usable, releases native command scopes, then stops
+network scopes and RpcBus. Script reload reconstructs all branch components and clears their
+in-memory registrations, timers and requests. Host account/policy services and durable files survive.
+
+## Storage boundaries and known limits
+
+| Store | Location | Intended use |
+|---|---|---|
+| Plugin documents/files | `data/<plugin>/` | Detailed private plugin state |
+| Host string storage | `data/<plugin>/storage.json` | Small string key/value convenience store |
+| Account store | `services/accounts/` | Verified identities, host profile fields, small shared publisher records |
+| Policy store | `services/permissions/` | Role definitions, account policy and permission descriptions |
+
+Account metadata is a JSON object capped at 16 KiB per publisher/account. Other plugins on the
+authority may read it; only its publisher writes it. A shared bank-account id is a lookup link;
+the bank's own exports still authorize and perform withdrawals/deposits.
+
+The document backend caches collections. It is not a multi-process database, has no cross-document
+transactions and does not automatically observe external edits. Writes fail explicitly and update
+cache only after a successful file replacement. The string-storage convenience file uses its own
+format and should not be treated as a JSON document database or transactional store.
+
+The current document filename escaping can collide: `a/b` and `a_002fb` map to the same key. This
+is a confirmed backend limitation, retained here because changing persisted key encoding requires
+a separate data-format decision. Prefer already-safe stable ids such as account GUIDs and simple
+collection names. Host account/publisher keys use GUIDs/hashes and do not need that escaping.
+
+General player/inventory APIs, general chat broadcasting, new content registration and automatic
+sync replication are not implemented. See the [roadmap](api-roadmap.md) for proposed work.
+
+The heartbeat payload currently contains `world`, `peers`, `day` and `dayFraction`; use
+`game().snapshot()` when you need `timeOfDay`. The SDK's `ServerTickPayload` currently aliases
+the broader game-snapshot type, so that annotation alone does not guarantee the extra field.
+
+## Verification coverage
+
+`task check` covers typechecking, SDK unit tests, native compilation, generated-declaration drift,
+bundling, binding/process/network/command/account/management probes and example reloads. Role
+and help probes include actual JS registration through the native bindings, not only facade mocks.
+
+Development live checks exercised client/dedicated startup, private commands, Valheim admin
+recognition, management CRUD, default-role persistence, account lookup/shared-data boundaries,
+network requests/binary frames and contextual help. The player-host authority-transition check
+was deferred; headless transition tests do not replace that live check. Live checks preceded the
+final cleanup commit; the cleanup was verified with `task check` rather than another deployment.

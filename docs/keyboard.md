@@ -9,7 +9,7 @@ description: Register keyboard actions from JavaScript and C#.
 client-only and installed by the `input` binding class; all state is host-owned.
 
 ```ts
-import { definePlugin, input, log } from "../../../../sdk/index";
+import { definePlugin, input, log } from "../../../sdk/index";
 
 export default definePlugin({
     version: "1.0.0",

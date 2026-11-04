@@ -4,8 +4,9 @@ title: Getting started
 
 # Getting started
 
-You need a Valheim process with the ValheimJS mod installed (`ValheimJS/` next to the game
-executable), plus [Bun](https://bun.sh) for building. No game code knowledge and no C# compiling.
+You need ValheimJS installed under BepInEx, plus [Bun](https://bun.sh) for building scripts.
+`ValheimJS/` next to the game executable is the default scripting/data root; the runtime DLLs
+belong under `BepInEx/plugins/ValheimJS/`. Writing a JS plugin does not require compiling C#.
 
 ## 1. Create a plugin
 
@@ -41,8 +42,9 @@ export default definePlugin({
             log(`world "${snapshot.world ?? "(loading)"}", day ${snapshot.day}`);
         }
 
-        ctx.state.ticks = Number(ctx.state.ticks ?? 0) + 1;
-        if (ctx.state.ticks % 60 === 0) {
+        const ticks = Number(ctx.state.ticks ?? 0) + 1;
+        ctx.state.ticks = ticks;
+        if (ticks % 60 === 0) {
             log(`${game().peers()} peer(s) online`);
         }
     }
@@ -58,8 +60,8 @@ bun run typecheck                    # catches typos before the host sees them
 bun run build.ts greeter             # → scripting/dist/greeter/{shared.js,manifest.ini}
 ```
 
-Bundling flattens your imports into one plain script the host evaluates. SDK and codec modules can
-be imported by path or URL; Bun resolves them at build time.
+Bundling flattens imports into a plain script for each entry. Use local source modules or bundled
+packages; there is no module loader, Bun runtime, Node filesystem API or browser DOM in the game.
 
 ## 3. Deploy it
 
@@ -87,8 +89,10 @@ The mod's settings file path is printed in the log as `settings file: …`. Add:
 WatchForChanges = true
 ```
 
-Saving anything under `ValheimJS/plugins/` reloads every plugin within a second or so. Leave it off
-on a public server: a reload drops all plugin state.
+Changing bundles under `ValheimJS/plugins/` requests a reload of every plugin. Reload drops
+in-memory state, timers, command registrations and pending plugin requests. Files, documents,
+accounts, policy and published metadata persist. Keep this development setting off when a
+reload would interrupt players' work.
 
 ## Where things live
 
@@ -103,3 +107,7 @@ on a public server: a reload drops all plugin state.
 | Your logs | `<root>/ValheimJS/logs/<name>.log` |
 
 Next: [Process branches](process-branches.md) for shared/client/server structure, or [Plugin anatomy](plugin-anatomy.md) for hooks and context.
+
+For an interactive first plugin, the bundled `commands` example registers `!hello` and
+`!demo:hello`. Both peers need ValheimJS. Try `!hello name="Test Player" welcome home`, then
+`!help hello name`. Commands and their replies are private. See [Chat commands](chat-commands.md).

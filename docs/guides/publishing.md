@@ -4,8 +4,9 @@ title: Publishing a plugin
 
 # Publishing a plugin
 
-A plugin is portable as a folder. Nothing is compiled per server, so what you tested is what other
-owners run.
+A JS plugin is portable as a folder for compatible ValheimJS hosts. Package the entries and API
+version you tested, and tell owners which processes need them; client/server availability and
+live authority still determine which operations work.
 
 ## 1. Package it
 
@@ -15,8 +16,8 @@ bun run typecheck
 bun run build.ts myplugin
 ```
 
-Take `scripting/dist/myplugin/` — it contains `manifest.ini` and the shared/server/client entries you built — and rename it to
-the plugin name if you like:
+Take `scripting/dist/myplugin/` with its manifest and built shared/server/client entries. Keep the
+folder name aligned with the manifest name; changing plugin identity also changes its data/config namespace:
 
 ```
 myplugin/
@@ -53,6 +54,9 @@ In your README, list:
 
 - the `apiVersion` you target (`1`)
 - any `depends` entries and where to get them
+- which entries belong on client, dedicated server or player hosts; whether peers need matching plugins
+- command names/aliases, contextual help and required roles/permissions
+- shared account metadata you publish and exports other plugins may call
 - config keys and their defaults
 - what the plugin writes under `ValheimJS/data/<name>/`
 - whether it is safe to enable on an existing world
@@ -68,9 +72,9 @@ depend on you use the manifest value.
 
 ## 5. Safety notes worth repeating
 
-- Handlers run on the server's main thread: document anything expensive, and default to doing less.
+- Handlers run on the owning process's main thread: document expensive work and gate authority explicitly.
 - RPC notifications have no delivery confirmation; do not build flows that need acknowledgement.
 - Never store credentials in `ValheimJS/data/` — it is plain text next to the world files.
-- Do not assume a player's name is unique or persistent; the session `uid` is not stable across restarts.
+- Key durable per-user records by the AccountService account id; names and session `uid` are not durable keys.
 - If you need an API that does not exist yet (player state, item grants), say so
   rather than shipping a plugin that pretends to have it.

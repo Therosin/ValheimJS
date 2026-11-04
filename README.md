@@ -12,7 +12,7 @@ the `Use...` properties in `ValheimJS.csproj` (or MSBuild properties such as
 navigation, content, effects, and UI Toolkit. All except UI Toolkit are enabled by default.
 These are compile-time references and are not copied into the plugin output.
 
-Server and client scripting for Valheim. Plugins are written in TypeScript, bundled by Bun into a
+Server and client scripting for Valheim. Plugins are written in TypeScript, bundled by Bun into
 independent shared/server/client scripts, and executed in-process by [Jint](https://github.com/sebastienros/jint) inside
 a BepInEx 5 plugin. The C# side is the authoritative implementation of the JavaScript API.
 
@@ -43,6 +43,9 @@ authors only (TypeScript, no engine internals). This README is for working on th
 | `src/Core/Networking.cs` | native channel/event scopes, requests and completion pump |
 | `src/Core/NetworkSync.cs` | binary frame streams, codec and deltas |
 | `src/Networking/` | networked services (`CommandService`), dormant `ChatService`, RpcBus adapter and DTO conversion |
+| `src/Commands/` | command definitions, parser, private help and management commands |
+| `src/Services/` | accounts, connection-to-account lookup, roles and permissions |
+| `src/Storage/` | document database backend, reused by plugin and host-owned stores |
 | `src/Hooks/` | Harmony capture points — register live singletons, emit events |
 | `src/Utils/` | RPC bus, JSON helpers, netstandard shims |
 | `scripting/sdk/` | TypeScript SDK: generated declarations + thin facades |
@@ -57,6 +60,8 @@ authors only (TypeScript, no engine internals). This README is for working on th
 ValheimJS/
   plugins/<name>/     manifest.ini + shared.js/server.js/client.js (entries optional)
   data/<name>/        this plugin's fs sandbox and db
+  services/accounts/  host-owned identity/profile and publisher metadata
+  services/permissions/ host-owned roles, grants, denials and permission catalogue
   config/<name>/      config.ini (read via host.config)
   logs/<name>.log     this plugin's log lines
 ```
@@ -91,7 +96,7 @@ The game must be closed to replace the plugin DLL. Plugin folders can be edited 
 ```ini
 name=hello
 version=1.0.0
-apiVersion=1        # must match the host, otherwise the plugin is rejected with a clear log line
+apiVersion=1
 enabled=true
 depends=core@^1.0.0 # optional; loaded first, reachable via ctx.dep("core")
 ```
@@ -117,7 +122,7 @@ export default definePlugin({
 
 ```ts
 // class form
-import { definePlugin, JsPlugin } from "../../../sdk/index";
+import { definePlugin, JsPlugin, log } from "../../../sdk/index";
 
 class Greeter extends JsPlugin {
     exports = { greet: (name: string) => `hello ${name}` };
@@ -145,7 +150,7 @@ export default definePlugin(Greeter);
 | `onChat` | `{ channel, senderId, text }` | `Chat.RPC_ChatMessage` prefix |
 | `onPlayerJoin` / `onPlayerLeave` | `{ uid, name }` | `ZNet.SendPlayerList` postfix + peer diff |
 | `onPlayerSpawned` / `onPlayerDespawned` | `{ uid, name }` | heartbeat poll over character ZDOs |
-| `onDamage` | `{ target, attacker, damage, hp, hitType }` | `Character.Damage` postfix |
+| `onDamage` | `{ target, attacker, damage, targetHealth, targetMaxHealth, hitType, ... }` | `Character.Damage` postfix |
 
 ## Bindings (`host.api`)
 
@@ -155,6 +160,9 @@ export default definePlugin(Greeter);
 | `world` | `WorldBindings` | ZDO counts, spawning, per-object data |
 | `net` | `NetBindings` | adapter over `Core/Networking` channels/events |
 | `sync` | `SyncBindings` | adapter over `Core/NetworkSync` binary frames |
+| `ChatCommands` | `ChatCommandsBindings` | native command registry, account gates and contextual help |
+| `AccountService` | `AccountBindings` | authoritative account queries and publisher-owned metadata |
+| `PermissionService` | `PermissionBindings` | authoritative role and permission queries |
 | `input` | `InputBindings` | keyboard bindings + phase callbacks (client) |
 | `fs` | `FileSystemBindings` | sandboxed files |
 | `db` | `DatabaseBindings` | per-plugin document collections |
@@ -195,23 +203,27 @@ Plugin code is untrusted, so the engine is bounded rather than trusted (config
 | `MaxStatements` | 5 000 000 | statement budget per execution; runaway loops are aborted |
 | `TimeoutMs` | 2 000 | wall-clock budget per execution |
 | `LimitRecursion` | 256 | JS call depth |
-| `TickMs` | 200 | timer/heartbeat granularity |
+| `TickMs` | 200 | JS timer/promise pump interval; network completions pump each frame |
 
 Violations surface as a normal hook error (`plugin disabled`), not a hung server.
 
-`async`/`await` works: the host pumps the engine's continuation queue every tick, so
-`await Rpc.channel(...).request(...)` resumes on a later tick. This needs Jint ≥ 4.17 (the version
-pinned here).
+Commands await asynchronous validation/execution. Setup, teardown, RPC responders and command
+help must be synchronous. Ordinary event-hook promise results are ignored; handle asynchronous
+errors in your own code. Timers and promise jobs preserve plugin context; see
+[Plugin anatomy](docs/guides/plugin-anatomy.md#lifecycle) for the distinct failure paths.
 
 ## Design notes
 
 - The C# side is the implementation; the SDK is generated declarations plus thin facades.
-- Patches capture, JS decides: no plugin behaviour in C#.
+- Patches capture game events. Native services own subsystem policy and lifecycle; scripts add plugin behavior.
 - Lifecycle, timers, RPC dispatch and plugin scoping live in the host, not in the SDK.
 - `host.api.game.*` is read live per call; at boot `ZNet` is uninitialized, so values are
   null/zero until the world loads.
-- Binding classes are the only place game types are touched; the host stays game-agnostic and is
-  covered by `harness/`.
+- Bindings adapt JS calls; game integration also lives in hooks, transport and connection adapters.
+  The scripting host and native service cores run independently of Unity in `harness/`.
+
+See the [documentation index](docs/README.md) and [runtime ownership](docs/runtime.md) for the
+current source map, verification coverage and limits.
 
 ## Troubleshooting
 

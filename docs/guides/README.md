@@ -60,8 +60,10 @@ bun run build.ts greeter --deploy "<server>/ValheimJS/plugins"
 - Everything runs on the game's main thread. Hooks must be **fast** — no loops over thousands of
   entries, no blocking work in `onServerTick`.
 - `onServerTick` fires about once a second; chat/player/damage hooks fire on the event only.
-- A plugin that throws is disabled with a log line; the server and other plugins keep running.
+- A synchronous hook failure disables that plugin; command/request failures have their own
+  lifecycle. See [Plugin anatomy](plugin-anatomy.md#lifecycle).
 - A plugin can only touch its own `data/` folder and its own database.
 - The API version is `1`. A plugin declaring another `apiVersion` is refused at load.
-- The game API is grouped: `game`, `world`, `net`, `sync`, `ChatCommands`, `input`, `fs`, `db`. Types are generated from
+- The game API is grouped: `game`, `world`, `net`, `sync`, `ChatCommands`, `AccountService`,
+  `PermissionService`, `input`, `fs`, `db`. Types are generated from
   the C# bindings, so your editor always matches the running host.

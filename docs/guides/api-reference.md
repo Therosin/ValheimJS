@@ -142,6 +142,36 @@ with `!help command [query]`; `!help` lists accessible commands. See the
 Commands use `!name` or `!category:name`; replies and errors stay private. Async validation and
 execution are supported. See [Chat commands](chat-commands.md) for parsing rules and examples.
 
+## `AccountService` and `PermissionService`
+
+Both bindings install on either process branch; their queries and writes require a live session
+with server authority. Connected clients do not receive replicas. Use these SDK facades:
+
+```ts
+import { AccountService, PermissionService } from "../../../sdk/index";
+
+AccountService.available(): boolean
+AccountService.get(id): Account | null
+AccountService.findByPlatform(platformId): Account | null
+AccountService.fromPeer(peerId: string): Account | null
+AccountService.getData<T>(id): T | null
+AccountService.readPublishedData<T>(id, publisher): T | null
+AccountService.setData(id, object): void
+AccountService.deleteData(id): void
+PermissionService.available(): boolean
+PermissionService.hasRole(id, role): boolean
+PermissionService.hasPermission(id, permission): boolean
+```
+
+`getData` reads your publisher namespace; `readPublishedData` can read another publisher's
+small shared record. Writes/deletes always use the calling plugin's namespace. The low-level
+`ctx.host.api.AccountService.setData` takes JSON text; the SDK facade serializes the object.
+Keep detailed state in your own database and publish lookup links when other plugins need it.
+
+Profile and policy editing are native management operations, not JS binding methods. Default
+roles are `admin` (`*`), `staff` and `player`; new access records use `player`. See
+[Accounts](accounts.md) and [Management](management.md).
+
 ## `input`
 
 
@@ -253,18 +283,17 @@ See [Process branches](process-branches.md) for player-host semantics and exampl
 
 ## Identity
 
-There is no player API yet. When you need a durable player key, address it with the identity
-utility in C# (`ValheimJS.Core.PlayerIdentity`) or wait for the player binding; the session `uid`
-in `onPlayerJoin` is not stable across restarts.
-
-For persistent account identity use [AccountService](accounts.md), which resolves verified platform
-identities to stable account ids. Profile and policy editing remain host-owned.
+Use [AccountService](accounts.md) to resolve verified platform identities to stable account ids.
+`fromPeer(String(uid))` maps a live connection to its account; the event peer `uid` is not stable
+across sessions. C# game adapters use `ValheimJS.Core.PlayerIdentity`. Player stats/inventory APIs
+remain future work; profile and policy editing are host-owned.
 
 ## Not available yet
 
 Do not work around these by guessing:
 
-- player stats, inventory, teleporting and permission APIs
+- player stats, inventory and teleporting APIs
+- JS profile/policy editing (use the native management commands)
 - item catalogue access and item grants
 - general chat output outside command replies
 - intercepting or cancelling damage

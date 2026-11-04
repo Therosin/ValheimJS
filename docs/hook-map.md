@@ -23,10 +23,12 @@ should offer. Not modder-facing — see `guides/` for that.
 
 | Hook | Capture point | Why |
 |---|---|---|
-| `onChat` | `Chat.RPC_ChatMessage` **prefix** | server-side chat ingress; the method defers through async permission checks and bails without a local player, so a postfix would fire late or never |
+| `onChat` | `Chat.RPC_ChatMessage` **prefix** | observes routed chat arriving on this process before the game's async permission checks; private `!` commands use a separate channel |
 | `onPlayerJoin` / `onPlayerLeave` | `ZNet.SendPlayerList` postfix + peer diff | the handshake (`RPC_PeerInfo`) returns early on bad password/full/version mismatch; diffing the published list only reports peers that actually made it |
-| `onServerTick` | `ZNet.Update` postfix, 1 Hz | cheap scheduling point |
-| `onDamage` | `Character.Damage` postfix | server-side funnel for applied hits |
+| `onServerTick` | `ZNet.Update` postfix, ~1 Hz | shared patch on dedicated and client processes; use live authority checks before mutations |
+| `onPlayerSpawned` / `onPlayerDespawned` | heartbeat poll over spawned character lookups | character readiness is distinct from peer connection |
+| `onDamage` | `Character.Damage` postfix | read-only observation on the process receiving the call; this hook does not veto damage |
+| Native private commands | `Chat.InputText` prefix (client-only) | consumes `!` input and submits it through `CommandService`; ordinary chat and `/` input continue normally |
 | `game.*` | `ProcessPolicy` (executable/override), `ZNet.IsServer()` | side detection at startup and at runtime |
 
 ## Highest-value next candidates

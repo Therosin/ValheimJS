@@ -40,7 +40,7 @@ them as a `Server` chat line with the shout style. It does not parse or execute 
 ## JavaScript events
 
 ```ts
-import { definePlugin, Rpc } from "../../../sdk/index";
+import { definePlugin, log, Rpc } from "../../../sdk/index";
 
 export default definePlugin({
     version: "1.0.0",
@@ -59,11 +59,20 @@ export default definePlugin({
             return { ok: data.amount > 0 };
         });
 
-        shop.emit("stock", { coins: 50 });            // broadcast
-        shop.emit("stock", { coins: 50 }, peerId);    // one peer
         void off;
     }
 });
+```
+
+Send from an event or timer after networking becomes available:
+
+```ts
+if (Rpc.available()) {
+    const shop = Rpc.channel("my_mod.shop");
+    shop.emit("stock", { coins: 50 }); // Broadcast to current peers.
+    const peer = Rpc.serverPeer();
+    if (peer) shop.emit("stock", { coins: 50 }, peer);
+}
 ```
 
 To ask one peer for a reply:

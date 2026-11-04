@@ -4,8 +4,7 @@ title: Troubleshooting
 
 # Troubleshooting
 
-Start with **`ValheimJS/logs/<your-plugin>.log`**. Every `log()` line lands there, plus anything
-the host says about your plugin. The shared log has the same lines with a `[your-plugin]` prefix.
+Start with **`ValheimJS/logs/<your-plugin>.log`** for plugin log() output. Also inspect the BepInEx log: startup, hook failure and binding diagnostics may appear only there.
 
 ## My plugin does not load
 
@@ -20,9 +19,9 @@ Check, in order:
 
 ## "did not export a descriptor"
 
-Your entry file must `export default definePlugin({...})` or `definePlugin(MyClass)`. A v1 bundle
-sets `globalThis.__vjs_plugin` to a plugin object; v2 expects the descriptor. Rebuild with the v2
-SDK — the old runtime is not maintained.
+Your entry file must `export default definePlugin({...})` or `definePlugin(MyClass)`. Rebuild it
+with this project's bundler so each plain script installs the descriptor expected by API version 1.
+Raw ES modules and scripts that never install a descriptor are not valid deployed entries.
 
 ## The plugin loaded, then went silent
 
@@ -100,6 +99,20 @@ at most every few seconds, and send one event per change.
 - A receiver may not be ready immediately after joining; add a readiness handshake.
 - The sender is a routed peer id, not an authorisation token.
 
+## Commands, help or accounts are denied
+
+- Native management requires the caller's verified platform identity to be in Valheim's admin
+  list, or the account permission `valheimjs.manage`. See [Management](management.md).
+- Valheim admin recovery does not imply membership in every plugin role. A plugin command with
+  `roles: ["staff"]` still requires `staff`; include `admin` explicitly if it should be allowed.
+- Role requirements use any listed role; permission requirements use every listed permission.
+  Explicit account denials override grants. Aliases and help targets use the same access gate.
+- Account/policy APIs require live server authority, including when used from a client-process
+  player host. Setup can run before a session exists; a client connected to another host cannot
+  query that host's store locally.
+- `!help command [query]` accepts static text or a synchronous help callback. A promise or
+  non-string result is rejected; inspect the shared log for the detailed callback error.
+
 ## Reload does not pick up my change
 
 `Dev/WatchForChanges` must be `true`, and the file must change under `ValheimJS/plugins/**`.
@@ -124,5 +137,6 @@ part only.
 
 ## Nothing in `logs/`
 
-The folder is created on first plugin load. If it is missing, no plugin ever loaded successfully —
-go back to "My plugin does not load".
+The host creates the logs directory while loading plugins, but a per-plugin file may not exist
+until the plugin emits a log line. Check BepInEx's shared log for startup and load failures, and
+verify the configured `PluginRoot` before concluding that a plugin did not run.

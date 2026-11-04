@@ -16,16 +16,20 @@ client.js       client component (optional)
 ## manifest.ini
 
 ```ini
-name=greeter          # required, unique; also the folder name and log name
-version=1.0.0         # required, semver
-apiVersion=1          # required, must match the host
-enabled=true          # optional, default true
-depends=core@^1.0.0   # optional, comma-separated name@range
+name=greeter
+version=1.0.0
+apiVersion=1
+enabled=true
+depends=core@^1.0.0
 ```
 
 `depends` accepts `*`, an exact version (`1.2.3`), `>=1.2.3`, or `^1.2.3` (same major). Missing,
 incompatible, or circular dependencies fail that plugin with a log line — nothing else is
 affected. Dependencies load first, so their `exports` exist by the time your `setup` runs.
+
+Give each plugin a unique stable name and keep its folder aligned with that name. Ship explicit
+name/version/API fields even though the loader has defaults. `enabled` defaults to true and
+`depends` is optional. Put comments on separate `#` lines; inline comments are part of the value.
 
 ## Two plugin forms, one lifecycle
 
@@ -83,8 +87,9 @@ class Greeter extends JsPlugin {
 export default definePlugin(Greeter);
 ```
 
-The host owns instantiation and gives entry evaluation an active context. There is no hidden event bus, and `ctx` is
-always the right plugin. There is no `this.on/emit`; keep local state in fields and use
+The host owns instantiation and gives entry evaluation an active context. Host-dispatched hooks,
+binding callbacks, timers and promise jobs restore their owning plugin context. Ordinary calls
+to another plugin's exported functions remain ordinary JS calls; see below. Keep local state in fields and use
 `exports` for other plugins.
 
 ## Lifecycle
@@ -93,8 +98,8 @@ always the right plugin. There is no `this.on/emit`; keep local state in fields 
 |---|---|---|
 | `setup(ctx)` / `onLoad(ctx)` | — | once, after dependencies load |
 | `teardown(ctx)` / `onUnload(ctx)` | — | before the plugin is dropped |
-| `onServerTick(ctx, snapshot)` | `GameSnapshot` | ~1 Hz |
-| `onChat(ctx, payload)` | `{ channel, senderId, text }` | a chat message reaches the server |
+| `onServerTick(ctx, snapshot)` | `{ world, peers, day, dayFraction }` | ~1 Hz on a process with `ZNet` |
+| `onChat(ctx, payload)` | `{ channel, senderId, text }` | routed chat reaches this process |
 | `onPlayerJoin` / `onPlayerLeave` | `{ uid, name }` | a peer appears/disappears |
 | `onPlayerSpawned` / `onPlayerDespawned` | `{ uid, name }` | a character enters/leaves the world |
 | `onDamage(ctx, payload)` | `DamagePayload` | a hit was applied (read-only) |
@@ -103,11 +108,16 @@ Rules that matter:
 
 - **Main thread.** Everything runs in the game's frame. Keep handlers short; push work into
   `setInterval` only when it is cheap.
-- **One bad hook disables the plugin.** A throwing handler is logged with the hook name and the
+- **A synchronous hook failure disables the plugin.** A throwing handler is logged with the hook name and the
   plugin stops receiving events. The server and other plugins carry on.
 - **Unload is best effort.** Persist anything important as you go.
-- **No `await` in responders.** `net` request handlers must return synchronously; timers and
-  notifications may use `async` freely because the host pumps continuations on the next tick.
+- **Different async contracts.** Setup/teardown, RPC responders and command help must return
+  synchronously. The command registry awaits `validate` and `execute`. Ordinary event-hook promise
+  results are ignored; catch errors in work started from hooks/timers/notifications rather than
+  assuming command-style failure handling. A failing synchronous interval is stopped; an RPC
+  responder error fails its request, and a command error fails that invocation.
+- **The heartbeat is not an authority gate.** Despite its name, `onServerTick` also fires on a
+  connected client. Use `authorityHandler` or check `game().isServer()` before authoritative work.
 
 ## `ctx`
 
@@ -122,7 +132,7 @@ Rules that matter:
 | `ctx.host.api` | Game API — see [API reference](api-reference.md) |
 | `ctx.host.log(level, msg)` | `info` / `warn` / `error` |
 | `ctx.host.config(key)` | Value from `config/<name>/config.ini`, else the manifest |
-| `ctx.host.storage.get/set` | Small key/value strings persisted in your plugin folder |
+| `ctx.host.storage.get/set` | Small key/value strings persisted under `data/<plugin>/storage.json` |
 | `ctx.host.now()` | Epoch milliseconds |
 | `ctx.host.info()` | `{ name, version, api, dir }` |
 
@@ -161,7 +171,12 @@ export default definePlugin({
 const core = context().dep<{ formatPlayer(name: string, uid: number): string }>("core");
 ```
 
-`exports` are live objects in one shared engine, so calls are direct and synchronous.
+Or consume them with `use("core", core => { /* call core methods */ })`.
+Exports are live objects in one engine; they can contain functions and objects. There is no
+network request or automatic provider-context switch. For exported operations that access a
+provider's store, capture its `database()` collection or scoped `ctx.host.api` during provider
+setup and close over that value. Do not rely on the caller's active `context()` identifying the
+provider. See [Accounts](accounts.md#publish-something-another-plugin-needs) for shared account links.
 
 ## Configuration
 
@@ -174,8 +189,9 @@ welcome=Welcome to the server!
 const welcome = context().host.config("welcome") ?? "Welcome!";
 ```
 
-Config is read on demand, so edits apply after a reload. Values from `config.ini` win over the
-manifest; both are plain strings.
+Config is read from disk on each lookup: edits to `config.ini` apply to the next call. Values
+cached by your plugin need explicit refresh or reload. Config values win over the manifest,
+which is read when plugins load. Both are plain strings.
 
 ## Timers
 
@@ -186,9 +202,10 @@ clearInterval(id);
 ```
 
 Timers are host-driven and belong to the plugin that created them; they are dropped on unload.
-Precision is tens of milliseconds.
+Timers are checked at the runtime's `TickMs` interval (200 ms by default) and may fire later
+under load. They are scheduling helpers, not precise clocks.
 
 ## Versioning your plugin
 
-Bump `version` in the manifest and in `definePlugin` together. Other plugins depend on the
-manifest value; the `definePlugin` value is informational for `ctx.host.info()`.
+The manifest version drives dependency checks and `ctx.host.info()`. A descriptor's `version`
+field is not used for host version checks; keep it aligned when supplied.

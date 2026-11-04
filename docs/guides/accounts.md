@@ -53,6 +53,11 @@ exports own transaction validation and actual debits. Declare `depends=bank@*` i
 plugin's manifest so the provider loads first. `use` consumes exports on the same process;
 cross-process communication still uses networking.
 
+Provider exports are ordinary JS calls. Capture the provider's `database()` collection or
+`ctx.host.api` in its setup when implementing those exported account operations; that preserves
+the provider's storage scope when a consumer calls them. See
+[Sharing code between plugins](plugin-anatomy.md#sharing-code-between-plugins).
+
 ## Find an account
 
 ```ts
