@@ -14,6 +14,7 @@ namespace ValheimJS.Hooks;
 /// check and bails early when there is no local player, so a postfix could fire late or not
 /// at all. The event describes the message arriving, which is what plugins care about.
 /// </summary>
+[ValheimJS.Scripting.Shared]
 [HarmonyPatch(typeof(Chat), "RPC_ChatMessage")]
 internal static class ChatHook
 {

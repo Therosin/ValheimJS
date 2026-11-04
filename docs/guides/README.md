@@ -1,14 +1,19 @@
+---
+title: ValheimJS guides
+---
+
 # ValheimJS guides
 
-Write server logic for Valheim in TypeScript. A plugin is a folder with a bundled script and a
-manifest; the server loads it at startup and calls your handlers as things happen.
+Write server and client logic for Valheim in TypeScript. A plugin is a folder with a bundled
+script and a manifest; the host loads it, builds its context and calls your hooks.
 
 | Guide | Read it when |
 |---|---|
 | [Getting started](getting-started.md) | First plugin, build, deploy, see it run |
-| [Plugin anatomy](plugin-anatomy.md) | Manifest fields, lifecycle, state, dependencies, errors |
-| [API reference](api-reference.md) | Every function and hook you can call |
-| [Recipes](recipes.md) | Welcome messages, chat commands, status files, admin-only commands |
+| [Plugin anatomy](plugin-anatomy.md) | Manifest fields, class vs object form, hooks, state, deps |
+| [API reference](api-reference.md) | Every namespace, function and hook you can call |
+| [Recipes](recipes.md) | Spawning, status files, persistence, RPC, keyboard |
+| [Process branches](process-branches.md) | Shared/server/client entries, startup gates and player hosts |
 | [Troubleshooting](troubleshooting.md) | Nothing loads, plugin disabled, wrong values |
 | [Publishing](publishing.md) | Handing a plugin to other server owners |
 
@@ -16,21 +21,27 @@ manifest; the server loads it at startup and calls your handlers as things happe
 
 ```
 ValheimJS/
-  plugins/<name>/     plugin.js + manifest.ini     ← your plugin lives here
-  data/<name>/        your sandboxed files
-  config/<name>/      config.ini you read at runtime
+  plugins/<name>/     manifest.ini + shared/server/client.js   ← entries optional
+  data/<name>/        sandboxed files + db
+  config/<name>/      config.ini read at runtime
   logs/<name>.log     your log lines
 ```
 
 ```ts
-// ValheimJS/plugins/greeter/index.ts
-import { definePlugin, log } from "../../sdk/index";
+// scripting/plugins/greeter/shared/main.ts
+import { definePlugin, log, world } from "../../../sdk/index";
 
 export default definePlugin({
     version: "1.0.0",
-    onPlayerJoin(ctx, player) {
-        log(`${player.name} joined`);
-        ctx.host.api.chat.send(`Welcome ${player.name}!`);
+
+    setup(ctx) {
+        log(`ready; data at ${ctx.paths.data}`);
+    },
+
+    onServerTick(ctx, snapshot) {
+        if (ctx.state.day === snapshot.day) return;   // cheap guard
+        ctx.state.day = snapshot.day;
+        log(`day ${snapshot.day} begins (${world().zdoCount()} objects)`);
     }
 });
 ```
@@ -38,17 +49,16 @@ export default definePlugin({
 ```bash
 cd scripting
 bun run typecheck
-bun run build.ts greeter --deploy ../ValheimJS/plugins
+bun run build.ts greeter --deploy "<server>/ValheimJS/plugins"
 ```
 
 ## Ground rules
 
-- Everything runs on the server's main thread. Handlers must be **fast** — no loops over
-  thousands of entries, no blocking I/O in `onServerTick`.
-- `onServerTick` fires about once a second. `onChat` / `onPlayerJoin` / `onPlayerLeave` fire on
-  the event only.
-- A plugin that throws is disabled with a log line; the server keeps running and other plugins
-  are unaffected.
-- Your plugin can only touch its own `data/` folder. Paths outside it throw.
-- The API version is `1`. A plugin declaring a different `apiVersion` is refused at load.
-- Server and client can talk to each other with `Networking` (JSON messages on named channels).
+- Everything runs on the game's main thread. Hooks must be **fast** — no loops over thousands of
+  entries, no blocking work in `onServerTick`.
+- `onServerTick` fires about once a second; chat/player/damage hooks fire on the event only.
+- A plugin that throws is disabled with a log line; the server and other plugins keep running.
+- A plugin can only touch its own `data/` folder and its own database.
+- The API version is `1`. A plugin declaring another `apiVersion` is refused at load.
+- The game API is grouped: `game`, `world`, `net`, `input`, `fs`, `db`. Types are generated from
+  the C# bindings, so your editor always matches the running host.

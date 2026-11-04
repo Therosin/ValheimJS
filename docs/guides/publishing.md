@@ -1,3 +1,7 @@
+---
+title: Publishing a plugin
+---
+
 # Publishing a plugin
 
 A plugin is portable as a folder. Nothing is compiled per server, so what you tested is what other
@@ -11,13 +15,15 @@ bun run typecheck
 bun run build.ts myplugin
 ```
 
-Take `scripting/dist/myplugin/` — it contains `plugin.js` and `manifest.ini` — and rename it to
+Take `scripting/dist/myplugin/` — it contains `manifest.ini` and the shared/server/client entries you built — and rename it to
 the plugin name if you like:
 
 ```
 myplugin/
   manifest.ini
-  plugin.js
+  shared.js    # optional
+  server.js    # optional
+  client.js    # optional
 ```
 
 Zip that folder, or put it in a repository. Users drop it into `<server>/ValheimJS/plugins/`.
@@ -45,7 +51,7 @@ const interval = Number(ctx.host.config("announce_interval") ?? "300");
 
 In your README, list:
 
-- the `apiVersion` you target (`1` today)
+- the `apiVersion` you target (`1`)
 - any `depends` entries and where to get them
 - config keys and their defaults
 - what the plugin writes under `ValheimJS/data/<name>/`
@@ -63,8 +69,8 @@ depend on you use the manifest value.
 ## 5. Safety notes worth repeating
 
 - Handlers run on the server's main thread: document anything expensive, and default to doing less.
-- `chat.send` is best effort; do not build flows that need acknowledgement.
+- RPC notifications have no delivery confirmation; do not build flows that need acknowledgement.
 - Never store credentials in `ValheimJS/data/` — it is plain text next to the world files.
-- Do not assume a player's name is unique or persistent; use the session `uid` for live state.
-- If you need an API that does not exist yet (world edits, combat events, custom RPC), say so
+- Do not assume a player's name is unique or persistent; the session `uid` is not stable across restarts.
+- If you need an API that does not exist yet (player state, item grants, commands), say so
   rather than shipping a plugin that pretends to have it.

@@ -14,6 +14,7 @@ internal static class ChatAgent
 {
     internal const string Channel = "valheimjs:chat";
     private static bool _installed;
+    private static IDisposable? _subscription;
 
     internal static void Install()
     {
@@ -23,9 +24,16 @@ internal static class ChatAgent
         }
 
         _installed = true;
-        Networking.RpcChannel.Received += Handle;
-        Networking.RpcChannel.Listen(Channel);
+        _subscription = Utils.RpcBus.Channel(Channel).On<string>("message", (ctx, payload) => Handle(Channel, ctx.Sender, payload));
+
         Plugin.Logger.LogInfo($"chat agent listening on '{Channel}'");
+    }
+
+    internal static void Shutdown()
+    {
+        _subscription?.Dispose();
+        _subscription = null;
+        _installed = false;
     }
 
     private static void Handle(string channel, long sender, string payload)
@@ -34,6 +42,9 @@ internal static class ChatAgent
         {
             return;
         }
+
+        var server = Bindings.NetBindings.ServerPeerId();
+        if (server == 0 || sender != server) return;
 
         try
         {

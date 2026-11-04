@@ -12,11 +12,13 @@
   <!-- Runs the real host code outside Unity. Same sources, no UnityEngine/BepInEx. -->
   <ItemGroup>
     <Compile Include="..\src\Scripting\**\*.cs" LinkBase="Shared\Scripting" />
-    <Compile Include="..\src\Utils\**\*.cs" LinkBase="Shared\Utils" />
+    <Compile Include="..\src\Utils\Json.cs" LinkBase="Shared\Utils" />
+    <Compile Include="..\src\Utils\CompilerSupport.cs" LinkBase="Shared\Utils" />
           </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Jint" Version="4.17.0" />
+    <PackageReference Include="System.Reflection.MetadataLoadContext" Version="8.0.0" />
   </ItemGroup>
 
 </Project>

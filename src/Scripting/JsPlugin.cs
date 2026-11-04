@@ -4,29 +4,31 @@ namespace ValheimJS.Scripting;
 
 /// <summary>
 /// A loaded plugin handle. The script state lives in the shared <see cref="JsRuntime"/>;
-/// this object carries identity, dependency bookkeeping and failure isolation.
+/// this object carries identity, failure isolation and the unload call.
 /// </summary>
 public sealed class JsPlugin
 {
     private readonly JsRuntime _runtime;
     private readonly IJsLog _log;
+    private readonly PluginRegistration _registration;
 
-    internal JsPlugin(JsRuntime runtime, PluginManifest manifest, string directory, int index, IJsLog log)
+    internal JsPlugin(JsRuntime runtime, PluginManifest manifest, string directory, PluginRegistration registration, IJsLog log)
     {
         _runtime = runtime;
         _log = log;
+        _registration = registration;
         Manifest = manifest;
         Directory = directory;
-        Index = index;
     }
 
     public PluginManifest Manifest { get; }
 
     public string Directory { get; }
 
-    internal int Index { get; }
-
     public string Name => Manifest.Name;
+
+    /// <summary>Hooks the host discovered on the plugin object or class.</summary>
+    public System.Collections.Generic.IReadOnlyCollection<string> Hooks => _registration.Hooks.Keys;
 
     public bool Failed { get; private set; }
 
@@ -39,12 +41,13 @@ public sealed class JsPlugin
 
         try
         {
-            return _runtime.Invoke(Index, hook, payloadJson);
+            return _runtime.Invoke(Name, hook, payloadJson);
         }
         catch (Exception exception)
         {
             Failed = true;
             _log.Write("error", Name, $"hook '{hook}' threw: {Describe(exception)} — plugin disabled");
+            _runtime.Unregister(Name);
             return null;
         }
     }
@@ -53,16 +56,18 @@ public sealed class JsPlugin
     {
         if (Failed)
         {
+            // Still drop registrations (timers, RPC handlers) for a failed plugin.
+            _runtime.Unregister(Name);
             return;
         }
 
         try
         {
-            _runtime.Invoke(Index, "onUnload", null);
+            _runtime.Unregister(Name);
         }
         catch (Exception exception)
         {
-            _log.Write("warn", Name, "onUnload threw: " + Describe(exception));
+            _log.Write("warn", Name, "unload threw: " + Describe(exception));
         }
     }
 

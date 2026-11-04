@@ -14,8 +14,7 @@ public sealed class PluginManifest
 
     public string Name { get; private set; } = string.Empty;
     public string Version { get; private set; } = "0.0.0";
-    public string ApiVersion { get; private set; } = "1";
-    public string Entry { get; private set; } = "plugin.js";
+    public string ApiVersion { get; private set; } = HostApiVersion.Current;
     public bool Enabled { get; private set; } = true;
 
     /// <summary>Dependency name → version requirement (<c>*</c>, <c>1.2.3</c>, <c>&gt;=1.2.3</c>, <c>^1.2.3</c>).</summary>
@@ -64,9 +63,6 @@ public sealed class PluginManifest
                 case "apiversion":
                     manifest.ApiVersion = value;
                     break;
-                case "entry":
-                    manifest.Entry = value;
-                    break;
                 case "enabled":
                     manifest.Enabled = bool.TryParse(value, out var enabled) && enabled;
                     break;
@@ -90,14 +86,6 @@ public sealed class PluginManifest
     }
 
     public string? Get(string key) => _values.TryGetValue(key, out var value) ? value : null;
-
-    /// <summary>Returns a copy with a different entry path (used for side-specific bundles).</summary>
-    public PluginManifest WithEntry(string entry)
-    {
-        var clone = (PluginManifest)MemberwiseClone();
-        clone.Entry = entry;
-        return clone;
-    }
 
     /// <summary>Minimal semver check: <c>*</c>, exact, <c>&gt;=</c>, <c>^</c> (same major).</summary>
     public static bool Satisfies(string version, string requirement)

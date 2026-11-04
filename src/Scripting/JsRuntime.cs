@@ -3,27 +3,118 @@ using System.Collections.Generic;
 using System.IO;
 using Jint;
 using Jint.Native;
+using Jint.Native.Function;
+using Jint.Native.Object;
+using Jint.Runtime;
+using Jint.Runtime.Descriptors;
+using Jint.Runtime.Interop;
+using ValheimJS.Scripting.Binding;
 
 namespace ValheimJS.Scripting;
 
+/// <summary>Paths a plugin may touch, exposed to scripts as <c>ctx.paths</c>.</summary>
+public sealed class PluginPaths
+{
+    public string Root { get; set; } = "";
+
+    public string Plugins { get; set; } = "";
+
+    public string Plugin { get; set; } = "";
+
+    public string Data { get; set; } = "";
+
+    public string Config { get; set; } = "";
+
+    public string Logs { get; set; } = "";
+
+    public string LogFile { get; set; } = "";
+}
+
+/// <summary>Manifest facts and host callbacks needed to build one plugin's context.</summary>
+public sealed class PluginServices
+{
+    public PluginPaths Paths { get; set; } = new();
+
+    public string Version { get; set; } = "0.0.0";
+
+    public string ApiVersion { get; set; } = HostApiVersion.Current;
+
+    /// <summary>Writes one plugin-scoped line to the shared log and its per-plugin file.</summary>
+    public Action<string, string>? Log { get; set; }
+
+    public Func<string, string?> Config { get; set; } = _ => null;
+
+    public Func<string, string?> StorageGet { get; set; } = _ => null;
+
+    public Action<string, string> StorageSet { get; set; } = (_, _) => { };
+}
+
+/// <summary>One plugin as the engine sees it: descriptor, context, hook table and exports.</summary>
+internal sealed class PluginRegistration
+{
+    public string Name { get; init; } = "";
+
+    public JsObject Context { get; init; } = null!;
+
+    public JsValue Exports { get; init; } = null!;
+
+    public Dictionary<string, Function> Hooks { get; init; } = new();
+
+    public JsValue Api { get; init; } = null!;
+    public List<PluginComponent> Components { get; } = new();
+}
+
+internal sealed class PluginComponent
+{
+    public string Entry { get; init; } = "";
+    public JsValue Instance { get; init; } = null!;
+    public bool IsClass { get; init; }
+    public Dictionary<string, Function> Hooks { get; init; } = new();
+}
+
 /// <summary>
 /// One Jint engine hosting every plugin. Shared state is what makes cross-plugin
-/// <c>exports</c> and <c>deps</c> work — separate engines cannot hand each other objects.
+/// <c>exports</c> and <c>dep(name)</c> work — separate engines cannot hand each other objects.
 /// Isolation is per plugin instead: a throwing handler disables only that plugin.
+/// <para>
+/// Lifecycle — class instantiation, context, dependency exports, hook discovery, timers and
+/// teardown — is owned here. Bundles are plain scripts that set
+/// <c>globalThis.__vjs_plugin</c> to a descriptor produced by the SDK trampoline.
+/// </para>
 /// </summary>
 internal sealed class JsRuntime : IDisposable
 {
-    private readonly IJsLog _log;
+    private const string DescriptorMarker = "__vjsPlugin";
+    private const string ClassKind = "class";
+    private const string ObjectKind = "object";
 
-    public JsRuntime(IJsLog log, JsRuntimeOptions? options = null)
+    private static readonly HashSet<string> ReservedMembers = new(StringComparer.Ordinal)
+    {
+        "constructor", "ctx", "host", "state", "exports", "version", "description",
+        "setup", "teardown", "onLoad", "onUnload", DescriptorMarker, "value",
+        "then", "toJSON"
+    };
+
+    private readonly IJsLog _log;
+    private readonly Engine _engine;
+    private readonly JsBindingInstaller _bindings;
+    private readonly Dictionary<string, PluginRegistration> _plugins = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, JsValue> _contextsByPlugin = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, PluginServices> _servicesByPlugin = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<int, Timer> _timers = new();
+    private readonly List<string> _active = new();
+    private int _nextTimer = 1;
+
+    public JsRuntime(IJsLog log, JsBindingContext bindingContext, JsRuntimeOptions? options = null, Func<Type, bool>? bindingFilter = null)
     {
         _log = log;
         options ??= new JsRuntimeOptions();
+        _bindings = new JsBindingInstaller(JsBindingDiscovery.Discover(typeof(JsRuntime).Assembly, bindingFilter), bindingContext);
 
-        Engine = new Engine(opt =>
+        _engine = new Engine(opt =>
         {
             // Plugins are untrusted: bound the engine instead of trusting plugin authors. CLR
-            // access stays off unless a binding explicitly hands a delegate over.
+            // access stays off unless a binding explicitly hands a function over.
             if (options.MaxStatements > 0)
             {
                 opt.MaxStatements((int)Math.Min(options.MaxStatements, int.MaxValue));
@@ -49,221 +140,447 @@ internal sealed class JsRuntime : IDisposable
             }
         });
 
-        Engine.Execute(BridgeScript);
+        InstallTimers();
     }
 
-    internal Engine Engine { get; }
+    internal Engine Engine => _engine;
 
-    public void SetHost(string name, Delegate callback) => Engine.SetValue(name, callback);
+    public int InstalledBindingCount => _bindings.InstalledMethodCount;
 
-    /// <summary>Installs dotted binding paths (<c>fs.read</c>) as nested JS functions under host.api.</summary>
-    public void InstallBindings(IReadOnlyDictionary<string, ValheimJS.Scripting.Binding.JsBindingFunction> functions)
+    public IReadOnlyList<string> InstalledBindings => _bindings.InstalledNamespaces;
+
+    /// <summary>Registers a plugin's descriptor, builds its context and discovers its hooks.</summary>
+    public PluginRegistration Register(
+        string name,
+        IReadOnlyList<string> bundlePaths,
+        string pluginDirectory,
+        PluginServices services)
     {
-        var index = 0;
-        foreach (var (path, binding) in functions)
+        var api = _bindings.BuildApi(_engine, name);
+        var exports = new JsObject(_engine);
+        var context = BuildContext(name, pluginDirectory, services, api, exports);
+        var registration = new PluginRegistration
         {
-            var slot = "__vjs_binding_" + index++;
-            Engine.SetValue(slot, binding.Callback);
-            Engine.SetValue("__vjs_api_path", path);
-            var json = binding.Kind == ValheimJS.Scripting.Binding.JsReturnKind.Json ? "true" : "false";
-            var scoped = binding.Scoped ? "true" : "false";
-            Engine.Execute($"__vjs_api_set(__vjs_api_path, {slot}, {json}, {scoped})");
+            Name = name,
+            Context = context,
+            Exports = exports,
+            Api = api
+        };
+
+        _plugins[name] = registration;
+        _contextsByPlugin[name] = context;
+        _servicesByPlugin[name] = services;
+
+        try
+        {
+            foreach (var path in bundlePaths)
+            {
+                try
+                {
+                    Run(name, () =>
+                    {
+                        _engine.SetValue("__vjs_plugin", JsValue.Undefined);
+                        _engine.Execute(File.ReadAllText(path));
+                        var module = _engine.GetValue("__vjs_plugin");
+                        _engine.SetValue("__vjs_plugin", JsValue.Undefined);
+                        if (module is not ObjectInstance descriptor)
+                            throw new InvalidOperationException("Entry must export definePlugin(...).");
+                        var kind = descriptor.Get(DescriptorMarker);
+                        if (!kind.IsString() || (kind.AsString() != ClassKind && kind.AsString() != ObjectKind))
+                            throw new InvalidOperationException("Unknown descriptor; export definePlugin(...).");
+                        var isClass = kind.AsString() == ClassKind;
+                        var holder = descriptor.Get(isClass ? "ctor" : "value");
+                        if (isClass ? holder is not Function : holder is not ObjectInstance)
+                            throw new InvalidOperationException("Invalid entry descriptor.");
+                        var instance = isClass ? Construct(holder.As<Function>()!) : holder;
+                        var target = instance.AsObject();
+                        var declared = target.Get("exports");
+                        if (declared.IsObject())
+                        {
+                            foreach (var key in declared.AsObject().GetOwnPropertyKeys(Types.String))
+                            {
+                                if (exports.HasOwnProperty(key)) throw new InvalidOperationException($"Duplicate export '{key}'.");
+                                exports.Set(key, declared.AsObject().Get(key), true);
+                            }
+                        }
+                        target.Set("ctx", context, true);
+                        target.Set("host", context.Get("host"), true);
+                        target.Set("state", context.Get("state"), true);
+                        target.Set("exports", exports, true);
+                        var component = new PluginComponent { Entry = path, Instance = instance, IsClass = isClass, Hooks = DiscoverHooks(target) };
+                        // Include partially initialized components in rollback cleanup.
+                        registration.Components.Add(component);
+                        foreach (var hook in component.Hooks) registration.Hooks[hook.Key] = hook.Value;
+                        InvokeLifecycle(registration, component, "setup", "onLoad");
+                    });
+                }
+                catch (Exception exception)
+                {
+                    throw new InvalidOperationException($"{name} [{Path.GetFileName(path)}] {path}: {Describe(exception)}", exception);
+                }
+            }
+            return registration;
         }
+        catch
+        {
+            Unregister(name);
+            throw;
+        }
+        finally { _engine.SetValue("__vjs_plugin", JsValue.Undefined); }
     }
 
-    public int Register(string pluginName, string bundlePath, string pluginDirectory)
+    /// <summary>Invokes one hook for one plugin; returns JSON when the handler produced a value.</summary>
+    public string? Invoke(string plugin, string hook, string? payloadJson)
     {
-        Engine.Execute(File.ReadAllText(bundlePath));
-        Engine.SetValue("__vjs_loading", pluginName);
-        Engine.SetValue("__vjs_loading_dir", pluginDirectory);
-        var index = Engine.Evaluate("__vjs_register(__vjs_plugin, __vjs_loading, __vjs_loading_dir)").AsNumber();
-        Engine.SetValue("__vjs_plugin", JsValue.Undefined);
-        return (int)index;
+        if (!_plugins.TryGetValue(plugin, out var registration))
+        {
+            return null;
+        }
+
+        if (!registration.Hooks.ContainsKey(hook))
+        {
+            return null;
+        }
+
+        var payload = payloadJson == null
+            ? JsValue.Undefined
+            : Json.Parse(_engine, payloadJson);
+
+        string? answer = null;
+        foreach (var component in registration.Components)
+        {
+            if (!component.Hooks.TryGetValue(hook, out var handler)) continue;
+            var result = Run(plugin, () => component.IsClass
+                ? handler.Call(component.Instance, new[] { payload })
+                : handler.Call(JsValue.Undefined, new[] { registration.Context, payload }));
+            if (result.IsNull() || result.IsUndefined() || result is ObjectInstance obj && obj.Get("then") is Function) continue;
+            if (answer != null) throw new InvalidOperationException($"{plugin}: conflicting results for hook '{hook}'.");
+            answer = Json.Stringify(_engine, result);
+        }
+        return answer;
     }
 
-    public string? Invoke(int index, string hook, string? payloadJson)
+    /// <summary>Runs <c>teardown</c>/<c>onUnload</c>, then drops the plugin's registrations.</summary>
+    public void Unregister(string plugin)
     {
-        Engine.SetValue("__vjs_arg", payloadJson ?? string.Empty);
-        var result = Engine.Evaluate($"__vjs_invoke({index}, '{hook}', __vjs_arg)");
-        return result.IsUndefined() || result.IsNull() ? null : result.ToString();
+        if (!_plugins.TryGetValue(plugin, out var registration))
+        {
+            return;
+        }
+
+        for (var index = registration.Components.Count - 1; index >= 0; index--)
+        {
+            var component = registration.Components[index];
+            try { Run(plugin, () => InvokeLifecycle(registration, component, "teardown", "onUnload")); }
+            catch (Exception exception) { _log.Write("warn", plugin, $"{component.Entry}: unload failed: " + Describe(exception)); }
+        }
+
+        foreach (var id in new List<int>(_timers.Keys))
+        {
+            if (_timers[id].Plugin == plugin)
+            {
+                _timers.Remove(id);
+            }
+        }
+
+        _plugins.Remove(plugin);
+        _contextsByPlugin.Remove(plugin);
+        _servicesByPlugin.Remove(plugin);
+        _bindings.ReleasePlugin(plugin);
     }
 
+    /// <summary>Fires due timers and flushes promise continuations. Call once per host tick.</summary>
     public void PumpTimers()
     {
-        Engine.SetValue("__vjs_clock", (double)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-        Engine.Evaluate("__vjs_pump(__vjs_clock)");
+        if (_timers.Count > 0)
+        {
+            var now = Now();
+            foreach (var id in new List<int>(_timers.Keys))
+            {
+                if (!_timers.TryGetValue(id, out var timer) || now < timer.Due)
+                {
+                    continue;
+                }
+
+                if (timer.Repeat)
+                {
+                    timer.Due = now + timer.Period;
+                }
+                else
+                {
+                    _timers.Remove(id);
+                }
+
+                try
+                {
+                    Run(timer.Plugin, () => timer.Callback.Call(JsValue.Undefined, Array.Empty<JsValue>()));
+                }
+                catch (Exception exception)
+                {
+                    // A failing interval would repeat forever; stop it, like the old runtime did.
+                    if (timer.Repeat)
+                    {
+                        _timers.Remove(id);
+                    }
+
+                    _log.Write("error", timer.Plugin, "timer failed: " + Describe(exception) + " — timer stopped");
+                }
+            }
+        }
+
+        // Continuations from promises settled by host work only progress when the engine runs.
+        _engine.Evaluate("void 0");
     }
 
-    public void Dispose() => Engine.Dispose();
+    public void Dispose()
+    {
+        _timers.Clear();
+        _plugins.Clear();
+        _contextsByPlugin.Clear();
+        _servicesByPlugin.Clear();
+        _bindings.Dispose();
+        _engine.Dispose();
+    }
 
-    /// <summary>
-    /// Host-side glue. Each plugin gets a <c>ctx</c> with its own <c>state</c>, <c>exports</c>,
-    /// <c>dep(name)</c> and a <c>host</c> API bound to its name — no shared mutable "current plugin",
-    /// so timers from different plugins cannot cross their storage or logs. Bundles stay plain
-    /// scripts: they only set <c>globalThis.__vjs_plugin</c>.
-    /// </summary>
-    private const string BridgeScript = """
-        globalThis.__vjs_active = null;
+    private void InstallTimers()
+    {
+        _engine.SetValue("setTimeout", TimerFunction("setTimeout", repeat: false));
+        _engine.SetValue("setInterval", TimerFunction("setInterval", repeat: true));
+        _engine.SetValue("clearTimeout", ClearTimerFunction("clearTimeout"));
+        _engine.SetValue("clearInterval", ClearTimerFunction("clearInterval"));
+    }
 
-        function __vjs_withCtx(ctx, fn) {
-            var previous = globalThis.__vjs_active;
-            globalThis.__vjs_active = ctx;
-            try { return fn(); } finally { globalThis.__vjs_active = previous; }
-        }
+    private ClrFunction Native(string name, Func<JsValue, JsValue[], JsValue> body, int length) =>
+        new ClrFunction(_engine, name, body, length, PropertyFlag.Configurable);
 
-        function __vjs_makeHost(name, dir, paths) {
-            return {
-                name: name,
-                dir: dir,
-                log: function (level, message) { __vjs_log(name, String(level), String(message)); },
-                now: function () { return __vjs_now(); },
-                config: function (key) { return __vjs_config(name, String(key)); },
-                storage: {
-                    get: function (key) { return __vjs_storage_get(name, String(key)); },
-                    set: function (key, value) { __vjs_storage_set(name, String(key), String(value)); }
-                },
-                info: function () { return JSON.parse(__vjs_info(name, dir)); },
-                api: null,
-                paths: paths
-            };
-        }
-
-        globalThis.__vjs_api = {};
-        globalThis.__vjs_api_scoped = new Set();
-
-        globalThis.__vjs_api_set = function (path, fn, returnsJson, scoped) {
-            var parts = String(path).split('.');
-            var node = globalThis.__vjs_api;
-            for (var i = 0; i < parts.length - 1; i++) {
-                if (!node[parts[i]]) { node[parts[i]] = {}; }
-                node = node[parts[i]];
-            }
-            var name = parts[parts.length - 1];
-            node[name] = returnsJson
-                ? function () {
-                    var raw = fn.apply(null, arguments);
-                    return raw === null || raw === undefined ? raw : JSON.parse(String(raw));
-                }
-                : fn;
-            if (scoped) { globalThis.__vjs_api_scoped.add(path); }
-        };
-
-        // Per-plugin view of the API: scoped bindings receive the plugin name first, so they
-        // can resolve that plugin's own data/config directories.
-        globalThis.__vjs_makeApi = function (pluginName) {
-            var scoped = globalThis.__vjs_api_scoped;
-            function build(node, prefix) {
-                var result = {};
-                Object.keys(node).forEach(function (key) {
-                    var path = prefix ? prefix + '.' + key : key;
-                    var value = node[key];
-                    if (typeof value === 'function') {
-                        result[key] = scoped.has(path)
-                            ? function () {
-                                var args = [pluginName];
-                                for (var i = 0; i < arguments.length; i++) { args.push(arguments[i]); }
-                                return value.apply(null, args);
-                            }
-                            : value;
-                    } else {
-                        result[key] = build(value, path);
-                    }
-                });
-                return result;
-            }
-            return build(globalThis.__vjs_api, '');
-        };
-
-        globalThis.__vjs_registry = { entries: [], byName: new Map() };
-
-        globalThis.__vjs_register = function (module, name, dir) {
-            if (!module || typeof module !== 'object') {
-                throw new Error('plugin bundle did not export an object via globalThis.__vjs_plugin');
+    private Function ClearTimerFunction(string name) => Native(name,
+        (_, arguments) =>
+        {
+            if (arguments.Length > 0 && arguments[0].IsNumber())
+            {
+                _timers.Remove((int)arguments[0].AsNumber());
             }
 
-            var paths = JSON.parse(__vjs_paths(name));
-            var host = __vjs_makeHost(name, dir, paths);
-            host.api = globalThis.__vjs_makeApi(name);
-            var ctx = {
-                name: name,
-                dir: dir,
-                paths: paths,
-                host: host,
-                state: {},
-                exports: module.exports || {},
-                dep: function (dependencyName) {
-                    var entry = globalThis.__vjs_registry.byName.get(String(dependencyName));
-                    if (!entry) { throw new Error('unknown dependency: ' + dependencyName); }
-                    return entry.ctx.exports;
-                }
+            return JsValue.Undefined;
+        }, 1);
+
+    private Function TimerFunction(string name, bool repeat) => Native(name,
+        (_, arguments) =>
+        {
+            if (arguments.Length == 0 || arguments[0] is not Function callback)
+            {
+                throw new ArgumentException($"{name} needs a function as its first argument.");
+            }
+
+            var seconds = arguments.Length > 1 && arguments[1].IsNumber() ? arguments[1].AsNumber() : 0;
+            var delay = Math.Max(1, seconds);
+            var id = _nextTimer++;
+            _timers[id] = new Timer
+            {
+                Plugin = CurrentPlugin,
+                Callback = callback,
+                Due = Now() + delay,
+                Period = delay,
+                Repeat = repeat
             };
 
-            var entry = { module: module, ctx: ctx, failed: false };
-            globalThis.__vjs_registry.entries.push(entry);
-            if (!globalThis.__vjs_registry.byName.has(name)) {
-                globalThis.__vjs_registry.byName.set(name, entry);
-            }
-            return globalThis.__vjs_registry.entries.length - 1;
-        };
+            return id;
+        }, 2);
 
-        globalThis.__vjs_invoke = function (index, hook, payloadJson) {
-            var entry = globalThis.__vjs_registry.entries[index];
-            if (!entry) { throw new Error('no plugin registered at index ' + index); }
-            if (entry.failed) { return null; }
-            var handler = entry.module[hook];
-            if (typeof handler !== 'function') { return null; }
-            var payload = payloadJson ? JSON.parse(payloadJson) : undefined;
-            var result = __vjs_withCtx(entry.ctx, function () { return handler(entry.ctx, payload); });
-            if (result === undefined || result === null) { return null; }
-            // async handlers return a promise; its value is not a hook result
-            if (typeof result.then === 'function') { return null; }
-            return JSON.stringify(result);
-        };
+    private double Now() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        globalThis.__vjs_markFailed = function (index) {
-            var entry = globalThis.__vjs_registry.entries[index];
-            if (entry) { entry.failed = true; }
-        };
+    private string CurrentPlugin => _active.Count > 0 ? _active[_active.Count - 1] : "host";
 
-        globalThis.__vjs_timers = (function () {
-            var nextId = 1;
-            var active = new Map();
-            function schedule(ctx, callback, ms, repeat) {
-                var id = nextId++;
-                var delay = Math.max(1, Number(ms) || 1);
-                active.set(id, { ctx: ctx, callback: callback, due: __vjs_now() + delay, period: delay, repeat: !!repeat });
-                return id;
-            }
-            function cancel(id) { active.delete(id); }
-            function pump(now) {
-                if (active.size === 0) { return; }
-                var due = [];
-                active.forEach(function (timer, id) { if (now >= timer.due) { due.push(id); } });
-                for (var i = 0; i < due.length; i++) {
-                    var id = due[i];
-                    var timer = active.get(id);
-                    if (!timer) { continue; }
-                    if (timer.repeat) { timer.due = now + timer.period; } else { active.delete(id); }
-                    try { __vjs_withCtx(timer.ctx, timer.callback); }
-                    catch (error) {
-                        try {
-                            var text = String(error) + (error && error.stack ? ' | ' + error.stack : '');
-                            (timer.ctx && timer.ctx.host ? timer.ctx.host : __vjs_active.host).log('error', 'timer: ' + text);
-                        } catch (ignored) { }
-                    }
+    /// <summary>Marks the executing plugin so timers, context lookups and errors are attributed correctly.</summary>
+    private T Run<T>(string plugin, Func<T> action)
+    {
+        _active.Add(plugin);
+        var previous = _engine.GetValue("__vjs_context");
+        if (_contextsByPlugin.TryGetValue(plugin, out var context))
+        {
+            _engine.SetValue("__vjs_context", context);
+        }
+
+        try
+        {
+            return action();
+        }
+        finally
+        {
+            _engine.SetValue("__vjs_context", previous);
+            _active.RemoveAt(_active.Count - 1);
+        }
+    }
+
+    private void Run(string plugin, Action action) => Run(plugin, () =>
+    {
+        action();
+        return true;
+    });
+
+    private JsValue Construct(Function constructor) =>
+        _engine.Construct(constructor, Array.Empty<JsValue>());
+
+    private JsValue InvokeLifecycle(PluginRegistration registration, PluginComponent component, string primary, string fallback)
+    {
+        var target = component.Instance.AsObject();
+        var hook = target.Get(primary);
+        if (hook is not Function)
+        {
+            hook = target.Get(fallback);
+        }
+
+        if (hook is not Function function)
+        {
+            return JsValue.Undefined;
+        }
+
+        var result = component.IsClass
+            ? function.Call(component.Instance, new[] { registration.Context })
+            : function.Call(JsValue.Undefined, new[] { registration.Context });
+        if (result is ObjectInstance obj && obj.Get("then") is Function)
+            throw new InvalidOperationException($"{component.Entry}: {primary}/{fallback} must be synchronous; promises are unsupported.");
+        return result;
+    }
+
+    private Dictionary<string, Function> DiscoverHooks(ObjectInstance instance)
+    {
+        var hooks = new Dictionary<string, Function>(StringComparer.Ordinal);
+        var current = instance;
+        var depth = 0;
+
+        while (current != null && depth++ < 8)
+        {
+            foreach (var key in current.GetOwnPropertyKeys(Types.String))
+            {
+                var name = key.ToString();
+                if (ReservedMembers.Contains(name) || hooks.ContainsKey(name))
+                {
+                    continue;
+                }
+
+                var value = current.Get(name);
+                if (value is Function function)
+                {
+                    hooks[name] = function;
                 }
             }
-            return { schedule: schedule, cancel: cancel, pump: pump };
-        })();
 
-        globalThis.setTimeout = function (callback, ms) {
-            return __vjs_timers.schedule(globalThis.__vjs_active, callback, ms, false);
-        };
-        globalThis.setInterval = function (callback, ms) {
-            return __vjs_timers.schedule(globalThis.__vjs_active, callback, ms, true);
-        };
-        globalThis.clearTimeout = function (id) { __vjs_timers.cancel(id); };
-        globalThis.clearInterval = function (id) { __vjs_timers.cancel(id); };
-        globalThis.__vjs_pump = function (now) { __vjs_timers.pump(now); };
-        """;
+            current = current.Prototype;
+        }
+
+        return hooks;
+    }
+
+    private JsObject BuildContext(string name, string directory, PluginServices services, JsValue api, JsObject exports)
+    {
+        var paths = PathsToJs(services.Paths);
+        var storage = new JsObject(_engine);
+        storage.Set("get", Native("get",
+            (_, arguments) => ToJs(services.StorageGet(arguments.Length > 0 ? arguments[0].ToString() : "")), 1), false);
+        storage.Set("set", Native("set", (_, arguments) =>
+        {
+            services.StorageSet(arguments[0].ToString(), arguments[1].ToString());
+            return JsValue.Undefined;
+        }, 2), false);
+
+        var host = new JsObject(_engine);
+        host.Set("name", name, false);
+        host.Set("dir", directory, false);
+        host.Set("paths", paths, false);
+        host.Set("log", Native("log", (_, arguments) =>
+        {
+            var level = arguments.Length > 0 ? arguments[0].ToString() : "info";
+            var message = arguments.Length > 1 ? arguments[1].ToString() : "";
+            WriteLog(name, level, message);
+            return JsValue.Undefined;
+        }, 2), false);
+        host.Set("now", Native("now", (_, _) => Now(), 0), false);
+        host.Set("config", Native("config",
+            (_, arguments) => ToJs(services.Config(arguments.Length > 0 ? arguments[0].ToString() : "")), 1), false);
+        host.Set("storage", storage, false);
+        host.Set("info", Native("info", (_, _) =>
+        {
+            var info = new JsObject(_engine);
+            info.Set("name", name, false);
+            info.Set("version", services.Version, false);
+            info.Set("api", services.ApiVersion, false);
+            info.Set("dir", directory, false);
+            return info;
+        }, 0), false);
+        host.Set("api", api, false);
+
+        var state = new JsObject(_engine);
+
+        var context = new JsObject(_engine);
+        context.Set("name", name, false);
+        context.Set("dir", directory, false);
+        context.Set("paths", paths, false);
+        context.Set("host", host, false);
+        context.Set("state", state, false);
+        context.Set("exports", exports, false);
+        context.Set("dep", Native("dep", (_, arguments) =>
+        {
+            var dependency = arguments.Length > 0 ? arguments[0].ToString() : "";
+            if (_plugins.TryGetValue(dependency, out var registration))
+            {
+                return registration.Exports;
+            }
+
+            throw new InvalidOperationException(
+                $"unknown dependency '{dependency}'; it is not loaded (check manifest depends=)");
+        }, 1), false);
+
+        return context;
+    }
+
+    private JsObject PathsToJs(PluginPaths paths)
+    {
+        var result = new JsObject(_engine);
+        result.Set("root", paths.Root, false);
+        result.Set("plugins", paths.Plugins, false);
+        result.Set("plugin", paths.Plugin, false);
+        result.Set("data", paths.Data, false);
+        result.Set("config", paths.Config, false);
+        result.Set("logs", paths.Logs, false);
+        result.Set("logFile", paths.LogFile, false);
+        return result;
+    }
+
+    private JsValue ToJs(string? value) => value == null ? JsValue.Null : JsValue.FromObject(_engine, value);
+
+    private void WriteLog(string plugin, string level, string message)
+    {
+        if (_servicesByPlugin.TryGetValue(plugin, out var services) && services.Log != null)
+        {
+            services.Log(level, message);
+            return;
+        }
+
+        _log.Write(level, plugin, message);
+    }
+
+    private static string Describe(Exception exception)
+    {
+        var inner = exception;
+        while (inner.InnerException != null)
+        {
+            inner = inner.InnerException;
+        }
+
+        return inner.GetType().Name + ": " + inner.Message;
+    }
+
+    private sealed class Timer
+    {
+        public string Plugin = "host";
+
+        public Function Callback = null!;
+
+        public double Due;
+
+        public double Period;
+
+        public bool Repeat;
+    }
 }

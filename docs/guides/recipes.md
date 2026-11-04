@@ -1,260 +1,191 @@
+---
+title: Recipes
+---
+
 # Recipes
 
-Copy, rename, adapt. Every example compiles against `../../sdk/index` as-is.
+Copy, rename, adapt. Every example compiles against `../../../sdk/index` as-is.
 
-## Welcome + leave notice
+## Spawn an object and remember its data
 
 ```ts
-import { definePlugin, log } from "../../sdk/index";
+import { definePlugin, log, world } from "../../../sdk/index";
 
 export default definePlugin({
     version: "1.0.0",
-    onPlayerJoin(ctx, player) {
-        ctx.host.api.chat.send(`Welcome, ${player.name}!`);
-        log(`${player.name} joined`);
-    },
-    onPlayerLeave(ctx, player) {
-        ctx.host.api.chat.send(`${player.name} left the server.`);
+
+    onServerTick(ctx) {
+        if (ctx.state.handle !== undefined) return;           // once per load
+        if (!world().exists("WoodPile")) return;              // prefabs arrive with the world
+
+        const handle = world().spawn("WoodPile", 120, 8, -40);
+        if (!handle) return;
+
+        world().setData(handle, "owner", ctx.name);
+        world().setData(handle, "stock", "12");
+        ctx.state.handle = handle;
+        log(`spawned ${handle}`);
     }
 });
 ```
 
-## Chat commands
-
-`defineCommands` gives you `!command` parsing, `!help`, and admin checks.
-
-```ts
-import { definePlugin, defineCommands } from "../../sdk/index";
-
-export default definePlugin({
-    version: "1.0.0",
-    ...defineCommands("!", {
-        ping: {
-            description: "check that the scripting layer is alive",
-            run: () => "pong"
-        },
-        online: {
-            description: "who is connected",
-            run: (ctx) => ctx.host.api.players.names().join(", ") || "nobody"
-        },
-        day: {
-            description: "current in-game day",
-            run: (ctx) => `day ${ctx.host.api.world.day()}`
-        },
-        greet: {
-            description: "broadcast a greeting",
-            admin: true,
-            run: (ctx, args) => `Greetings, ${args.join(" ") || "everyone"}!`
-        }
-    })
-});
-```
-
-Returning a string sends it back to all peers. `admin: true` checks the server's own admin list
-and replies `permission denied` to anyone else.
+ZDO data is replicated with the object and saved with the world, so late joiners and restarts both
+converge. Handles are session-scoped; store the ZDO id yourself if you need it after a restart.
 
 ## Status file other tools can read
 
 ```ts
-import { definePlugin } from "../../sdk/index";
+import { database, definePlugin, fs, game, world } from "../../../sdk/index";
 
 const FILE = "status.json";
 
+function publish(): void {
+    const snapshot = game().snapshot();
+    const payload = {
+        ...snapshot,
+        objects: world().zdoCount(),
+        collections: database().collections(),
+        updated: Date.now()
+    };
+
+    fs().write(FILE, JSON.stringify(payload, null, 2));
+}
+
 export default definePlugin({
     version: "1.0.0",
-    onLoad(ctx) {
-        const publish = () => {
-            const world = ctx.host.api.world.snapshot();
-            ctx.host.api.fs.write(FILE, JSON.stringify({
-                ...world,
-                players: ctx.host.api.players.list(),
-                objects: ctx.host.api.zdo.count(),
-                updated: Date.now()
-            }, null, 2));
-        };
-
+    setup() {
         publish();
         setInterval(publish, 30_000);
     }
 });
 ```
 
-`ValheimJS/data/status/status.json` is then readable by a website, a monitor, or a backup
-script — no server access needed.
+`ValheimJS/data/<plugin>/status.json` is then readable by a website, a monitor or a backup script.
 
-## Keep a per-player profile
-
-Key on `steamId`, not on the name or the uid: names change and uids are per-connection, while the
-SteamID is stable across sessions (it is also the only identifier you can match against an
-external list).
+## Persist progress with the database
 
 ```ts
-interface Profile {
+import { database, definePlugin } from "../../../sdk/index";
+
+interface Counter {
     id: string;
-    name: string;
-    visits: number;
-    lastSeen: number;
+    value: number;
 }
 
-const profiles = (ctx: PluginContext) => ctx.db.use<Profile>("profiles");
-
 export default definePlugin({
     version: "1.0.0",
 
     onPlayerJoin(ctx, player) {
-        const key = ctx.host.api.players.steamId(player.uid) ?? String(player.uid);
-        const profile = profiles(ctx).upsert(
+        const seen = database().use<Counter>("seen");
+        const key = String(player.uid);                       // session-scoped, see note below
+        const entry = seen.upsert(
             key,
-            () => ({ id: key, name: player.name, visits: 0, lastSeen: Date.now() }),
-            (doc) => ({ name: player.name, visits: doc.visits + 1, lastSeen: Date.now() })
+            () => ({ id: key, value: 0 }),
+            (doc) => ({ value: doc.value + 1 })
         );
 
-        ctx.host.api.chat.send(
-            profile.visits === 0
-                ? `Welcome to the server, ${player.name}!`
-                : `Welcome back, ${player.name}! Visit #${profile.visits + 1}`
-        );
+        ctx.state.seen = `${player.name}: ${entry.value + 1}`;
     }
 });
 ```
 
-Data lands in `<plugin data>/db/profiles/<steamId>.json`, one document per player, written
-atomically. Non-Steam platforms return `null` from `players.steamId`, which is why the fallback
-to the uid is there — treat those players as unpersistable rather than guessing.
+The session `uid` is not stable across restarts. When the player binding arrives, key on the
+platform identity instead; until then treat this as session state.
 
-## Daily announcement without a scheduler
+## Broadcast state changes without per-tick spam
 
 ```ts
-import { definePlugin } from "../../sdk/index";
+import { definePlugin, log, Rpc } from "../../../sdk/index";
 
 export default definePlugin({
     version: "1.0.0",
-    onServerTick(ctx, world) {
-        const day = world.day;
-        if (ctx.state.lastDay === day) return;      // cheap early exit every tick
-        ctx.state.lastDay = day;
+    setup() {
+        Rpc.channel("my_mod.market").on<{ stock: number }>("stock", (data, meta) => {
+            log(`peer ${meta.sender} reports ${data.stock} items`);
+        });
+    },
+    onServerTick(ctx, snapshot) {
+        if (ctx.state.day === snapshot.day) return;
+        ctx.state.day = snapshot.day;
 
-        ctx.host.api.chat.send(`Day ${day} begins. Back up your base!`);
+        Rpc.channel("my_mod.market").emit("stock", { stock: 50 });   // once, on change
     }
 });
 ```
 
-`onServerTick` runs about once a second, so guard it with a cheap comparison like this instead of
-doing real work every tick.
+Never broadcast on every tick: `onServerTick` is for decisions, and one event per change is enough.
 
-## Talk to another plugin
-
-Export small, pure helpers. `exports` are plain objects shared inside the server, so the consumer
-calls them directly.
+## Keyboard toggle (client)
 
 ```ts
-// plugins/audit/index.ts
-import { definePlugin } from "../../sdk/index";
+import { definePlugin, input, log } from "../../../sdk/index";
 
 export default definePlugin({
     version: "1.0.0",
-    exports: {
-        line(kind: string, text: string): string {
-            return `${new Date().toISOString()} ${kind} ${text}`;
-        }
+    setup() {
+        input.bind("toggle-panel", "F8");
+        input.on("toggle-panel", "press", () => {
+            log("toggled");
+            return true;                 // claim the key for this frame
+        });
+    },
+    teardown() {
+        input.clear();                   // removes only this plugin's entries
     }
 });
 ```
 
-```ts
-// plugins/greeter/index.ts        manifest: depends=audit@^1.0.0
-import { definePlugin } from "../../sdk/index";
+## Request/reply across processes
 
-type AuditApi = { line(kind: string, text: string): string };
+```ts
+import { definePlugin, Rpc } from "../../../sdk/index";
 
 export default definePlugin({
     version: "1.0.0",
-    onPlayerJoin(ctx, player) {
-        const audit = ctx.dep<AuditApi>("audit");
-        ctx.host.api.fs.append("audit.log", audit.line("join", player.name) + "\n");
-    }
-});
-```
 
-The `depends` line guarantees `audit` is loaded first; without it `ctx.dep("audit")` throws.
-
-## Announce PvP hits
-
-```ts
-import { definePlugin } from "../../sdk/index";
-
-export default definePlugin({
-    version: "1.0.0",
-    onDamage(ctx, hit) {
-        if (!hit.attackerIsPlayer || !hit.targetIsPlayer || hit.damage < 1) return;
-        ctx.host.api.chat.send(
-            `${hit.attacker} hit ${hit.target} for ${hit.damage.toFixed(0)} ` +
-            `(${hit.targetHealth.toFixed(0)}/${hit.targetMaxHealth.toFixed(0)} hp)`
-        );
-    }
-});
-```
-
-`onDamage` runs for every hit in the world, including creatures. Filter on the `*IsPlayer` flags
-before doing anything expensive — this handler can fire many times per second in a fight.
-
-## Server asks clients for their state
-
-```ts
-// server/
-import { definePlugin, Networking } from "../../../sdk/index";
-
-export default definePlugin({
-    version: "1.0.0",
-    onLoad(ctx) {
-        Networking.handle("client-hello", (message) => {
-            ctx.host.api.fs.write(
-                `clients/${message.sender}.json`,
-                JSON.stringify(message.data, null, 2)
-            );
+    setup(ctx) {
+        Rpc.channel("my_mod.shop").handle<{ amount: number }, { ok: boolean }>("buy", (data) => {
+            if (data.amount <= 0) return { ok: false };
+            return { ok: true };          // must be synchronous
         });
 
-        setInterval(() => Networking.send("who-is-there", { at: Date.now() }), 60_000);
+        ctx.state.channel = "my_mod.shop";
+    },
+
+    async onServerTick(ctx) {
+        const peer = Rpc.serverPeer();
+        if (!peer || !Rpc.available()) return;
+
+        const reply = await Rpc.channel("my_mod.shop").request<{ amount: number }, { ok: boolean }>(
+            peer, "buy", { amount: 5 }, 5000
+        );
+
+        if (!reply.ok) ctx.host.log("warn", "purchase rejected");
     }
 });
 ```
 
-```ts
-// client/
-import { definePlugin, Networking } from "../../../sdk/index";
-
-export default definePlugin({
-    version: "1.0.0",
-    onLoad(ctx) {
-        Networking.handle("who-is-there", () => {
-            Networking.send("client-hello", {
-                side: ctx.host.api.env.side(),
-                peers: ctx.host.api.env.peers()
-            });
-        });
-    }
-});
-```
-
-Both sides live in one plugin folder (`server/index.ts`, `client/index.ts`) so they share the
-manifest and version.
+A timeout rejects the promise but does not undo remote work. Joining peers may not have registered
+their handlers yet; use an application-level readiness handshake where join-time delivery matters.
 
 ## Config-driven behaviour
 
 ```ini
 # ValheimJS/config/greeter/config.ini
+enabled=true
 welcome=Welcome!
-broadcast_joins=true
 ```
 
 ```ts
+import { definePlugin, context, log } from "../../../sdk/index";
+
 export default definePlugin({
     version: "1.0.0",
     onPlayerJoin(ctx, player) {
-        if (ctx.host.config("broadcast_joins") !== "true") return;
-        ctx.host.api.chat.send(`${ctx.host.config("welcome") ?? "Welcome"} ${player.name}`);
+        if (context().host.config("enabled") !== "true") return;
+        log(`${context().host.config("welcome") ?? "Welcome"} ${player.name}`);
     }
 });
 ```
 
-Read config inside handlers, not once in `onLoad`, so edits apply after a reload.
+Read config inside handlers so edits apply after a reload.

@@ -1,4 +1,4 @@
-import type { WorldSnapshot } from "./api/world";
+import type { GameSnapshot } from "./api/types";
 
 export interface ChatPayload {
     /** "normal" | "shout" | "whisper" | "ping" */
@@ -27,11 +27,4 @@ export interface DamagePayload {
     hitType: string;
 }
 
-export interface NetPayload {
-    channel: string;
-    sender: number;
-    /** Raw JSON string from the sender; the SDK parses it for handlers. */
-    data: unknown;
-}
-
-export type ServerTickPayload = WorldSnapshot;
+export type ServerTickPayload = GameSnapshot;

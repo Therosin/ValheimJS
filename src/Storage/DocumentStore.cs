@@ -145,6 +145,15 @@ internal static class DocumentStore
         }
     }
 
+    /// <summary>Raw document text, for host-side predicate/patch loops that never build one big array.</summary>
+    internal static List<string> Raw(string plugin, string collection)
+    {
+        lock (Gate)
+        {
+            return new List<string>(Load(plugin, collection).Documents.Values);
+        }
+    }
+
     internal static int Count(string plugin, string collection)
     {
         lock (Gate)

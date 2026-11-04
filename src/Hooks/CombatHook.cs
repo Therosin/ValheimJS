@@ -9,6 +9,7 @@ namespace ValheimJS.Hooks;
 /// actually applied, so this is where gameplay rules can observe combat.
 /// Read-only: the hit has already been applied when the postfix runs.
 /// </summary>
+[ValheimJS.Scripting.Shared]
 [HarmonyPatch(typeof(Character), nameof(Character.Damage))]
 internal static class CombatHook
 {

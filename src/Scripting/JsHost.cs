@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using ValheimJS.Scripting.Binding;
 
 namespace ValheimJS.Scripting;
 
@@ -21,7 +22,7 @@ public interface IJsLog
 /// <summary>
 /// Plugin discovery and lifecycle. Two passes like a package manager: read every manifest
 /// first, order by declared dependencies, then load code — so a plugin can rely on another's
-/// exports being registered before its own <c>onLoad</c> runs.
+/// exports being registered before its own setup runs.
 /// </summary>
 public sealed class JsHost
 {
@@ -33,16 +34,27 @@ public sealed class JsHost
     private readonly IJsLog _log;
     private readonly JsRuntimeOptions _options;
     private readonly string _side;
+    private readonly ProcessSide _processSide;
+    private readonly Func<Type, bool>? _bindingFilter;
     private readonly Dictionary<string, JsPlugin> _plugins = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _errors = new();
     private int _pumpErrors;
     private JsRuntime? _runtime;
+    private JsBindingContext? _bindings;
 
     /// <param name="root">The <c>server_plugins</c> folder: <c>plugins/</c>, <c>data/</c>, <c>config/</c>, <c>logs/</c> live inside.</param>
     /// <param name="side"><c>server</c> or <c>client</c>: picks the side-specific entry when present.</param>
-    public JsHost(string root, string side, IJsLog log, JsRuntimeOptions? options = null)
+    public JsHost(
+        string root,
+        ProcessSide side,
+        IJsLog log,
+        JsRuntimeOptions? options = null,
+        Func<Type, bool>? bindingFilter = null)
     {
-        _side = side;
+        if (!Enum.IsDefined(typeof(ProcessSide), side)) throw new ArgumentOutOfRangeException(nameof(side));
+        _processSide = side;
+        _side = side == ProcessSide.Server ? "server" : "client";
+        _bindingFilter = bindingFilter;
         _options = options ?? new JsRuntimeOptions();
         _root = root;
         _pluginsDir = Path.Combine(root, "plugins");
@@ -55,7 +67,6 @@ public sealed class JsHost
 
     public string Root => _root;
 
-
     public IReadOnlyList<string> Errors => _errors;
 
     public bool HasErrors => _errors.Count > 0;
@@ -63,6 +74,9 @@ public sealed class JsHost
     public IReadOnlyList<string> LoadedNames => _plugins.Keys.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList();
 
     public IReadOnlyList<JsPlugin> Plugins => _plugins.Values.ToList();
+
+    /// <summary>Namespaces installed on this process, for diagnostics and tests.</summary>
+    public IReadOnlyList<string> BindingNamespaces => _runtime?.InstalledBindings ?? Array.Empty<string>();
 
     public void Load() => Reload();
 
@@ -89,16 +103,15 @@ public sealed class JsHost
             }
 
             var manifest = PluginManifest.Load(directory);
-            manifest = manifest.WithEntry(ResolveEntry(directory, manifest));
             if (!manifest.Enabled)
             {
                 _log.Write("info", manifest.Name, "disabled in manifest.ini");
                 continue;
             }
 
-            if (!File.Exists(Path.Combine(directory, manifest.Entry)))
+            if (!new[] { "shared.js", "server.js", "client.js" }.Any(entry => File.Exists(Path.Combine(directory, entry))))
             {
-                _errors.Add($"{manifest.Name}: entry '{manifest.Entry}' not found in {directory}");
+                _errors.Add($"{manifest.Name}: no shared.js, server.js, or client.js in {directory}");
                 continue;
             }
 
@@ -106,6 +119,12 @@ public sealed class JsHost
             {
                 _errors.Add($"{manifest.Name}: apiVersion {manifest.ApiVersion} != host {HostApiVersion.Current}");
                 _log.Write("error", manifest.Name, $"needs apiVersion {manifest.ApiVersion}, host provides {HostApiVersion.Current}");
+                continue;
+            }
+
+            if (ResolveEntries(directory).Count == 0)
+            {
+                _log.Write("info", manifest.Name, $"skipped: no entries for {_side}");
                 continue;
             }
 
@@ -118,32 +137,43 @@ public sealed class JsHost
             manifests[manifest.Name] = (manifest, directory);
         }
 
-        List<string> order;
+        var order = TopologicalOrder(manifests);
+
+        var bindings = CreateBindingContext();
+        _bindings = bindings;
+
+        JsRuntime runtime;
         try
         {
-            order = TopologicalOrder(manifests);
+            runtime = new JsRuntime(_log, bindings, _options, _bindingFilter);
         }
         catch (Exception exception)
         {
-            _errors.Add(exception.Message);
-            _log.Write("error", "host", exception.Message);
+            _errors.Add("bindings failed: " + Describe(exception));
+            _log.Write("error", "bindings", "install failed: " + Describe(exception));
+            bindings.Dispose();
+            _bindings = null;
             return;
         }
 
-        var runtime = new JsRuntime(_log, _options);
-        WireHostApi(runtime, manifests);
-        InstallBindings(runtime);
         _runtime = runtime;
+
+
+        _log.Write("info", "bindings", $"installed {runtime.InstalledBindingCount} binding(s) in {runtime.InstalledBindings.Count} namespace(s)");
 
         foreach (var name in order)
         {
             var (manifest, directory) = manifests[name];
             try
             {
-                var index = runtime.Register(manifest.Name, Path.Combine(directory, manifest.Entry), directory);
-                var plugin = new JsPlugin(runtime, manifest, directory, index, _log);
-                _plugins[name] = plugin;
-                plugin.Dispatch("onLoad", null);
+                var failedDependency = manifest.Depends.Keys.FirstOrDefault(dependency => !_plugins.ContainsKey(dependency));
+                if (failedDependency != null) throw new InvalidOperationException($"dependency '{failedDependency}' did not load on {_side}");
+                var registration = runtime.Register(
+                    manifest.Name,
+                    ResolveEntries(directory),
+                    directory,
+                    ServicesFor(manifest, directory));
+                _plugins[name] = new JsPlugin(runtime, manifest, directory, registration, _log);
             }
             catch (Exception exception)
             {
@@ -164,6 +194,7 @@ public sealed class JsHost
     {
         try
         {
+            _bindings?.Pump();
             _runtime?.PumpTimers();
             _pumpErrors = 0;
         }
@@ -185,6 +216,28 @@ public sealed class JsHost
         }
     }
 
+    /// <summary>Raises a host event. Chat is offered to command handling before plugins see it.</summary>
+    public void Emit(string hook, string payloadJson)
+    {
+        var interceptor = _bindings?.ChatInterceptor;
+        if (hook == "onChat" && interceptor != null)
+        {
+            try
+            {
+                if (interceptor(payloadJson))
+                {
+                    return;
+                }
+            }
+            catch (Exception exception)
+            {
+                _log.Write("error", "host", "command handling failed: " + Describe(exception));
+            }
+        }
+
+        DispatchAll(hook, _ => payloadJson);
+    }
+
     /// <summary>Dispatches a hook to every loaded plugin; returns non-null JSON results.</summary>
     public IReadOnlyList<string> DispatchAll(string hook, Func<string, string?> payloadFactory)
     {
@@ -197,8 +250,13 @@ public sealed class JsHost
                 results.Add(result);
             }
         }
+
         return results;
     }
+
+    /// <summary>Dispatches a hook to one loaded plugin, if present.</summary>
+    public string? DispatchTo(string pluginName, string hook, string? payloadJson) =>
+        _plugins.TryGetValue(pluginName, out var plugin) ? plugin.Dispatch(hook, payloadJson) : null;
 
     public void Dispose()
     {
@@ -206,25 +264,15 @@ public sealed class JsHost
         {
             plugin.Dispose();
         }
+
         _plugins.Clear();
         _runtime?.Dispose();
         _runtime = null;
+        _bindings = null;
     }
 
-    /// <summary>
-    /// Side-specific entries win over the shared one: <c>server/plugin.js</c> on a dedicated
-    /// process, <c>client/plugin.js</c> otherwise, falling back to the manifest entry.
-    /// </summary>
-    private string ResolveEntry(string directory, PluginManifest manifest)
-    {
-        var sideEntry = Path.Combine(directory, _side, manifest.Entry);
-        if (File.Exists(sideEntry))
-        {
-            return Path.Combine(_side, manifest.Entry).Replace('\\', '/');
-        }
-
-        return manifest.Entry;
-    }
+    private IReadOnlyList<string> ResolveEntries(string directory) => new[] { "shared.js", _side + ".js" }
+        .Select(entry => Path.Combine(directory, entry)).Where(File.Exists).ToList();
 
     /// <summary>Depth-first dependency order with cycle detection.</summary>
     private List<string> TopologicalOrder(IReadOnlyDictionary<string, (PluginManifest Manifest, string Directory)> manifests)
@@ -269,35 +317,48 @@ public sealed class JsHost
 
         foreach (var name in manifests.Keys.OrderBy(key => key, StringComparer.OrdinalIgnoreCase))
         {
-            Visit(name);
+            try { Visit(name); }
+            catch (Exception exception) { _errors.Add(exception.Message); }
+            finally { visiting.Clear(); }
         }
 
         return order;
     }
 
-    /// <summary>Discovers <see cref="Bindings.JsBindingAttribute"/> modules and installs their API.</summary>
-    private void InstallBindings(JsRuntime runtime)
+    private JsBindingContext CreateBindingContext() => new(
+        _processSide,
+        _dataDir,
+        _configDir,
+        _pluginsDir,
+        _logsDir,
+        DataDirectoryFor,
+        ConfigDirectoryFor,
+        (level, message) => _log.Write(level, "bindings", message));
+
+    private PluginServices ServicesFor(PluginManifest manifest, string directory)
     {
-        var context = new ValheimJS.Scripting.Binding.JsBindingContext(
-            (level, message) => _log.Write(level, "bindings", message),
-            DataDirectoryFor,
-            _dataDir,
-            _pluginsDir);
-
-        var functions = ValheimJS.Scripting.Binding.JsBindingLoader.BindAll(
-            typeof(JsHost).Assembly,
-            context,
-            (level, message) => _log.Write(level, "bindings", message));
-
-        try
+        var pluginDir = Path.Combine(_pluginsDir, manifest.Name);
+        var dataDir = DataDirectoryFor(manifest.Name);
+        var configDir = ConfigDirectoryFor(manifest.Name);
+        return new PluginServices
         {
-            runtime.InstallBindings(functions);
-            _log.Write("info", "bindings", $"installed {functions.Count} binding(s)");
-        }
-        catch (Exception exception)
-        {
-            _log.Write("error", "bindings", "install failed: " + Describe(exception));
-        }
+            Version = manifest.Version,
+            ApiVersion = manifest.ApiVersion,
+            Log = (level, message) => WriteLog(manifest.Name, level, message),
+            Config = key => ReadConfig(manifest.Name, key, manifest),
+            StorageGet = key => ReadStorage(manifest.Name, key),
+            StorageSet = (key, value) => WriteStorage(manifest.Name, key, value),
+            Paths = new PluginPaths
+            {
+                Root = _root,
+                Plugins = _pluginsDir,
+                Plugin = pluginDir,
+                Data = dataDir,
+                Config = configDir,
+                Logs = _logsDir,
+                LogFile = Path.Combine(_logsDir, manifest.Name + ".log")
+            }
+        };
     }
 
     /// <summary>Per-plugin data directory (created on demand), used as the fs sandbox.</summary>
@@ -316,61 +377,8 @@ public sealed class JsHost
         return directory;
     }
 
-    /// <summary>JSON description of a plugin's paths, exposed as <c>ctx.host.paths</c>.</summary>
-    private string PathsJson(string plugin)
-    {
-        var pluginDir = Path.Combine(_pluginsDir, plugin);
-        var dataDir = DataDirectoryFor(plugin);
-        var configDir = ConfigDirectoryFor(plugin);
-        return "{" +
-               $"\"root\":{Quote(_root)}," +
-               $"\"plugins\":{Quote(_pluginsDir)}," +
-               $"\"plugin\":{Quote(pluginDir)}," +
-               $"\"data\":{Quote(dataDir)}," +
-               $"\"config\":{Quote(configDir)}," +
-               $"\"logs\":{Quote(_logsDir)}," +
-               $"\"logFile\":{Quote(Path.Combine(_logsDir, plugin + ".log"))}" +
-               "}";
-    }
-
-    private void WireHostApi(JsRuntime runtime, IReadOnlyDictionary<string, (PluginManifest Manifest, string Directory)> manifests)
-    {
-        runtime.SetHost("__vjs_log", new Action<string, string, string>(WriteLog));
-        runtime.SetHost("__vjs_paths", new Func<string, string>(PathsJson));
-        runtime.SetHost("__vjs_now", new Func<double>(() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
-        runtime.SetHost("__vjs_config", new Func<string, string, string?>((plugin, key) => ReadConfig(plugin, key, manifests)));
-        runtime.SetHost("__vjs_storage_get", new Func<string, string, string?>((plugin, key) => ReadStorage(plugin, key)));
-        runtime.SetHost("__vjs_storage_set", new Action<string, string, string>((plugin, key, value) => WriteStorage(plugin, key, value)));
-        runtime.SetHost("__vjs_info", new Func<string, string, string>((plugin, dir) =>
-        {
-            var version = manifests.TryGetValue(plugin, out var entry) ? entry.Manifest.Version : "0.0.0";
-            var api = manifests.TryGetValue(plugin, out entry) ? entry.Manifest.ApiVersion : "1";
-            return $"{{\"name\":{Quote(plugin)},\"version\":{Quote(version)},\"api\":{Quote(api)},\"dir\":{Quote(dir)}}}";
-        }));
-    }
-
-    /// <summary>Writes to the shared log and to <c>server_plugins/logs/&lt;plugin&gt;.log</c>.</summary>
-    private void WriteLog(string plugin, string level, string message)
-    {
-        _log.Write(level, plugin, message);
-
-        try
-        {
-            Directory.CreateDirectory(_logsDir);
-            var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [{level}] {message}{Environment.NewLine}";
-            File.AppendAllText(Path.Combine(_logsDir, plugin + ".log"), line);
-        }
-        catch
-        {
-            // per-plugin log files are best effort; the shared log already has the line
-        }
-    }
-
     /// <summary>Config precedence: <c>config/&lt;plugin&gt;/config.ini</c>, then the manifest.</summary>
-    private string? ReadConfig(
-        string plugin,
-        string key,
-        IReadOnlyDictionary<string, (PluginManifest Manifest, string Directory)> manifests)
+    private string? ReadConfig(string plugin, string key, PluginManifest manifest)
     {
         var file = Path.Combine(ConfigDirectoryFor(plugin), "config.ini");
         if (File.Exists(file))
@@ -391,7 +399,24 @@ public sealed class JsHost
             }
         }
 
-        return manifests.TryGetValue(plugin, out var entry) ? entry.Manifest.Get(key) : null;
+        return manifest.Get(key);
+    }
+
+    /// <summary>Writes to the shared log and to <c>logs/&lt;plugin&gt;.log</c>.</summary>
+    private void WriteLog(string plugin, string level, string message)
+    {
+        _log.Write(level, plugin, message);
+
+        try
+        {
+            Directory.CreateDirectory(_logsDir);
+            var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [{level}] {message}{Environment.NewLine}";
+            File.AppendAllText(Path.Combine(_logsDir, plugin + ".log"), line);
+        }
+        catch
+        {
+            // per-plugin log files are best effort; the shared log already has the line
+        }
     }
 
     private string StoragePath(string plugin) => Path.Combine(DataDirectoryFor(plugin), "storage.json");
@@ -446,16 +471,8 @@ public sealed class JsHost
         File.WriteAllLines(file, lines);
     }
 
-    private static string Quote(string value) =>
-        "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
-
     private static string Describe(Exception exception)
     {
-        var inner = exception;
-        while (inner.InnerException != null)
-        {
-            inner = inner.InnerException;
-        }
-        return inner.GetType().Name + ": " + inner.Message;
+        return exception.GetType().Name + ": " + exception.Message;
     }
 }

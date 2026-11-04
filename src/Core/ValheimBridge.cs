@@ -38,7 +38,6 @@ public static class ValheimBridge
 
     public static void RaisePlayerLeave(long uid, string name)
     {
-        PlayerAccess.Forget(uid);
         Emit?.Invoke("onPlayerLeave", $"{{\"uid\":{uid},\"name\":{Quote(name)}}}");
     }
 

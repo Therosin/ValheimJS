@@ -51,6 +51,13 @@ if (-not $pluginRoot) {
     throw "$Target target has no plugin folder configured (SERVER_PLUGINS / CLIENT_PLUGINS)"
 }
 
+$resolvedPluginRoot = [IO.Path]::GetFullPath($pluginRoot).TrimEnd('\', '/')
+$expectedPluginRoot = [IO.Path]::GetFullPath((Join-Path $gamePath 'ValheimJS/plugins')).TrimEnd('\', '/')
+if (-not $resolvedPluginRoot.Equals($expectedPluginRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to mirror unexpected plugin directory: $resolvedPluginRoot (expected $expectedPluginRoot)"
+}
+$pluginRoot = $resolvedPluginRoot
+
 $buildDir = Join-Path $ProjectRoot 'bin/Release/netstandard2.1'
 $jsOut = Join-Path $ProjectRoot 'scripting/dist'
 
@@ -73,7 +80,7 @@ if (-not (Test-Path -LiteralPath $jsOut)) {
 $processName = if ($Target -eq 'server') { 'valheim_server' } else { 'valheim' }
 $running = Get-Process -Name $processName -ErrorAction SilentlyContinue
 if ($running) {
-    Write-Warning ("{0} is running ({1}); plugin files will fail to overwrite. Close it first." -f $running[0].ProcessName, $running[0].Id)
+    throw ("{0} is running ({1}); close it before deploying." -f $running[0].ProcessName, $running[0].Id)
 }
 
 New-Item -ItemType Directory -Force -Path $pluginDir | Out-Null

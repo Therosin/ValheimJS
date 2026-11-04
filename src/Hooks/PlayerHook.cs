@@ -109,6 +109,7 @@ internal static class PlayerWatcher
 }
 
 /// <summary>Prompt poll whenever the game republishes the player list.</summary>
+[ValheimJS.Scripting.Shared]
 [HarmonyPatch(typeof(ZNet), "SendPlayerList")]
 internal static class PlayerListHook
 {

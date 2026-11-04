@@ -1,15 +1,27 @@
+---
+title: ValheimJS
+---
+
 # ValheimJS
 
-Server-side scripting for Valheim. Plugins are written in TypeScript, bundled by Bun into a
-single plain script, and executed in-process by [Jint](https://github.com/sebastienros/jint)
-inside a BepInEx 5 plugin. Server logic changes without recompiling the mod.
+Game and Unity references are defined in `Valheim.targets` and resolve from the Valheim
+installation's `valheim_Data/Managed` directory. Optional reference groups are controlled by
+the `Use...` properties in `ValheimJS.csproj` (or MSBuild properties such as
+`-p:UseGUI=false`). Game libraries are enabled by default and can be disabled with
+`UseGameLibraries=false`. Feature groups cover GUI, input, networking, world physics and
+navigation, content, effects, and UI Toolkit. All except UI Toolkit are enabled by default.
+These are compile-time references and are not copied into the plugin output.
+
+Server and client scripting for Valheim. Plugins are written in TypeScript, bundled by Bun into a
+independent shared/server/client scripts, and executed in-process by [Jint](https://github.com/sebastienros/jint) inside
+a BepInEx 5 plugin. The C# side is the authoritative implementation of the JavaScript API.
 
 ```
-TypeScript plugin ──bun──► plugins/<name>/plugin.js ──► Jint engine ──► host API (api.*)
+TypeScript plugin ──bun──► plugins/<name>/{shared,server,client}.js ──► Jint engine ──► [JsBinder] classes
                                                           │
-                                            Harmony capture points (C#)
+                                             Harmony capture points (C#)
                                                           │
-                                                Valheim server code
+                                                 Valheim game code
 ```
 
 Plugin id: `com.svaltek.valheimjs` · JS API version: `1`
@@ -24,40 +36,46 @@ authors only (TypeScript, no engine internals). This README is for working on th
 | Path | Role |
 |---|---|
 | `Plugin.cs` | BepInEx entry: config, tick pump, hook registration |
-| `src/Scripting/` | Engine, plugin contexts, manifests, dependency order, logging |
-| `src/Networking/` | Mod-owned RPC layer (channels, deferred registration, delivery) |
-| `src/Utils/` | JSON emit helpers, netstandard shims |
-| `src/Bindings/` | Game API modules (`[JsBinding]`), one file per surface |
+| `src/Scripting/` | Engine, plugin lifecycle, manifests, dependency order, logging |
+| `src/Scripting/Binding/` | Binding attributes, discovery, Jint bridge, declaration writer |
+| `src/Bindings/` | Game API classes (`[JsBinder]`), one file per namespace |
+| `src/Core/` | typed registries, bridge seam, identity helpers |
 | `src/Hooks/` | Harmony capture points — register live singletons, emit events |
-| `src/Core/` | Typed registry + patch→JS bridge |
-| `scripting/` | TypeScript workspace: `sdk/`, `plugins/`, `build.ts`, `dist/` |
-| `docs/guides/` | modder-facing guides (TypeScript only) |
-| `docs/hook-map.md` | which game methods are worth patching, mined from working mods |
-| `harness/` | net8 console running the same host code without Unity |
+| `src/Utils/` | RPC bus, JSON helpers, netstandard shims |
+| `scripting/sdk/` | TypeScript SDK: generated declarations + thin facades |
+| `scripting/lib/` | Optional imported libraries (binary sync codec) |
+| `scripting/plugins/` | example plugin sources |
+| `docs/guides/` | modder-facing guides |
+| `harness/` | net8 console running the real host code without Unity |
 
-### Runtime data (next to the server executable)
+### Runtime data (next to the game executable)
 
 ```
 ValheimJS/
-  plugins/<name>/     plugin.js + manifest.ini
-  data/<name>/        this plugin's fs sandbox
+  plugins/<name>/     manifest.ini + shared.js/server.js/client.js (entries optional)
+  data/<name>/        this plugin's fs sandbox and db
   config/<name>/      config.ini (read via host.config)
   logs/<name>.log     this plugin's log lines
 ```
 
 Root is `PluginRoot` in `BepInEx/config/com.svaltek.valheimjs.cfg` (defaults to
-`<server root>/ValheimJS`). Paths are exposed to plugins as `ctx.paths`
+`<game root>/ValheimJS`). Paths are exposed to plugins as `ctx.paths`
 (`root`, `plugins`, `plugin`, `data`, `config`, `logs`, `logFile`).
+
+## Process-aware startup
+
+Shared code runs on both processes, followed by the selected client/server entry. A player host
+uses the client branch. C# startup modules and Harmony patches use [Shared], [ServerOnly], and
+[ClientOnly]; bindings are filtered before construction. Read
+[Process branches](docs/guides/process-branches.md) for configuration, lifecycle and gate examples.
 
 ## Build and deploy
 
 ```powershell
-dotnet build -c Release                     # plugin + Jint/Acornima → BepInEx/plugins/ValheimJS
-
-cd scripting
-bun install
-bun run build.ts                            # → scripting/dist/<name>/
-bun run build.ts --deploy "<server>/ValheimJS/plugins"
+task build                                  # plugin + Jint/Acornima
+task bundle                                 # → scripting/dist/<name>/
+task declarations                           # regenerate SDK types from bindings
+task check                                  # typecheck, tests, build, drift, bundle, harness
 ```
 
 The game must be closed to replace the plugin DLL. Plugin folders can be edited live with
@@ -68,36 +86,51 @@ The game must be closed to replace the plugin DLL. Plugin folders can be edited 
 `scripting/plugins/<name>/manifest.ini`:
 
 ```ini
-name=serverinfo
-version=0.1.0
+name=hello
+version=1.0.0
 apiVersion=1        # must match the host, otherwise the plugin is rejected with a clear log line
-entry=plugin.js
 enabled=true
-depends=core@^0.1.0 # optional; loaded first, reachable via ctx.dep("core")
+depends=core@^1.0.0 # optional; loaded first, reachable via ctx.dep("core")
 ```
 
+A bundle only has to hand the host a descriptor. `definePlugin` produces one and the host does the
+rest: instantiation, context, dependency exports, hook discovery, timers and teardown.
+
 ```ts
-import { definePlugin, log } from "../../sdk/index";
+// object form
+import { definePlugin, log } from "../../../sdk/index";
 
 export default definePlugin({
-    version: "0.1.0",
+    version: "1.0.0",
     exports: { greet: (name: string) => `hello ${name}` },
-    onLoad(ctx) {
+    setup(ctx) {
         log(`data lives in ${ctx.paths.data}`);
     },
     onServerTick(ctx, world) {
-        log(`day ${world.day}, ${world.peers} online`);
-    },
-    onChat(ctx, payload) {
-        log(`[${payload.channel}] ${payload.senderId}: ${payload.text}`);
+        log(`day ${world.day}, ${world.peers} peers`);
     }
 });
 ```
 
-- Handlers receive `(ctx, payload)`; `ctx` = `name`, `dir`, `paths`, `state`, `exports`,
-  `dep(name)`, `host` (`log`, `config`, `storage`, `now`, `info`, `api`).
-- One Jint engine hosts all plugins (cross-plugin `exports` need shared script state).
-  Isolation is per plugin: a throwing handler disables only that plugin.
+```ts
+// class form
+import { definePlugin, JsPlugin } from "../../../sdk/index";
+
+class Greeter extends JsPlugin {
+    exports = { greet: (name: string) => `hello ${name}` };
+    onChat(_payload: { text: string }) {
+        log(`[${this.ctx.name}] ${_payload.text}`);
+    }
+}
+
+export default definePlugin(Greeter);
+```
+
+- Object hooks receive `(ctx, payload)`; class hooks receive `(payload)` with `this.ctx` attached.
+- `ctx` = `name`, `dir`, `paths`, `state`, `exports`, `dep(name)`, `host` (`log`, `config`,
+  `storage`, `now`, `info`, `api`).
+- One Jint engine hosts all plugins (cross-plugin `exports` need shared script state). Isolation is
+  per plugin: a throwing handler disables only that plugin.
 - Everything runs on the Unity main thread. Hooks must be cheap; timers are host-driven.
 - Plugins load in dependency order; `apiVersion` mismatch is a load error, not a crash.
 
@@ -105,51 +138,48 @@ export default definePlugin({
 
 | Hook | Payload | Capture point |
 |---|---|---|
-| `onServerTick` | world snapshot (~1 Hz) | `ZNet.Update` postfix, throttled |
+| `onServerTick` | `GameSnapshot` (~1 Hz) | `ZNet.Update` postfix, throttled |
 | `onChat` | `{ channel, senderId, text }` | `Chat.RPC_ChatMessage` prefix |
 | `onPlayerJoin` / `onPlayerLeave` | `{ uid, name }` | `ZNet.SendPlayerList` postfix + peer diff |
+| `onPlayerSpawned` / `onPlayerDespawned` | `{ uid, name }` | heartbeat poll over character ZDOs |
 | `onDamage` | `{ target, attacker, damage, hp, hitType }` | `Character.Damage` postfix |
-
-Chat is a prefix on purpose: the server handler defers through an async permission check and
-bails out when there is no local player, so a postfix would fire late or never.
 
 ## Bindings (`host.api`)
 
-| Module | Functions |
-|---|---|
-| `fs` | `root, exists, read, write, append, list, mkdir, delete, join` — **scoped** to `data/<plugin>` |
-| `world` | `snapshot, name, peers, day, dayFraction, timeOfDay` |
-| `players` | `list, count, names, hostname(uid)` |
-| `zdo` | `count, available` |
-| `chat` | `send, sendTo, available` |
-| `env` | `side, dedicated, isServer, isClient, singlePlayer, peers` |
+| Namespace | Class | Purpose |
+|---|---|---|
+| `game` | `GameBindings` | side, world identity, live snapshot |
+| `world` | `WorldBindings` | ZDO counts, spawning, per-object data |
+| `net` | `NetBindings` | routed RPC: register, dispatch, requests |
+| `input` | `InputBindings` | keyboard bindings + phase callbacks (client) |
+| `fs` | `FileSystemBindings` | sandboxed files |
+| `db` | `DatabaseBindings` | per-plugin document collections |
 
-Adding a surface is one file:
+Adding a namespace is one class:
 
 ```csharp
-[JsBinding("World", JsBindPhase.Gameplay, order: 100)]
-internal static class WorldBindings
+[JsBinder("world", Phase = JsBindPhase.Gameplay, Order = 120,
+    Description = "Live world objects.")]
+internal sealed class WorldBindings : JsBindings
 {
-    public static void Bind(JsBindingContext context)
-    {
-        context.Add("world.day", new Func<int>(() => EnvMan.instance.GetDay()));
-        context.Add("world.snapshot", new Func<string>(Snapshot), JsReturnKind.Json);
-        context.Add("fs.read", new Func<string, string, string?>(Read), scoped: true); // plugin name first
-    }
+    public WorldBindings(JsBindingContext context) : base(context) { }
+
+    [JsBinding(Description = "Number of live world objects.")]
+    public int ZdoCount() => /* … */;
+
+    [JsBinding(Scoped = true, Description = "Reads object data for the calling plugin.")]
+    public string? GetData(string plugin, string handle, string key) => /* … */;
 }
 ```
 
-The loader finds it by attribute, sorts by phase/order, and invokes `Bind`. A failing module is
-logged and skipped; the rest of the API still installs. Structured returns declare
-`JsReturnKind.Json` and arrive in JS already parsed. Scoped bindings receive the calling
-plugin's name, which is how per-plugin sandboxing works.
+The loader discovers attributed classes, validates every signature, and installs one controlled
+Jint bridge: forwarded arguments, plugin scoping, JSON returns and error attribution all happen in
+one place. Duplicate exported names, static methods, out/ref parameters, async returns and
+unmapped types are rejected with a diagnostic naming the class and member — the API either installs
+completely or not at all.
 
-## Server and client
-
-The same plugin runs on both. `Application.isBatchMode` (dedicated) picks the startup side, which
-selects `server/plugin.js` or `client/plugin.js` when a plugin ships side folders; shared
-`plugin.js` is the fallback. At runtime, `env.isServer()` / `env.isClient()` are live, and the SDK
-wraps handlers with `serverOnly()` / `clientOnly()`.
+`task declarations` writes `scripting/sdk/api/generated.ts` from the same metadata;
+`task declarations:check` fails on drift, so types cannot disagree with the running host.
 
 ## Engine guardrails
 
@@ -166,19 +196,23 @@ Plugin code is untrusted, so the engine is bounded rather than trusted (config
 Violations surface as a normal hook error (`plugin disabled`), not a hung server.
 
 `async`/`await` works: the host pumps the engine's continuation queue every tick, so
-`await Messaging.request(...)` resumes on a later tick. This needs Jint ≥ 4.17 (the version pinned
-here) — 4.4 silently dropped continuations settled from a later script run.
+`await Rpc.channel(...).request(...)` resumes on a later tick. This needs Jint ≥ 4.17 (the version
+pinned here).
 
 ## Design notes
 
-- Patches capture, JS decides: no plugin behavior in C#.
-- `host.api.world.*` is read live per call; at boot `ZNet` is uninitialized, so values are
+- The C# side is the implementation; the SDK is generated declarations plus thin facades.
+- Patches capture, JS decides: no plugin behaviour in C#.
+- Lifecycle, timers, RPC dispatch and plugin scoping live in the host, not in the SDK.
+- `host.api.game.*` is read live per call; at boot `ZNet` is uninitialized, so values are
   null/zero until the world loads.
-- Binding modules are the only place game types are touched; the host stays game-agnostic and
-  is covered by `harness/`.
+- Binding classes are the only place game types are touched; the host stays game-agnostic and is
+  covered by `harness/`.
 
 ## Troubleshooting
 
 - `HarmonyX … Parameter "x" not found`: patch parameter names must match the target method.
 - Plugin rejected: check `apiVersion` in its manifest against the host (currently `1`).
-- Nothing loads: verify `PluginRoot` and that each plugin folder has `manifest.ini` + `plugin.js`.
+- `binding catalog is invalid`: the log lists the exact class/member; the game API did not install.
+- `did not export a descriptor`: call `definePlugin(...)` as the bundle's default export.
+- Nothing loads: verify `PluginRoot` and that each plugin folder has `manifest.ini` and a shared or matching-side entry.

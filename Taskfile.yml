@@ -34,6 +34,7 @@ tasks:
     sources:
       - ./**/*.cs
       - ./{{.project}}.csproj
+      - ./Valheim.targets
 
   bundle:
     desc: Bundle TypeScript plugins into scripting/dist
@@ -42,10 +43,13 @@ tasks:
       - bun install
       - bun run build.ts
     generates:
-      - ./dist/*/plugin.js
+      - ./dist/*/*.js
+      - ./dist/*/manifest.ini
     sources:
       - ./sdk/**/*.ts
+      - ./lib/**/*.ts
       - ./plugins/**/*.ts
+      - ./plugins/**/manifest.ini
       - ./build.ts
 
   typecheck:
@@ -53,18 +57,46 @@ tasks:
     dir: '{{.jsRoot}}'
     cmd: bun run typecheck
 
+  declarations:
+    desc: Regenerate SDK declarations from binding metadata
+    deps: [build]
+    cmd: '{{.ps}} -NoProfile -File ./scripts/declarations.ps1'
+
+  declarations:check:
+    desc: Fail when checked-in declarations drifted from the bindings
+    deps: [build]
+    cmd: '{{.ps}} -NoProfile -File ./scripts/declarations.ps1 -Check'
+
+  probe:
+    desc: Harness probes for discovery, declarations, invocation and scoping
+    deps: [build]
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-bindings
+
+  harness:
+    desc: Load bundled example plugins in the headless host harness
+    deps: [bundle]
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- {{.jsOut}}
+
+  probe:process:
+    desc: Verify process gates, component lifecycle, dependencies and cleanup
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-process
+
   test:
     desc: JS unit tests
     dir: '{{.jsRoot}}'
     cmd: bun test
 
   check:
-    desc: Typecheck, test, build, bundle
+    desc: Typecheck, declarations, tests, build, bundle, harness
     cmds:
       - task: typecheck
       - task: test
       - task: build
+      - task: declarations:check
       - task: bundle
+      - task: probe
+      - task: probe:process
+      - task: harness
 
   deploy:
     desc: Deploy to client and dedicated server
@@ -96,7 +128,7 @@ tasks:
       name: '{{.name | default "VJSTest"}}'
       port: '{{.port | default "2466"}}'
       world: '{{.world | default "VJSTest"}}'
-      password: '{{.password | default "secret123"}}'
+      password: '{{.password | default "test12345"}}'
     preconditions:
       - sh: 'pwsh -NoProfile -Command "Test-Path ''{{.SERVER_GAME_PATH}}/valheim_server.exe''"'
         msg: SERVER_GAME_PATH does not contain valheim_server.exe

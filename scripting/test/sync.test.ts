@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decodeFrame, diffEntity, encodeFrame, quantise } from "../sdk/sync";
+import { decodeFrame, diffEntity, encodeFrame, quantise } from "../lib/sync";
 
 describe("sync frames", () => {
     test("round-trips partial entities", () => {

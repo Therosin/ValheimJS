@@ -1,5 +1,20 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using ValheimJS.Scripting;
+using ValheimJS.Scripting.Binding;
+
+if (args.Contains("--declarations"))
+{
+    return EmitDeclarations();
+}
+
+if (args.Contains("--probe-bindings"))
+{
+    return BindingProbe.Run();
+}
+
+if (args.Contains("--probe-process")) return ProcessProbe.Run();
 
 // Headless smoke test for the JS host: loads bundles from a directory, pumps timers,
 // dispatches hooks, reloads. No Unity, no BepInEx — same code the plugin runs.
@@ -27,7 +42,7 @@ if (!Directory.Exists(Path.Combine(root, "plugins")) &&
 }
 
 var log = new ConsoleLog();
-var host = new JsHost(root, "server", log);
+var host = new JsHost(root, ProcessSide.Server, log, bindingFilter: type => !BindingProbe.IsFixture(type));
 
 Console.WriteLine($"root: {root}");
 host.Load();
@@ -40,7 +55,7 @@ if (host.LoadedNames.Count == 0)
 
 Console.WriteLine("loaded: " + string.Join(", ", host.LoadedNames));
 
-// ~4 s of host ticks at 200 ms: enough for the sample plugin's 1 s interval.
+// ~4 s of host ticks at 200 ms: enough for a sample plugin's 1 s interval.
 var elapsed = Stopwatch.StartNew();
 while (elapsed.Elapsed < TimeSpan.FromSeconds(4))
 {
@@ -48,17 +63,7 @@ while (elapsed.Elapsed < TimeSpan.FromSeconds(4))
     host.Tick();
 }
 
-// Optional: exercise the net dispatch path without a running game.
-if (args.Contains("--net-probe"))
-{
-    const string envelopeJson =
-        "{\"v\":1,\"kind\":\"request\",\"channel\":\"server-time\",\"from\":\"server\",\"ts\":1,\"id\":7,\"data\":{\"day\":1}}";
-    var payload = "{\"channel\":\"server-time\",\"sender\":7,\"data\":" + JsonQuote(envelopeJson) + "}";
-    var replies = host.DispatchAll("onNet", _ => payload);
-    Console.WriteLine($"net probe dispatched, {replies.Count} reply/result(s)");
-}
-
-var results = host.DispatchAll("onTick", _ => "{}");
+var results = host.DispatchAll("onServerTick", _ => "{}");
 Console.WriteLine($"dispatch results: {results.Count}");
 
 host.Reload();
@@ -83,8 +88,113 @@ static void CopyTree(string source, string destination)
     }
 }
 
-static string JsonQuote(string value) =>
-    "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n") + "\"";
+int EmitDeclarations()
+{
+    var assemblyPath = ValueOf("--assembly")
+        ?? Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "bin", "Release", "netstandard2.1", "ValheimJS.dll"));
+    var managed = ValueOf("--managed") ?? Environment.GetEnvironmentVariable("MANAGED_PATH");
+    var output = ValueOf("--out");
+
+    if (!File.Exists(assemblyPath))
+    {
+        Console.Error.WriteLine($"assembly not found: {assemblyPath} (run `task build` first)");
+        return 2;
+    }
+
+    if (string.IsNullOrEmpty(managed) || !Directory.Exists(managed))
+    {
+        Console.Error.WriteLine("MANAGED_PATH is not set or does not exist; pass --managed <valheim_Data/Managed>");
+        return 2;
+    }
+
+    var references = (ValueOf("--references") ?? Environment.GetEnvironmentVariable("BEPINEX_CORE") ?? "")
+        .Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+    using var metadata = MetadataAssembly.Load(assemblyPath, managed, references);
+    var catalog = JsBindingDiscovery.Discover(metadata.Assembly);
+    if (!catalog.IsValid)
+    {
+        Console.Error.WriteLine("binding declarations failed:" + Environment.NewLine + catalog.DescribeErrors());
+        return 1;
+    }
+
+    var text = JsBindingDeclarations.Write(catalog);
+    if (output == null)
+    {
+        Console.Out.Write(text);
+    }
+    else
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
+        File.WriteAllText(output, text);
+        Console.WriteLine($"wrote {catalog.Binders.Count} namespace(s) to {output}");
+    }
+
+    return 0;
+}
+
+string? ValueOf(string name)
+{
+    for (var index = 0; index < args.Length - 1; index++)
+    {
+        if (args[index] == name)
+        {
+            return args[index + 1];
+        }
+    }
+
+    return null;
+}
+
+/// <summary>Loads the built plugin for metadata-only inspection (Unity references never load).</summary>
+internal sealed class MetadataAssembly : IDisposable
+{
+    private readonly MetadataLoadContext _context;
+
+    private MetadataAssembly(MetadataLoadContext context, Assembly assembly)
+    {
+        _context = context;
+        Assembly = assembly;
+    }
+
+    public Assembly Assembly { get; }
+
+    public static MetadataAssembly Load(string assemblyPath, string managedDirectory, IEnumerable<string>? references = null)
+    {
+        var paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddDirectory(string? directory)
+        {
+            if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
+            {
+                return;
+            }
+
+            foreach (var file in Directory.GetFiles(directory, "*.dll"))
+            {
+                paths.TryAdd(Path.GetFileName(file), file);
+            }
+        }
+
+        AddDirectory(Path.GetDirectoryName(assemblyPath));
+        AddDirectory(managedDirectory);
+        if (references != null)
+        {
+            foreach (var reference in references)
+            {
+                AddDirectory(reference);
+            }
+        }
+
+        AddDirectory(RuntimeEnvironment.GetRuntimeDirectory());
+
+        var resolver = new PathAssemblyResolver(paths.Values);
+        var context = new MetadataLoadContext(resolver);
+        var assembly = context.LoadFromAssemblyPath(assemblyPath);
+        return new MetadataAssembly(context, assembly);
+    }
+
+    public void Dispose() => _context.Dispose();
+}
 
 internal sealed class ConsoleLog : IJsLog
 {

@@ -1,0 +1,83 @@
+<Project>
+  <!-- Valheim's Mono assemblies are provided by the game, not copied into the plugin. -->
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp;assembly_valheim;assembly_utils;Splatform;UnityEngine;UnityEngine.CoreModule">
+      <HintPath>$(ValheimManagedDir)\%(Identity).dll</HintPath><Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Optional Valheim libraries, available by default regardless of feature switches. -->
+  <ItemGroup Condition="'$(UseGameLibraries)' == 'true'">
+    <Reference Include="assembly_guiutils;gui_framework;SoftReferenceableAssets;assembly_lux;assembly_postprocessing;assembly_simplemeshcombine;assembly_sunshafts;assembly_googleanalytics">
+      <HintPath>$(ValheimManagedDir)\%(Identity).dll</HintPath><Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Inventory, menus and HUDs: ChestHelper, Dverger and Marketplace use uGUI/TMP. -->
+  <ItemGroup Condition="'$(UseGUI)' == 'true'">
+    <Reference Include="UnityEngine.UI;UnityEngine.UIModule;UnityEngine.IMGUIModule;UnityEngine.TextRenderingModule;Unity.TextMeshPro;UnityEngine.TextCoreFontEngineModule;UnityEngine.TextCoreTextEngineModule">
+      <HintPath>$(ValheimManagedDir)\%(Identity).dll</HintPath><Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Keyboard, controller and Unity input APIs. -->
+  <ItemGroup Condition="'$(UseInput)' == 'true'">
+    <Reference Include="UnityEngine.InputLegacyModule;Unity.InputSystem">
+      <HintPath>$(ValheimManagedDir)\%(Identity).dll</HintPath><Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup Condition="'$(UseGUI)' == 'true' Or '$(UseUIToolkit)' == 'true'">
+    <Reference Include="UnityEngine.InputForUIModule"><HintPath>$(ValheimManagedDir)\UnityEngine.InputForUIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Unity.InputSystem.ForUI" Condition="'$(UseInput)' == 'true'"><HintPath>$(ValheimManagedDir)\Unity.InputSystem.ForUI.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <!-- World queries, terrain and NPC navigation. -->
+  <ItemGroup Condition="'$(UseWorld)' == 'true'">
+    <Reference Include="UnityEngine.PhysicsModule;UnityEngine.TerrainModule;UnityEngine.AIModule">
+      <HintPath>$(ValheimManagedDir)\%(Identity).dll</HintPath><Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Asset bundles, textures and Unity JSON. -->
+  <ItemGroup Condition="'$(UseContent)' == 'true'">
+    <Reference Include="UnityEngine.AssetBundleModule;UnityEngine.ImageConversionModule;UnityEngine.JSONSerializeModule">
+      <HintPath>$(ValheimManagedDir)\%(Identity).dll</HintPath><Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Animation, sound and particles. -->
+  <ItemGroup Condition="'$(UseEffects)' == 'true'">
+    <Reference Include="UnityEngine.AnimationModule;UnityEngine.AudioModule;UnityEngine.ParticleSystemModule">
+      <HintPath>$(ValheimManagedDir)\%(Identity).dll</HintPath><Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- HTTP requests and downloadable images, audio and bundles. -->
+  <ItemGroup Condition="'$(UseNetworking)' == 'true'">
+    <Reference Include="UnityEngine.UnityWebRequestModule;UnityEngine.UnityWebRequestTextureModule;UnityEngine.UnityWebRequestAudioModule;UnityEngine.UnityWebRequestAssetBundleModule">
+      <HintPath>$(ValheimManagedDir)\%(Identity).dll</HintPath><Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- UI Toolkit is separate from the uGUI/TMP used by the inspected game mods. -->
+  <ItemGroup Condition="'$(UseUIToolkit)' == 'true'">
+    <Reference Include="UnityEngine.UIElementsModule"><HintPath>$(ValheimManagedDir)\UnityEngine.UIElementsModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.TextCoreTextEngineModule" Condition="'$(UseGUI)' != 'true'"><HintPath>$(ValheimManagedDir)\UnityEngine.TextCoreTextEngineModule.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <PropertyGroup Condition="'$(UseGameLibraries)' == 'true'"><DefineConstants>$(DefineConstants);USE_GAME_LIBRARIES</DefineConstants></PropertyGroup>
+  <PropertyGroup Condition="'$(UseGUI)' == 'true'"><DefineConstants>$(DefineConstants);USE_GUI</DefineConstants></PropertyGroup>
+  <PropertyGroup Condition="'$(UseInput)' == 'true'"><DefineConstants>$(DefineConstants);USE_INPUT</DefineConstants></PropertyGroup>
+  <PropertyGroup Condition="'$(UseWorld)' == 'true'"><DefineConstants>$(DefineConstants);USE_WORLD</DefineConstants></PropertyGroup>
+  <PropertyGroup Condition="'$(UseContent)' == 'true'"><DefineConstants>$(DefineConstants);USE_CONTENT</DefineConstants></PropertyGroup>
+  <PropertyGroup Condition="'$(UseEffects)' == 'true'"><DefineConstants>$(DefineConstants);USE_EFFECTS</DefineConstants></PropertyGroup>
+  <PropertyGroup Condition="'$(UseNetworking)' == 'true'"><DefineConstants>$(DefineConstants);USE_NETWORKING</DefineConstants></PropertyGroup>
+  <PropertyGroup Condition="'$(UseUIToolkit)' == 'true'"><DefineConstants>$(DefineConstants);USE_UITOOLKIT</DefineConstants></PropertyGroup>
+
+  <Target Name="ValidateValheimReferences" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(ValheimManagedDir)\Assembly-CSharp.dll')" Text="Game assemblies not found. Set GameDir (or GAME_DIR) to the Valheim install root. Looked in: $(ValheimManagedDir)" />
+  </Target>
+  <Target Name="LogValheimReferences" AfterTargets="ResolveAssemblyReferences" Condition="'$(LogGameReferences)' == 'true'">
+    <Message Text="Valheim references: @(Reference->'%(Identity)')" Importance="High" />
+  </Target>
+</Project>

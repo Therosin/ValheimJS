@@ -1,9 +1,13 @@
-﻿using BepInEx;
+using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
 using System;
 using System.IO;
+using System.Linq;
+using System.Collections.Generic;
+using System.Diagnostics;
+using ValheimJS.Startup;
 using UnityEngine;
 using ValheimJS.Core;
 using ValheimJS.Scripting;
@@ -28,12 +32,14 @@ public class Plugin : BaseUnityPlugin
     private FileSystemWatcher? _watcher;
     private volatile bool _reloadRequested;
     private float _tickAccumulator;
+    private readonly List<IStartupModule> _modules = new();
 
     private void Awake()
     {
         Logger = base.Logger;
 
         _enabled = Config.Bind("General", "Enabled", true, "Load JS plugins on startup.");
+        var processSide = Config.Bind("General", "ProcessSide", "auto", "auto (valheim/valheim_server executable), server, or client. Fixed until process restart.");
         _pluginRoot = Config.Bind(
             "General",
             "PluginRoot",
@@ -52,12 +58,44 @@ public class Plugin : BaseUnityPlugin
         }
 
         Logger.LogInfo($"settings file: {Config.ConfigFilePath}");
-        Logger.LogInfo($"startup side: {(Application.isBatchMode ? "server (headless)" : "client")}");
+        try
+        {
+            using var process = Process.GetCurrentProcess();
+            GameEnvironment.Initialize(ProcessPolicy.Resolve(process.ProcessName, processSide.Value));
+            Logger.LogInfo($"startup side: {GameEnvironment.Side} ({processSide.Value}; executable {process.ProcessName})");
+            var types = typeof(Plugin).Assembly.GetTypes();
+            var modules = ProcessPolicy.Select(types.Where(type => !type.IsAbstract && typeof(IStartupModule).IsAssignableFrom(type)), GameEnvironment.Side);
+            var patches = ProcessPolicy.Select(types.Where(type => type.IsDefined(typeof(HarmonyPatch), false)), GameEnvironment.Side);
+            foreach (var type in modules)
+            {
+                var module = (IStartupModule)Activator.CreateInstance(type, true)!;
+                _modules.Add(module);
+                module.Start(this);
+                Logger.LogInfo($"startup module: {type.Name}");
+            }
+            _harmony = new Harmony(MyPluginInfo.PLUGIN_GUID);
+            foreach (var patch in patches)
+            {
+                _harmony.CreateClassProcessor(patch).Patch();
+                Logger.LogInfo($"hook registered: {patch.Name}");
+            }
+            _host!.Load();
+            if (_watch.Value) StartWatcher();
+            Logger.LogInfo($"ValheimJS ready — {_host.LoadedNames.Count} plugin(s) from {_host.Root}");
+        }
+        catch (Exception exception)
+        {
+            Logger.LogError("ValheimJS startup failed: " + exception);
+            OnDestroy();
+            enabled = false;
+        }
+    }
 
-        var side = Application.isBatchMode ? "server" : "client";
+    internal void StartShared()
+    {
         _host = new JsHost(
             _pluginRoot.Value,
-            side,
+            GameEnvironment.Side,
             new BepInExJsLog(),
             new JsRuntimeOptions
             {
@@ -65,45 +103,19 @@ public class Plugin : BaseUnityPlugin
                 TimeoutMs = _timeoutMs.Value,
                 LimitRecursion = _limitRecursion.Value
             });
-        ValheimBridge.Emit = (hook, payload) => _host.DispatchAll(hook, _ => payload);
+        ValheimBridge.Emit = _host.Emit;
         ValheimBridge.WorldSnapshot = BuildWorldSnapshot;
 
-        _host.Load();
-        ApplyPatches();
-
-        Networking.RpcChannel.Install();
-
-        if (Application.isBatchMode)
-        {
-            Core.InventorySnapshot.Install();
-        }
-        else
-        {
-            // The server cannot touch a remote player's component; it commands the owning client.
-            PlayerCommandAgent.Install();
-            Core.ChatAgent.Install();
-        }
-
-        if (_watch.Value)
-        {
-            StartWatcher();
-        }
-
-        Logger.LogInfo($"ValheimJS ready — {_host.LoadedNames.Count} plugin(s) from {_host.Root}");
+        Utils.RpcBus.Install();
     }
 
-    private void ApplyPatches()
+    internal void StopShared()
     {
-        _harmony = new Harmony(MyPluginInfo.PLUGIN_GUID);
-        try
-        {
-            _harmony.PatchAll(typeof(Plugin).Assembly);
-            Logger.LogInfo("Game hooks applied.");
-        }
-        catch (Exception exception)
-        {
-            Logger.LogError("Hook registration failed: " + exception);
-        }
+        ValheimBridge.Emit = null;
+        ValheimBridge.WorldSnapshot = null;
+        Hooks.PlayerWatcher.Reset();
+        Utils.RpcBus.Shutdown();
+        global::Core.Container.Container.ClearAll();
     }
 
     private static string BuildWorldSnapshot()
@@ -117,6 +129,7 @@ public class Plugin : BaseUnityPlugin
 
     private void Update()
     {
+        Utils.RpcBus.Refresh();
         if (_host == null)
         {
             return;
@@ -142,7 +155,11 @@ public class Plugin : BaseUnityPlugin
 
     private void StartWatcher()
     {
-        _watcher = new FileSystemWatcher(_pluginRoot.Value)
+        // Watch plugin bundles only: data/, config/ and logs/ are written at runtime, so watching
+        // the whole root would reload the host every time a plugin logged a line.
+        var plugins = Path.Combine(_pluginRoot.Value, "plugins");
+        Directory.CreateDirectory(plugins);
+        _watcher = new FileSystemWatcher(plugins)
         {
             IncludeSubdirectories = true,
             NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName,
@@ -152,22 +169,23 @@ public class Plugin : BaseUnityPlugin
         _watcher.Created += (_, _) => _reloadRequested = true;
         _watcher.Deleted += (_, _) => _reloadRequested = true;
         _watcher.Renamed += (_, _) => _reloadRequested = true;
-        Logger.LogInfo($"Watching {_pluginRoot.Value} for changes.");
+        Logger.LogInfo($"Watching {plugins} for changes.");
     }
 
     private void OnDestroy()
     {
         _watcher?.Dispose();
         _watcher = null;
-        _harmony?.UnpatchSelf();
-        _harmony = null;
-        ValheimBridge.Emit = null;
-        ValheimBridge.WorldSnapshot = null;
-        GameRegistry.Clear();
-        Hooks.PlayerWatcher.Reset();
-        Networking.RpcChannel.Reset();
         _host?.Dispose();
         _host = null;
+        _harmony?.UnpatchSelf();
+        _harmony = null;
+        for (var index = _modules.Count - 1; index >= 0; index--)
+        {
+            try { _modules[index].Stop(this); }
+            catch (Exception exception) { Logger.LogWarning("Module cleanup failed: " + exception); }
+        }
+        _modules.Clear();
     }
 
     private sealed class BepInExJsLog : IJsLog

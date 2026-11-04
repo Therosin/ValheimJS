@@ -1,3 +1,7 @@
+---
+title: API roadmap — what real plugins need
+---
+
 # API roadmap — what real plugins need
 
 Review of the gap between the current scripting surface and mods like the ones installed
@@ -8,15 +12,16 @@ the "what to build next and why" document, not modder docs.
 
 | Area | Available |
 |---|---|
-| Data | `fs` (sandboxed), `ctx.host.storage`, `ctx.paths` |
-| World | `world.snapshot/name/peers/day/dayFraction/timeOfDay` |
-| Players | `players.list/count/names/hostname/isAdmin` (read-only) |
-| Objects | `zdo.count/available` (read-only) |
-| Messaging | `chat.send/sendTo`, `Networking` channels (server ↔ client), `env.*` |
-| Events | `onLoad`, `onUnload`, `onServerTick` (~1 Hz), `onChat`, `onPlayerJoin/Leave`, `onDamage` |
+| Data | `fs` (sandboxed), `db` (per-plugin documents), `ctx.host.storage`, `ctx.paths` |
+| Game | `game.side/dedicated/isServer/isClient/singlePlayer/peers/instance/worldName/day/dayFraction/timeOfDay/snapshot` |
+| World | `world.zdoCount/zdoAvailable/spawn/destroy/prefabs/exists/getData/setData/alive` |
+| Messaging | `Rpc` channels (notifications + synchronous requests) over the host `net` binding |
+| Input | `input.bind/on/off/state/...` (client only) |
+| Events | `setup`, `teardown`, `onServerTick` (~1 Hz), `onChat`, `onPlayerJoin/Leave`, `onPlayerSpawned/Despawned`, `onDamage` |
 
-Useful for: rules and policy, announcements, logging, metrics, admin chat commands, cross-process
-state. **Not** useful yet for: changing players, spawning things, items, NPCs, quests, UI.
+Useful for: spawnable objects and object data, rules and policy, metrics, cross-process events,
+client-side input, persistence. **Not** useful yet for: changing players, inventories, items, chat
+output, host commands, NPC behaviour, UI.
 
 ## How the installed mods actually do it
 
@@ -40,23 +45,16 @@ Everything below is a small binding module; game APIs verified in
 
 | Need | Proposed binding | Backing API |
 |---|---|---|
-| Move a player | `player.teleport(uid, x, y, z)` | `Character`/`Player` position set *verify* |
-| Health / stamina / eitr | `player.setHealth(uid, v)`, `player.getHealth(uid)`, `player.stats(uid)` | `Character.SetHealth/GetHealth`, fields `m_stamina`, `m_eitr` |
-| God mode / invulnerable | `player.setGodMode(uid, on)` | `Player.SetGodMode(bool)` |
-| Skills | `player.skill(uid, name)`, `player.raiseSkill(uid, name, factor)` | `Skills.RaiseSkill(SkillType, float)` |
-| Buffs | `player.addStatusEffect(uid, name)` | `SEMan.AddStatusEffect(int hash, …)` |
-| Inventory read | `inventory.list(uid)` → `[{name, amount, quality, slot}]` | `Inventory.GetAllItems()` |
-| Inventory write | `inventory.add(uid, itemName, amount, quality)`, `inventory.remove(uid, itemName, amount)`, `inventory.count(uid, itemName)` | `ObjectDB.GetItemPrefab(string)`, `Inventory.AddItem(GameObject,int)`, `Inventory.RemoveItem(string,int,int)`, `Inventory.CountItems(string,int)` |
-| Spawn an **existing** prefab | `world.spawn(prefabName, x, y, z, opts)` → `{zdoId}` | `ZNetScene.GetPrefab(string)` + `ZDOMan.CreateNewZDO(Vector3,int)` |
-| Delete an object | `world.destroy(zdoId)` | *verify* (`ZDOMan` removal path) |
-| Object data | `zdo.get(id, key)`, `zdo.set(id, key, value)`, `zdo.list(area?)` | `ZDO.GetString/Set(string,…)`, `m_objectsByID` |
-| Neary objects | `world.objects(radius, center?)` | ZDO iteration + distance filter |
-| Events: interaction | `onInteract(ctx, {target, player, item})` | `Interactable.Interact` |
-| Events: container | `onContainerChanged(ctx, {container, player})` | `Container`/`Inventory` patch |
-| Events: death | `onDeath(ctx, {victim, killer})` | `Character.OnDeath` / `Character.Damage` + health check |
-| Events: craft | `onCraft(ctx, {player, recipe, item})` | `InventoryGui.DoCrafting` (client) / `CraftingStation` *verify server path* |
-| Events: day change | `onDayChange(ctx, {from, to})` | `EnvMan.GetDay()` diff on the heartbeat (no patch needed) |
-| HUD message to one player | `player.message(uid, text)` | chat today (server → client → `Chat.AddString`); HUD hint needs `MessageHud.ShowMessage` on the client |
+| Move a player | `players.teleport(uid, x, y, z)` | `Character`/`Player` position set *verify* |
+| Health / stamina / eitr | `players.setHealth(uid, v)`, `players.stats(uid)` | `Character.SetHealth/GetHealth`, ZDO fields |
+| God mode / invulnerable | `players.setGodMode(uid, on)` | `Player.SetGodMode(bool)` |
+| Skills | `players.raiseSkill(uid, name, factor)` | `Skills.RaiseSkill(SkillType, float)` |
+| Inventory read/write | `players.inventory(uid)`, `players.giveItem(...)`, `players.takeItem(...)` | `Inventory.*`, `ObjectDB.GetItemPrefab` |
+| Chat output | `chat.send/sendTo` | routed `ChatMessage` / `ChatAgent` |
+| Chat commands | host-registered handlers (`commands.register`) | `Chat` capture + host dispatch |
+| Events: interaction | `onInteract` | `Interactable.Interact` |
+| Events: container | `onContainerChanged` | `Container`/`Inventory` patch |
+| Events: craft | `onCraft` | `InventoryGui.DoCrafting` / `CraftingStation` *verify server path* |
 
 ## P1 — framework features that make plugins product-quality
 
@@ -66,7 +64,7 @@ Everything below is a small binding module; game APIs verified in
 | **Per-player persistent store** | quests, currency, cooldowns, "seen this NPC" | `players.profile(uid)` → get/set JSON in `data/<plugin>/players/<uid>.json`, loaded on join, flushed on leave; survives restarts, keyed by name+sid as identity is session-only |
 | **Scheduler** | daily events, resets, timed quests | `schedule.atDay(day, fn)`, `schedule.everyMinutes(n, fn)` (JS-level on `onServerTick`, no binding) |
 | **Area rules** | territory flags, safe zones, PvP regions | `areas.define(name, {x,z,radius,rules})`, `areas.at(x,z)` + gating helpers around damage/build/interact |
-| **NPC wrapping** (see below) | server-controlled NPCs with behaviour + dialog | `npcs.*` binding over real ZDOs + `Networking`; client bundles only for presentation |
+| **NPC wrapping** (see below) | server-controlled NPCs with behaviour + dialog | `npcs.*` binding over real ZDOs + `Rpc`; client bundles only for presentation |
 | **Dialog protocol** | NPCs that "talk" and offer actions | shared JS module: server sends `npc:open` with options, client renders via NPC text/HUD, replies `npc:choose` |
 | **Item grants & loot hooks** | rewards, shops, drops | P0 inventory + `onDeath`/`CharacterDrop.GenerateDropList` postfix |
 | **Localization** | plugin text on both sides | `text.key(k)` reading `config/<plugin>/localization.json` (JS-only) |
@@ -80,7 +78,7 @@ The framework has three channels. Using the wrong one is what makes scripting se
 |---|---|---|
 | Existence, transform, animation, health of a **world object** | a real ZDO — `spawn.create(...)` | the game already replicates ZDOs with interest management, dirty-bit deltas and save integration. Free of our code, and clients cull what they cannot see |
 | **Data attached to an object** (NPC identity, stock, state) | `spawn.set/get(handle, key, value)` | lives on the ZDO: replicated on the object's own dirty bits and saved with the world. No custom packets, no polling |
-| **Ephemeral events** between processes (dialog choice, HUD hint, "reload config") | `Networking.send(channel, data)` | one small routed call per event. No state, no cadence |
+| **Ephemeral events** between processes (dialog choice, HUD hint, "reload config") | `Rpc.channel(channel).emit(event, data)` | one small routed call per event. No state, no cadence |
 | **Per-player progress** that must survive a restart (quests, currency) | `fs` / per-player profile files | zero network cost; read on join, write on change |
 | Continuous motion of something that is **not** a ZDO | don't — make it a ZDO, or throttle to ≤5 Hz and send deltas | per-tick broadcasts are the classic way to tank a server |
 
@@ -93,7 +91,7 @@ Rules that follow from this:
    other side read the rest from ZDO data or files.
 4. **Do not sync what can be derived.** Client-side `env.peers()`/`players.list()` already exist.
 5. **Late joiners are the test.** If a client joins after your event, it must still converge —
-   that is automatic for ZDO data, and your responsibility for `Networking` messages (send a
+   that is automatic for ZDO data, and your responsibility for `Rpc` messages (send a
    snapshot on `onPlayerJoin`).
 
 ### Choosing for NPCs
@@ -102,7 +100,7 @@ Rules that follow from this:
 NPC creature (vendor, quest giver, guard)
   existence + transform + animation → ZDO (spawn.create)
   identity + stock + quest tags      → spawn.set on that ZDO
-  dialog choices / one-off effects   → Networking, on demand
+  dialog choices / one-off effects   → Rpc, on demand
   per-player quest progress          → files (profile store), not the network
 ```
 
@@ -140,7 +138,7 @@ npcs.define({ prefab, x, z, name, tag, behaviour })
           for `visual` kind, instantiate the prefab locally
 npcs.remove(id)      → destroy ZDO (creature) or broadcast "npc:remove" (visual)
 npcs.setState(id, …) → stored server-side; broadcast "npc:state" on change
-npcs.onInteract(id, handler)  → server decides the dialog, replies over Networking
+npcs.onInteract(id, handler)  → server decides the dialog, replies over Rpc
 ```
 
 State that must survive restarts lives in the ZDO (`zdo.set(id,"key",value)`) or in
@@ -175,7 +173,7 @@ npcs.onTalkRequest((npc, options) => showChoiceList(options));   // future UI bi
 1. `world.spawn` / `world.destroy` over existing prefabs (`ZNetScene.GetPrefab`,
    `ZDOMan.CreateNewZDO`) — P0, also useful without NPCs.
 2. ZDO custom data read/write (`ZDO.GetString/Set`) so NPC identity and state survive saves.
-3. A registry + snapshot-on-join, built entirely on `Networking` (no new transport).
+3. A registry + snapshot-on-join, built entirely on `Rpc` (no new transport).
 4. `npcs.*` binding: resolve ZDO → `GameObject`/`Character` via `ZNetScene.FindInstance(ZDOID)`,
    drive `MonsterAI`/`Talker`/`ZNetView` and dispatch to plugin handlers.
 5. Client bundle helper for name text (`Chat.SetNpcText`) and, later, a choice-list UI binding.
@@ -184,7 +182,7 @@ npcs.onTalkRequest((npc, options) => showChoiceList(options));   // future UI bi
 
 - Interaction is proximity + explicit trigger. The server cannot "see" an E-press on a
   non-networked object; for `creature` NPCs the game's own `Interactable` path can be used, for
-  `visual` NPCs the client must send the intent (`Networking`).
+  `visual` NPCs the client must send the intent (`Rpc`).
 - Behaviour runs on the server tick (~1 Hz) plus event hooks — not a per-frame AI loop.
 - No custom models: prefab must already exist in `ObjectDB`/`ZNetScene`.
 
@@ -205,7 +203,7 @@ reimplementing asset-bundle loading:
 Rule of thumb: take a library when it owns a domain we would otherwise reimplement badly
 (asset bundles, prefab registration); keep our own code for what we already do well and cheaply
 (transport, plugin lifecycle, bindings). ServerSync-style config sync is unnecessary — the
-inventory/state mirror and `Networking` already cover it.
+inventory/state mirror and `Rpc` already cover it.
 
 ## P2 — content registration (needs a decision)
 
@@ -236,19 +234,19 @@ const started = new Set<number>();
 
 export default definePlugin({
     version: "1.0.0",
-    onPlayerJoin: serverOnly((ctx, player) => {
+    onPlayerJoin: authorityHandler((ctx, player) => {
         const profile = ctx.host.api.players.profile(player.uid);   // P1
         if (!profile.done("intro")) {
             ctx.host.api.chat.sendTo(player.uid, "Speak to the trader to begin.");
         }
     }),
-    onInteract: serverOnly((ctx, event) => {                        // P0
+    onInteract: authorityHandler((ctx, event) => {                        // P0
         if (event.target !== "Trader_Ragnar") return;
         if (started.has(event.player)) return;
         started.add(event.player);
         ctx.host.api.player.message(event.player, "Bring me 10 wood.");  // P0
     }),
-    onContainerChanged: serverOnly((ctx, event) => {                // P0
+    onContainerChanged: authorityHandler((ctx, event) => {                // P0
         const wood = ctx.host.api.inventory.count(event.player, "Wood");
         if (wood >= 10) {
             ctx.host.api.inventory.remove(event.player, "Wood", 10);
@@ -269,5 +267,5 @@ That is the same shape as KG's quest mod, minus the UI and the custom NPC model.
 4. **Content registration** — decide Jotunn dependency vs. own bundle loader before starting.
 5. **Declarative client UI** — only if plugins demand more than NPC text/chat.
 
-Each step is additive: a new `[JsBinding]` module, a capture point, and an SDK type. No changes to
-the host are expected until P2 content registration.
+Each step is additive: a new `[JsBinder]` class, a capture point, regenerated declarations. The host
+lifecycle and bridge are not expected to change until P2 content registration.

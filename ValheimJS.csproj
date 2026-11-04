@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Jint/Acornima must sit next to the plugin in the game: BepInEx resolves plugin-folder
        assemblies, and the game does not ship them. System.Runtime.CompilerServices.Unsafe 6.0.0
@@ -53,40 +53,18 @@
     <PackageReference Include="Acornima" Version="1.7.0" GeneratePathProperty="true" />
   </ItemGroup>
 
-  <!-- Unity 6 game assemblies (Valheim 0.220.x / Unity 6000.0.75f1) come from the install, not NuGet. -->
-  <ItemGroup>
-    <Reference Include="Assembly-CSharp"><HintPath>$(ValheimManagedDir)\Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="Splatform"><HintPath>$(ValheimManagedDir)\Splatform.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="assembly_valheim"><HintPath>$(ValheimManagedDir)\assembly_valheim.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="assembly_utils"><HintPath>$(ValheimManagedDir)\assembly_utils.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="assembly_guiutils"><HintPath>$(ValheimManagedDir)\assembly_guiutils.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="assembly_lux"><HintPath>$(ValheimManagedDir)\assembly_lux.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="assembly_postprocessing"><HintPath>$(ValheimManagedDir)\assembly_postprocessing.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="assembly_simplemeshcombine"><HintPath>$(ValheimManagedDir)\assembly_simplemeshcombine.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="assembly_sunshafts"><HintPath>$(ValheimManagedDir)\assembly_sunshafts.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="assembly_googleanalytics"><HintPath>$(ValheimManagedDir)\assembly_googleanalytics.dll</HintPath><Private>false</Private></Reference>
-
-    <Reference Include="UnityEngine"><HintPath>$(ValheimManagedDir)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="UnityEngine.CoreModule"><HintPath>$(ValheimManagedDir)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="UnityEngine.AssetBundleModule"><HintPath>$(ValheimManagedDir)\UnityEngine.AssetBundleModule.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="UnityEngine.AnimationModule"><HintPath>$(ValheimManagedDir)\UnityEngine.AnimationModule.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="UnityEngine.AudioModule"><HintPath>$(ValheimManagedDir)\UnityEngine.AudioModule.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="UnityEngine.ImageConversionModule"><HintPath>$(ValheimManagedDir)\UnityEngine.ImageConversionModule.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(ValheimManagedDir)\UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(ValheimManagedDir)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="UnityEngine.ParticleSystemModule"><HintPath>$(ValheimManagedDir)\UnityEngine.ParticleSystemModule.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(ValheimManagedDir)\UnityEngine.PhysicsModule.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="UnityEngine.TerrainModule"><HintPath>$(ValheimManagedDir)\UnityEngine.TerrainModule.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(ValheimManagedDir)\UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="UnityEngine.UI"><HintPath>$(ValheimManagedDir)\UnityEngine.UI.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="UnityEngine.UIModule"><HintPath>$(ValheimManagedDir)\UnityEngine.UIModule.dll</HintPath><Private>false</Private></Reference>
-    <Reference Include="UnityEngine.UnityWebRequestModule"><HintPath>$(ValheimManagedDir)\UnityEngine.UnityWebRequestModule.dll</HintPath><Private>false</Private></Reference>
-  </ItemGroup>
-
-  <Target Name="ValidateValheimReferences" BeforeTargets="ResolveReferences">
-    <Error Condition="!Exists('$(ValheimManagedDir)\Assembly-CSharp.dll')" Text="Game assemblies not found. Set GameDir (or GAME_DIR) to the install root, e.g. -p:GameDir=&quot;D:\Games\SomeGame&quot;. Looked in: $(ValheimManagedDir)" />
-  </Target>
-
+  <!-- Game-feature reference groups; override with MSBuild properties if needed. -->
+  <PropertyGroup>
+    <UseGameLibraries Condition="'$(UseGameLibraries)' == ''">true</UseGameLibraries>
+    <UseGUI Condition="'$(UseGUI)' == ''">true</UseGUI>
+    <UseInput Condition="'$(UseInput)' == ''">true</UseInput>
+    <UseWorld Condition="'$(UseWorld)' == ''">true</UseWorld>
+    <UseContent Condition="'$(UseContent)' == ''">true</UseContent>
+    <UseEffects Condition="'$(UseEffects)' == ''">true</UseEffects>
+    <UseNetworking Condition="'$(UseNetworking)' == ''">true</UseNetworking>
+    <UseUIToolkit Condition="'$(UseUIToolkit)' == ''">false</UseUIToolkit>
+  </PropertyGroup>
+  <Import Project="Valheim.targets" />
   <Target Name="Deploy" AfterTargets="Build" Condition="'$(Deploy)' == 'true'">
     <ItemGroup>
       <DeployFiles Include="$(TargetDir)$(AssemblyName).dll;$(TargetDir)$(AssemblyName).pdb;$(TargetDir)Jint.dll;$(TargetDir)Acornima.dll" />

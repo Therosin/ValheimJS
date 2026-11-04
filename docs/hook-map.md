@@ -1,6 +1,10 @@
+---
+title: Hook map
+---
+
 # Hook map
 
-Mined from working mods (decompiled into `.temp/mods`) to decide which capture points ValheimJS
+Mined from working mods (decompiled into `.local/mods`) to decide which capture points ValheimJS
 should offer. Not modder-facing — see `guides/` for that.
 
 ## Sources
@@ -23,7 +27,7 @@ should offer. Not modder-facing — see `guides/` for that.
 | `onPlayerJoin` / `onPlayerLeave` | `ZNet.SendPlayerList` postfix + peer diff | the handshake (`RPC_PeerInfo`) returns early on bad password/full/version mismatch; diffing the published list only reports peers that actually made it |
 | `onServerTick` | `ZNet.Update` postfix, 1 Hz | cheap scheduling point |
 | `onDamage` | `Character.Damage` postfix | server-side funnel for applied hits |
-| `env.*` | `Application.isBatchMode`, `ZNet.IsServer()` | side detection at startup and at runtime |
+| `game.*` | `ProcessPolicy` (executable/override), `ZNet.IsServer()` | side detection at startup and at runtime |
 
 ## Highest-value next candidates
 
@@ -44,7 +48,7 @@ should offer. Not modder-facing — see `guides/` for that.
 - `InventoryGui.*`, `Hud.*`, `TextInput.*` — client UI. Meaningless headless, and the mined mods
   patch them only to draw things.
 - `*::Awake` / `*::Update` of gameplay classes — per-frame or one-shot during scene load; the
-  mined mods use them to grab singletons, which `GameRegistry` already covers.
+  mined mods use them to grab singletons; `Container` can retain captured references when wired to appropriate hooks.
 - Patching `UnityEngine.*` internals — not game code, breaks across versions.
 
 ## Selection rule
