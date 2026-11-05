@@ -21,6 +21,7 @@ client branch; session authority is checked live. See [Process branches](guides/
 | Default roles, role grants, direct grants/denials and permission catalogue | `Services/PermissionService.cs` | `PermissionService` queries; no JS editing methods |
 | Command routes, aliases, access checks, async stages and invocation lifetime | `Core/ChatCommands.cs`, `Commands/` | `ChatCommand` and `ChatCommands` |
 | Condition sampling, edges, per-handler isolation and cadence | `Utils/ConditionObserver.cs`, `Bindings/SignalBindings.cs` | `signals` binding and SDK `signals`/`predicates` |
+| Player identity/state resolution (uid ↔ peer ↔ ZDO) | `Entities/PlayerDirectory.cs`, `Entities/Player.cs` | `players` binding and `ValheimPlayer` |
 | Private command submission/replies over `valheimjs:commands` | `Networking/CommandService.cs`, `Hooks/CommandInputHook.cs` | `!` input and private `Commands` lines |
 | Script engine, branch components, dependency order, contexts and timers | `Scripting/` | Plugin descriptors and host API |
 | Native values, cadence, scoped registries and JS classes | `Scripting/Binding/` (`JsPayload`, `Ticker`, `ScopedBindings`, `JsCallback`), `Scripting/Types/` (`JsTypeRegistry`) | `ReturnKind.Native`, `[JsType]` classes, all bindings |

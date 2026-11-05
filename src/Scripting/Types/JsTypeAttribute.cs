@@ -47,6 +47,12 @@ public sealed class JsNameAttribute : Attribute
     public string Name { get; }
 }
 
+/// <summary>Marks a reference member as nullable in generated declarations.</summary>
+[AttributeUsage(AttributeTargets.Property | AttributeTargets.Method, Inherited = false)]
+public sealed class JsNullableAttribute : Attribute
+{
+}
+
 /// <summary>Keeps a public member out of the JavaScript surface.</summary>
 [AttributeUsage(AttributeTargets.Property | AttributeTargets.Method | AttributeTargets.Field, Inherited = false)]
 public sealed class JsIgnoreAttribute : Attribute

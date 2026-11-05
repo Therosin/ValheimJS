@@ -6,6 +6,23 @@
 import type { Account, ChatCommandDefinition, GameSnapshot, KeyState, PeerInfo, SyncEntity, WorldCharacter, WorldContainer } from "./types";
 
 /**
+ * A connected or local player.
+ */
+export declare class ValheimPlayer {
+    private constructor();
+    readonly uid: string;
+    readonly platformId: string | null;
+    readonly name: string;
+    readonly isLocal: boolean;
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+    readonly health: number;
+    readonly maxHealth: number;
+    readonly isAlive: boolean;
+}
+
+/**
  * Which process this is and what world it is running.
  */
 export interface GameApi {
@@ -280,6 +297,26 @@ export interface WorldApi {
 }
 
 /**
+ * Players: local identity, lookups and the authoritative online roster.
+ */
+export interface PlayersApi {
+    /**
+     * One connected player by routed uid or platform id, or null.
+     */
+    get(id: string): ValheimPlayer | null;
+    /**
+     * This process's local player, or null on a dedicated server.
+     * @availability client only
+     */
+    local(): ValheimPlayer | null;
+    /**
+     * Connected players with a spawned character; live authority only.
+     * @availability server authority only
+     */
+    online(): ValheimPlayer[];
+}
+
+/**
  * Keyboard bindings and press/hold/release callbacks.
  * @availability client only
  */
@@ -444,6 +481,7 @@ export interface Api {
     db: DbApi;
     signals: SignalsApi;
     world: WorldApi;
+    players: PlayersApi;
     /** Availability: client only. */
     input: InputApi;
     AccountService: AccountServiceApi;

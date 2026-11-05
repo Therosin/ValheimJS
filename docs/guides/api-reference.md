@@ -122,6 +122,34 @@ interface WorldContainer {
 }
 ```
 
+## `players`
+
+```ts
+players.local(): ValheimPlayer | null        // client (and player host) only
+players.get(id: string): ValheimPlayer | null   // routed uid or platform id
+players.online(): ValheimPlayer[]            // dedicated server only
+```
+
+A `ValheimPlayer` is read-only player state, resolved from the replicated player ZDO:
+
+```ts
+interface ValheimPlayer {
+    readonly uid: string;          // routed peer id, session-scoped (RPC targets, fromPeer)
+    readonly platformId: string | null;   // stable Steam/console id; null when unknown
+    readonly name: string;         // display only, never a key
+    readonly isLocal: boolean;     // true only on the process owning that local player
+    readonly x: number; readonly y: number; readonly z: number;
+    readonly health: number; readonly maxHealth: number;
+    readonly isAlive: boolean;
+}
+```
+
+`online()` is the authority-owned roster: connected peers with a spawned character, plus the host's
+local player. Players still loading have no character ZDO and are omitted until they spawn; the
+method does not exist on clients. `get` resolves one known player on either side and returns
+`null` for unknown/offline ids. Keep `platformId` for durable identity and resolve the account with
+`AccountService.fromPeer(uid)`; `name` and `uid` are not durable.
+
 ## `net`
 
 ```ts

@@ -158,6 +158,7 @@ export default definePlugin(Greeter);
 |---|---|---|
 | `game` | `GameBindings` | side, world identity, live snapshot |
 | `world` | `WorldBindings` | ZDO counts, spawning, per-object data |
+| `players` | `PlayerBindings` | local player, lookups and the authority-owned online roster |
 | `net` | `NetBindings` | adapter over `Core/Networking` channels/events |
 | `sync` | `SyncBindings` | adapter over `Core/NetworkSync` binary frames |
 | `ChatCommands` | `ChatCommandsBindings` | native command registry, account gates and contextual help |

@@ -129,7 +129,7 @@ int EmitDeclarations()
         return 1;
     }
 
-    var text = JsBindingDeclarations.Write(catalog);
+    var text = JsBindingDeclarations.Write(catalog, ValheimJS.Scripting.Types.JsTypeDiscovery.Discover(metadata.Assembly));
     if (output == null)
     {
         Console.Out.Write(text);

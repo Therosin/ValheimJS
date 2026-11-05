@@ -9,7 +9,7 @@
 
 import type { PluginContext } from "./runtime";
 
-export type { Api } from "./api/generated";
+export type { Api, ValheimPlayer } from "./api/generated";
 export type { GameSnapshot, KeyState, RpcMeta, ServerTickSnapshot } from "./api/types";
 export type {
     ChatPayload,
@@ -29,7 +29,7 @@ export { AccountService, PermissionService } from "./accounts";
 export type { Account } from "./api/types";
 export type { ChatCommandDefinition } from "./api/types";
 export type { SyncEntity } from "./api/types";
-export { fs, game, world } from "./access";
+export { fs, game, players, world } from "./access";
 export type {
     Handler,
     HostApiSurface,

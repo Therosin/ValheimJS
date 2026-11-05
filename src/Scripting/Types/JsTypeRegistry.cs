@@ -180,6 +180,11 @@ public sealed class JsTypeRegistry
                 continue;
             }
 
+            if (!JsClassBuilder.SupportsType(property.PropertyType))
+            {
+                continue;
+            }
+
             var name = property.GetCustomAttribute<JsNameAttribute>()?.Name ?? DefaultName(property.Name);
             builder.ExposeProperty(name, property);
         }
@@ -399,24 +404,36 @@ public sealed class JsClassBuilder
         Members.Add(new JsMember(name, new PropertyDescriptor(function, PropertyFlag.Configurable | PropertyFlag.Writable)));
     }
 
+    internal static bool SupportsType(Type type)
+    {
+        var name = TypeName(type);
+        return name == "System.String" || name == "Jint.Native.JsValue" || (Nullable.GetUnderlyingType(type) ?? type).IsPrimitive;
+    }
+
+    internal static string TypeName(Type type)
+    {
+        var narrowed = Nullable.GetUnderlyingType(type) ?? type;
+        return narrowed.FullName ?? narrowed.Name;
+    }
+
     internal static bool HasSupportedSignature(MethodInfo method, out string reason)
     {
         reason = string.Empty;
         foreach (var parameter in method.GetParameters())
         {
-            var type = Nullable.GetUnderlyingType(parameter.ParameterType) ?? parameter.ParameterType;
-            if (type.IsPrimitive || type == typeof(string))
+            var name = TypeName(parameter.ParameterType);
+            if (name == "System.String" || name == "Jint.Native.JsValue" || (Nullable.GetUnderlyingType(parameter.ParameterType) ?? parameter.ParameterType).IsPrimitive)
             {
                 continue;
             }
 
-            reason = $"parameter '{parameter.Name}' of type '{type.Name}' is not supported";
+            reason = $"parameter '{parameter.Name}' of type '{parameter.ParameterType.Name}' is not supported";
             return false;
         }
 
-        var returnType = Nullable.GetUnderlyingType(method.ReturnType) ?? method.ReturnType;
-        if (method.ReturnType == typeof(void) || method.ReturnType == typeof(JsValue) ||
-            returnType.IsPrimitive || returnType == typeof(string))
+        var returnName = TypeName(method.ReturnType);
+        if (returnName == "System.Void" || returnName == "Jint.Native.JsValue" ||
+            returnName == "System.String" || (Nullable.GetUnderlyingType(method.ReturnType) ?? method.ReturnType).IsPrimitive)
         {
             return true;
         }

@@ -14,6 +14,7 @@ internal static class TypeProbe
         {
             Payload();
             Classes();
+            Declarations();
             PluginScopes();
             TickerContract();
             Console.WriteLine("PASS: native classes, payloads and ticker");
@@ -91,6 +92,19 @@ internal static class TypeProbe
         Assert(ReferenceEquals(first, registry.Instance(type, handle)), "instance identity is stable per handle");
     }
 
+    private static void Declarations()
+    {
+        var catalog = JsBindingDiscovery.Discover(typeof(JsTypeRegistry).Assembly, _ => false);
+        var types = JsTypeDiscovery.Discover(typeof(TypeProbe).Assembly, type => type.Name == "AttributedThing");
+        var text = JsBindingDeclarations.Write(catalog, types);
+        Assert(text.Contains("export declare class ValheimAttributedThing {"), "class declaration missing");
+        Assert(text.Contains("readonly label: string;"), "read-only property not marked");
+        Assert(text.Contains("id: string;"), "mutable property missing");
+        Assert(text.Contains("bump(by: number): number;"), "method declaration missing");
+        Assert(!text.Contains("secret"), "[JsIgnore] leaked into declarations");
+        Assert(!text.Contains("import type { ValheimAttributedThing }"), "class imported instead of declared");
+    }
+
     private static void PluginScopes()
     {
         using var engine = new Engine();
@@ -151,6 +165,8 @@ internal sealed class AttributedThing
     public string Id { get; set; } = "";
 
     public int Value { get; set; }
+
+    public string Label => Id;
 
     public int Bump(int by) => Value += by;
 
