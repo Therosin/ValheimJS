@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Globalization;
+using ValheimJS.Core;
 
 namespace ValheimJS.Entities;
 
@@ -21,40 +23,46 @@ internal static class PlayerDirectory
         }
 
         var uid = ZNet.GetUID();
-        var player = FindOrCreate(uid, local.GetPlayerID(), local.GetPlayerName(), local.GetZDOID(), isLocal: true);
+        var player = FindOrCreate(uid, local.GetPlayerName(), local.GetZDOID(), isLocal: true);
         return player;
     }
 
     /// <summary>One connected player by routed uid or platform id; null when unknown/offline.</summary>
     internal static Player? Get(string id)
     {
-        if (!long.TryParse(id, out var value))
+        if (string.IsNullOrWhiteSpace(id))
         {
             return null;
         }
 
+        var local = Local();
+        if (local != null && Matches(local, id))
+        {
+            return local;
+        }
+
         foreach (var peer in Peers())
         {
-            if (peer.m_uid == value || peer.m_playerID == value)
+            if (peer == null || peer.m_server)
+            {
+                continue;
+            }
+
+            if (peer.m_uid.ToString(CultureInfo.InvariantCulture) == id ||
+                PlayerIdentity.PlatformId(peer.m_uid) == id ||
+                PlayerIdentity.SteamId(peer.m_uid) == id)
             {
                 return FromPeer(peer);
             }
         }
 
-        var local = Local();
-        if (local == null)
-        {
-            return null;
-        }
-
-        if (local.UidValue == value)
-        {
-            return local;
-        }
-
-        var localPlatform = local.PlatformId;
-        return localPlatform != null && long.TryParse(localPlatform, out var platform) && platform == value ? local : null;
+        return null;
     }
+
+    private static bool Matches(Player player, string id) =>
+        player.Uid == id ||
+        player.PlatformId == id ||
+        (player.PlatformId != null && PlayerIdentity.ToSteamId(player.PlatformId) == id);
 
     /// <summary>Connected players with a spawned character; live authority only.</summary>
     internal static IReadOnlyList<Player> Online()
@@ -93,17 +101,17 @@ internal static class PlayerDirectory
     private static List<ZNetPeer> Peers() => ZNet.instance?.GetPeers() ?? new List<ZNetPeer>();
 
     private static Player FromPeer(ZNetPeer peer) =>
-        FindOrCreate(peer.m_uid, peer.m_playerID, peer.m_playerName, peer.m_characterID, isLocal: false);
+        FindOrCreate(peer.m_uid, peer.m_playerName, peer.m_characterID, isLocal: false);
 
-    private static Player FindOrCreate(long uid, long platformId, string name, ZDOID characterId, bool isLocal)
+    private static Player FindOrCreate(long uid, string name, ZDOID characterId, bool isLocal)
     {
         if (Cache.TryGetValue(uid, out var player))
         {
-            player.Refresh(platformId, name, characterId, isLocal);
+            player.Refresh(name, characterId, isLocal);
             return player;
         }
 
-        player = new Player(uid, platformId, name, characterId, isLocal);
+        player = new Player(uid, name, characterId, isLocal);
         Cache[uid] = player;
         return player;
     }

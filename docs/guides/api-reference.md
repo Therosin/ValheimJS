@@ -135,7 +135,7 @@ A `ValheimPlayer` is read-only player state, resolved from the replicated player
 ```ts
 interface ValheimPlayer {
     readonly uid: string;          // routed peer id, session-scoped (RPC targets, fromPeer)
-    readonly platformId: string | null;   // stable Steam/console id; null when unknown
+    readonly platformId: string | null;   // SteamID64 digits (or raw platform id); null when unknown
     readonly name: string;         // display only, never a key
     readonly isLocal: boolean;     // true only on the process owning that local player
     readonly x: number; readonly y: number; readonly z: number;

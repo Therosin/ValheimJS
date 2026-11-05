@@ -1,5 +1,6 @@
 using System.Globalization;
 using UnityEngine;
+using ValheimJS.Core;
 using ValheimJS.Scripting.Types;
 
 namespace ValheimJS.Entities;
@@ -13,15 +14,13 @@ namespace ValheimJS.Entities;
 public sealed class Player
 {
     [JsIgnore] private long _uid;
-    [JsIgnore] private long _platformId;
     [JsIgnore] private string _name;
     [JsIgnore] private ZDOID _characterId;
     [JsIgnore] private bool _isLocal;
 
-    internal Player(long uid, long platformId, string name, ZDOID characterId, bool isLocal)
+    internal Player(long uid, string name, ZDOID characterId, bool isLocal)
     {
         _uid = uid;
-        _platformId = platformId;
         _name = name;
         _characterId = characterId;
         _isLocal = isLocal;
@@ -30,22 +29,13 @@ public sealed class Player
     /// <summary>Routed peer id, as text; session-scoped addressing key.</summary>
     public string Uid => _uid.ToString(CultureInfo.InvariantCulture);
 
-    /// <summary>Stable platform id (Steam/console) when known; null for unknown/server peers.</summary>
+    /// <summary>
+    /// Stable platform identity: SteamID64 digits when the peer is on Steam, otherwise the raw
+    /// platform id; null when unknown. One canonical spelling on every process and side.
+    /// `ZNetPeer.m_playerID` is a 32-bit hash and must not be used as identity.
+    /// </summary>
     [JsNullable]
-    public string? PlatformId
-    {
-        get
-        {
-            var id = _platformId;
-            var zdo = Zdo;
-            if (id == 0L && zdo != null)
-            {
-                id = zdo.GetLong(ZDOVars.s_playerID, 0L);
-            }
-
-            return id == 0L ? null : id.ToString(CultureInfo.InvariantCulture);
-        }
-    }
+    public string? PlatformId => PlayerIdentity.SteamId(_uid) ?? PlayerIdentity.PlatformId(_uid);
 
     /// <summary>Display name; never an identity key.</summary>
     public string Name
@@ -111,9 +101,8 @@ public sealed class Player
 
     internal long UidValue => _uid;
 
-    internal void Refresh(long platformId, string name, ZDOID characterId, bool isLocal)
+    internal void Refresh(string name, ZDOID characterId, bool isLocal)
     {
-        _platformId = platformId;
         _name = name;
         _characterId = characterId;
         _isLocal = isLocal;

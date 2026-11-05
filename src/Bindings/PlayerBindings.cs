@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using Jint.Native;
-using ValheimJS.Entities;
 using ValheimJS.Scripting.Binding;
 using ValheimJS.Scripting.Types;
 
@@ -21,16 +20,17 @@ internal sealed class PlayerBindings : JsBindings
     {
     }
 
-    public override void Install(JsTypeRegistry types) => _playerType = types.Register<Player>();
+    public override void Install(JsTypeRegistry types) =>
+        _playerType = types.Register<ValheimJS.Entities.Player>();
 
     [JsBinding(ReturnKind = JsReturnKind.Native, Returns = "ValheimPlayer | null",
         Availability = JsAvailability.Client,
         Description = "This process's local player, or null on a dedicated server.")]
-    public JsValue Local() => ToScript(PlayerDirectory.Local());
+    public JsValue Local() => ToScript(ValheimJS.Entities.PlayerDirectory.Local());
 
     [JsBinding(ReturnKind = JsReturnKind.Native, Returns = "ValheimPlayer | null",
         Description = "One connected player by routed uid or platform id, or null.")]
-    public JsValue Get(string id) => ToScript(PlayerDirectory.Get(id));
+    public JsValue Get(string id) => ToScript(ValheimJS.Entities.PlayerDirectory.Get(id));
 
     [JsBinding(ReturnKind = JsReturnKind.Native, Returns = "ValheimPlayer[]",
         Availability = JsAvailability.Server,
@@ -38,7 +38,7 @@ internal sealed class PlayerBindings : JsBindings
     public JsValue Online()
     {
         var values = new List<JsValue>();
-        foreach (var player in PlayerDirectory.Online())
+        foreach (var player in ValheimJS.Entities.PlayerDirectory.Online())
         {
             values.Add(ToScript(player));
         }
