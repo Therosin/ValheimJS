@@ -41,6 +41,17 @@ game.day(): number
 game.dayFraction(): number
 game.timeOfDay(): "day" | "night" | "unknown"
 game.snapshot(): GameSnapshot
+game.peerList(): PeerInfo[]        // connected peers, names and ids
+```
+
+```ts
+interface PeerInfo {
+    uid: number;        // routed peer id for Rpc targets
+    name: string;
+    playerId: string;   // text to avoid 64-bit precision loss
+    server: boolean;
+    ready: boolean;
+}
 ```
 
 ```ts
@@ -68,15 +79,48 @@ world.prefabs(query: string, limit: number): string[]   // limit 0 = all
 world.exists(prefab: string): boolean
 world.getData(handle: string, key: string): string | null
 world.setData(handle: string, key: string, value: string): void
+world.idOf(handle: string): string | null               // stable ZDO id for a spawn handle
+world.charactersNear(x, y, z, radius, limit): WorldCharacter[]
+world.containersNear(x, y, z, radius, limit): WorldContainer[]
 ```
 
-`spawn` instantiates an **existing** networked prefab and returns a session handle. The game
-replicates the ZDO, so clients see it without extra work. `setData` writes to that ZDO: it is
-replicated with the object and saved with the world. Handles are session-scoped — persist your own
-ids if you need them across restarts.
+`spawn` instantiates an **existing** networked prefab and returns a session handle. It requires
+live world authority: on a client process (or before the session exists) it logs a warning and
+returns `null`. The game replicates the ZDO, so clients see it without extra work. `setData`
+writes to that ZDO: it is replicated with the object and saved with the world.
+
+Handles belong to the plugin that spawned them. `destroy`, `alive`, `getData` and `setData`
+ignore another plugin's handle with a warning, so a plugin cannot read, overwrite or delete
+objects it did not create. Handles are session-scoped and dropped on plugin unload — persist your
+own ids if you need them across restarts.
 
 `zdoCount()` is the number of live world objects. `zdoAvailable()` is false if the server build
-hides the table; check it before treating the number as authoritative.
+hides the table; check it before treating the number as authoritative. Reads (`zdoCount`,
+`prefabs`, `exists`) work on clients; only mutations are authority-gated.
+
+`idOf(handle)` returns the ZDO id (`user:counter`) for a spawn handle — the durable reference to
+persist when you need to find the object again after a restart.
+
+`charactersNear` and `containersNear` are **read-only proximity scans**, nearest first, `limit 0`
+returns everything. Characters include stable ids, prefab, name, position, distance, health, and
+`isPlayer`/`isDead`/`isTamed`; containers include id, prefab, position, slot count and item count.
+They scan live instances, so treat them as occasional queries (discovery, diagnostics, AI
+groundwork), not per-tick work. Mutating contents or stats is not exposed here yet.
+
+```ts
+interface WorldCharacter {
+    id: string | null; prefab: string | null; name: string;
+    x: number; y: number; z: number; distance: number;
+    health: number; maxHealth: number;
+    isPlayer: boolean; isDead: boolean; isTamed: boolean;
+}
+
+interface WorldContainer {
+    id: string | null; prefab: string | null;
+    x: number; y: number; z: number; distance: number;
+    slots: number; items: number;
+}
+```
 
 ## `net`
 
@@ -108,6 +152,11 @@ Responders run synchronously on the same routed call and must return a value. No
 fire-and-forget. The timeout is milliseconds (default 30 000); a missing responder, handler
 failure, disconnect or timeout rejects the promise. Payloads are JSON and limited to 256 KiB. The
 sender is a routed peer id, not proof of authorisation — check permission yourself.
+
+Channel names are **process-wide, not plugin-namespaced**: any plugin on a peer can subscribe to
+or emit on `my_mod.shop`, and `meta.sender` identifies the peer, never the plugin that sent it. Use
+a name unique to your plugin and treat incoming data as untrusted input; there is no plugin-level
+sender attribution to check against.
 
 See the [networking guide](../networking.md).
 
@@ -254,6 +303,59 @@ Rules and costs:
 
 `find` and `updateWhere` loop in the host; only your predicate and patch run in the script. A patch
 must return the whole document (the facade merges for you).
+
+## `signals`
+
+`signals` observes named boolean conditions. The host re-samples them on an interval and turns
+values into edges: `name:Enter` on false→true, `name:Exit` on true→false, and the bare `name` on
+later true samples. It is a reactive observation layer, not a state machine — state machines are
+built by layering predicates and reacting to these events.
+
+```ts
+import { all, signals, stable } from "../../../sdk/index";
+
+const s = signals({ intervalMs: 250 });           // default 250 ms
+
+s.observe("night", () => game().timeOfDay() === "night");
+s.observe("threat", () => ctx.state.nearest?.distance < 12);
+s.observe("danger", stable(all(() => s.is("night"), () => s.is("threat")), 2, 4));
+
+s.on("danger:Enter", () => ctx.state.guard = true);   // rising edge
+s.on("danger",       () => ctx.state.ticks = 1);      // every later true sample
+s.on("danger:Exit",  () => ctx.state.guard = false);  // falling edge
+s.once("danger:Enter", () => log("first alert"));
+
+s.is("danger");        // last sampled value, no evaluation
+s.changed("danger");   // changed on the last sample; reading does not clear it
+s.snapshot();          // { night: boolean, threat: boolean, danger: boolean }
+s.remove("danger"); s.reset("danger"); s.clear(); s.dispose();
+```
+
+Predicate combinators in `predicates` (all sample-based, evaluated once per observer interval):
+
+| Helper | Effect |
+|---|---|
+| `all(...predicates)` / `any(...predicates)` | logical combination; `all()` is true, `any()` false |
+| `not(pred)` / `never(pred)` | inversion |
+| `stable(pred, rise?, fall?)` | flips only after consecutive samples; hysteresis for noisy inputs |
+| `delay(pred, samples)` | true after consecutive true samples; false resets the count |
+| `cooldown(pred, samples)` | at most one true per window |
+| `once(pred)` | true only on the first true sample, then false forever |
+
+Rules:
+
+- **Sampled, not event-driven.** A pulse shorter than the interval is invisible; discrete events
+  stay on hooks (`onDamage`, `onChat`, `onPlayerJoin`). Signals are for sustained state.
+- **Host cadence, no catch-up.** The host accumulates elapsed time and evaluates at most once per
+  tick; a long stall does not replay dozens of samples. Periods are milliseconds.
+- **Errors are isolated.** A throwing predicate keeps the last value and logs once until it
+  succeeds; a throwing handler is logged and the remaining handlers still run. Unlike a hook
+  failure, this does not disable the plugin.
+- **Plugin-scoped.** Observers, conditions and subscriptions are removed on unload or
+  `dispose()`. Define inputs before derived conditions, or compose the raw predicates.
+- **Layering.** Drive state transitions from `:Enter`/`:Exit` and keep the resulting state in a
+  normal variable, `ctx.state`, or durable entity state. A promise returned from a handler is not
+  awaited.
 
 ## Host helpers
 

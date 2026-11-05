@@ -22,6 +22,8 @@ export { database, Db } from "./database";
 export { input, type KeyboardHandler, type KeyboardPhase } from "./input";
 export { Rpc, RpcChannel } from "./net";
 export { Sync } from "./sync";
+export { signals, type Signals, type SignalsOptions } from "./signals";
+export { all, any, cooldown, delay, never, not, once, predicates, stable, type Predicate } from "./predicates";
 export { ChatCommand, ChatCommands, type ChatCommandContext, type ChatCommandUser } from "./commands";
 export { AccountService, PermissionService } from "./accounts";
 export type { Account } from "./api/types";

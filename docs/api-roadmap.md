@@ -27,6 +27,29 @@ These support rules, storage, private commands and coordination. They do not yet
 inventory, stats, teleports, item grants, custom assets, NPC rendering or general UI.
 `ChatService` is retained but dormant; command replies use the separate active `CommandService`.
 
+## Binding gaps for NPCs and containers
+
+The world surface is deliberately read-mostly. These are the known missing pieces for the AI and
+container work, kept here so implementations do not route around them:
+
+Added:
+- [x] `world.idOf(handle)` — stable ZDO id for a spawn handle (durable reference)
+- [x] `world.charactersNear(x,y,z,radius,limit)` — read-only character scan for discovery/AI groundwork
+- [x] `world.containersNear(x,y,z,radius,limit)` — container presence, slots and item count
+- [x] `game.peerList()` — routed ids, names, player ids, server/ready flags
+
+Outstanding:
+- [ ] `world.object(id)` — resolve a ZDO id to position, prefab and owner (the inverse of `idOf`)
+- [ ] authority-gated `world.setData(id, key, value)` / `world.removeData(id, key)` for non-spawned ZDOs
+- [ ] container contents: decode the ZDO `items` blob into item records (prefab, stack, quality, durability)
+- [ ] container mutation: ownership claim, add/remove/move, slot limits (the `Container` abstraction)
+- [ ] character stats/mutations: owned health/stamina/eitr writes through the owner-op primitive
+- [ ] inventory handles: player inventory query/grant/remove behind the same async contract
+- [ ] interactable discovery: pickables, pieces, smelters, cooking stations near a point
+- [ ] character ZDO ownership and authority helpers for plugin-driven entities
+- [ ] NPC base: prefab registration, `ScriptedAI`, perception, intents, dormancy records
+- [ ] entity state: declared fields mapped to ZDO keys vs coalesced sync, with join snapshots
+
 ## Next gameplay APIs
 
 | Candidate | Why it matters | Source/integration question |

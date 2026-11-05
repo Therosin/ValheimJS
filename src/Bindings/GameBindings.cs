@@ -1,6 +1,8 @@
 using System;
+using System.Text;
 using ValheimJS.Core;
 using ValheimJS.Scripting.Binding;
+using JsonText = ValheimJS.Utils.Json;
 
 namespace ValheimJS.Bindings;
 
@@ -66,4 +68,37 @@ internal sealed class GameBindings : JsBindings
         $"\"dayFraction\":{GameEnvironment.DayFraction.ToString(System.Globalization.CultureInfo.InvariantCulture)}," +
         $"\"timeOfDay\":{ValheimJS.Utils.Json.Quote(GameEnvironment.TimeOfDay)}" +
         "}";
+
+    [JsBinding(ReturnKind = JsReturnKind.Json, Returns = "PeerInfo[]",
+        Description = "Connected peers with routed id, player name, player id and server/ready flags.")]
+    public string PeerList()
+    {
+        var peers = ZNet.instance?.GetPeers();
+        var text = new StringBuilder("[");
+        var written = 0;
+        if (peers != null)
+        {
+            foreach (var peer in peers)
+            {
+                if (peer == null)
+                {
+                    continue;
+                }
+
+                if (written++ > 0)
+                {
+                    text.Append(',');
+                }
+
+                text.Append("{\"uid\":").Append(peer.m_uid)
+                    .Append(",\"name\":").Append(JsonText.Quote(peer.m_playerName))
+                    .Append(",\"playerId\":").Append(JsonText.Quote(peer.m_playerID.ToString()))
+                    .Append(",\"server\":").Append(peer.m_server ? "true" : "false")
+                    .Append(",\"ready\":").Append(peer.IsReady() ? "true" : "false")
+                    .Append('}');
+            }
+        }
+
+        return text.Append(']').ToString();
+    }
 }

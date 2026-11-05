@@ -3,7 +3,7 @@
 // Do not edit by hand; run `task declarations:check` to verify drift.
 // </auto-generated>
 
-import type { Account, ChatCommandDefinition, GameSnapshot, KeyState, SyncEntity } from "./types";
+import type { Account, ChatCommandDefinition, GameSnapshot, KeyState, PeerInfo, SyncEntity, WorldCharacter, WorldContainer } from "./types";
 
 /**
  * Which process this is and what world it is running.
@@ -33,6 +33,10 @@ export interface GameApi {
      * Confirmed live world authority; false before a session exists.
      */
     isServer(): boolean;
+    /**
+     * Connected peers with routed id, player name, player id and server/ready flags.
+     */
+    peerList(): PeerInfo[];
     /**
      * Connected peers, including the server peer.
      */
@@ -156,15 +160,89 @@ export interface DbApi {
 }
 
 /**
+ * Observed conditions sampled by the host; enter/exit events for reactive plugin logic.
+ */
+export interface SignalsApi {
+    /**
+     * True when the last evaluation changed the value; reading does not clear it.
+     */
+    changed(observer: number, name: string): boolean;
+    /**
+     * Removes every condition and subscription; the observer stays usable.
+     */
+    clear(observer: number): void;
+    /**
+     * Number of defined conditions.
+     */
+    count(observer: number): number;
+    /**
+     * Creates an observer with the given sampling interval; returns its id.
+     */
+    create(intervalMs: number): number;
+    /**
+     * Disposes the observer and every subscription it owns.
+     */
+    dispose(observer: number): void;
+    /**
+     * Sampling period in milliseconds.
+     */
+    interval(observer: number): number;
+    /**
+     * Last sampled value; never evaluates.
+     */
+    is(observer: number, name: string): boolean;
+    /**
+     * Defines or replaces a condition; the predicate runs at the observer's interval.
+     */
+    observe(observer: number, name: string, predicate: (...args: unknown[]) => unknown): void;
+    /**
+     * Removes a subscription created with on().
+     */
+    off(observer: number, subscription: number): void;
+    /**
+     * Subscribes to name, name:Enter or name:Exit; returns a subscription id.
+     */
+    on(observer: number, eventName: string, handler: (...args: unknown[]) => unknown): number;
+    /**
+     * Subscribes for exactly one invocation, including when the handler throws.
+     */
+    once(observer: number, eventName: string, handler: (...args: unknown[]) => unknown): void;
+    /**
+     * Removes a condition, leaving its subscriptions in place.
+     */
+    remove(observer: number, name: string): void;
+    /**
+     * Forgets a condition's history without removing it or firing an exit.
+     */
+    reset(observer: number, name: string): void;
+    /**
+     * Changes the sampling period in milliseconds.
+     */
+    setInterval(observer: number, intervalMs: number): void;
+    /**
+     * Independent copy of every condition and its last value; evaluates nothing.
+     */
+    snapshot(observer: number): Record<string, boolean>;
+}
+
+/**
  * Live world objects: counts, spawning and per-object data.
  */
 export interface WorldApi {
     /**
-     * True while the object behind a handle still exists.
+     * True while an object this plugin spawned still exists.
      */
     alive(handle: string): boolean;
     /**
-     * Destroys an object created with spawn(); no-op for an unknown handle.
+     * Live characters within a radius, nearest first; limit 0 returns everything.
+     */
+    charactersNear(x: number, y: number, z: number, radius: number, limit: number): WorldCharacter[];
+    /**
+     * Containers within a radius, nearest first; limit 0 returns everything.
+     */
+    containersNear(x: number, y: number, z: number, radius: number, limit: number): WorldContainer[];
+    /**
+     * Destroys an object this plugin spawned; no-op for an unknown or foreign handle.
      */
     destroy(handle: string): void;
     /**
@@ -172,19 +250,23 @@ export interface WorldApi {
      */
     exists(prefabName: string): boolean;
     /**
-     * Reads a custom string from a spawned object's ZDO, or null.
+     * Reads a custom string from an object this plugin spawned, or null.
      */
     getData(handle: string, key: string): string | null;
+    /**
+     * Stable ZDO id for a handle this plugin spawned, or null for an unknown or foreign handle.
+     */
+    idOf(handle: string): string | null;
     /**
      * Prefab names matching an optional query; limit 0 returns everything.
      */
     prefabs(query: string, limit: number): string[];
     /**
-     * Writes a custom string to a spawned object's ZDO; replicated and saved.
+     * Writes a custom string to an object this plugin spawned; replicated and saved.
      */
     setData(handle: string, key: string, value: string): void;
     /**
-     * Instantiates an existing networked prefab; returns a session handle or null.
+     * Instantiates an existing networked prefab on the world authority; returns a session handle or null.
      */
     spawn(prefabName: string, x: number, y: number, z: number): string | null;
     /**
@@ -360,6 +442,7 @@ export interface Api {
     game: GameApi;
     fs: FsApi;
     db: DbApi;
+    signals: SignalsApi;
     world: WorldApi;
     /** Availability: client only. */
     input: InputApi;

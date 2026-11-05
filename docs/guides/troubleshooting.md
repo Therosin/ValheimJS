@@ -64,9 +64,15 @@ Before the world finishes loading, `game.worldName()`, `game.day()` and friends 
 
 ## `world.spawn` returns null
 
-`spawn` only accepts prefabs that already exist **and** carry a `ZNetView`. A local-only prefab is
-destroyed instead of leaking. Check `world.prefabs("", 0)` / `world.exists(name)` first, and look
-for `unknown prefab` or `has no ZNetView` in the log.
+`spawn` requires live world authority and only accepts prefabs that already exist **and** carry a
+`ZNetView`. On a client, or before a session exists, it returns `null` and logs
+`spawn refused: this process does not have live world authority`. A local-only prefab is destroyed
+instead of leaking. Check `game().isServer()`, `world.prefabs("", 0)` / `world.exists(name)` first,
+and look for `unknown prefab`, `has no ZNetView` or `without ZDO ownership` in the log.
+
+`world.destroy`, `world.setData`, `world.getData` and `world.alive` only accept handles this plugin
+received from `spawn`. A handle from another plugin logs `handle belongs to another plugin` and is
+ignored; a handle from before a reload is unknown and silently a no-op.
 
 ## "escapes this plugin's data sandbox"
 

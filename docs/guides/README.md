@@ -12,6 +12,7 @@ script and a manifest; the host loads it, builds its context and calls your hook
 | [Getting started](getting-started.md) | First plugin, build, deploy, see it run |
 | [Plugin anatomy](plugin-anatomy.md) | Manifest fields, class vs object form, hooks, state, deps |
 | [API reference](api-reference.md) | Every namespace, function and hook you can call |
+| [Signals](api-reference.md#signals) | Observe state transitions and compose predicates |
 | [Recipes](recipes.md) | Spawning, status files, persistence, RPC, keyboard |
 | [Process branches](process-branches.md) | Shared/server/client entries, startup gates and player hosts |
 | [Chat commands](chat-commands.md) | Private commands, aliases, leading options and async validation |

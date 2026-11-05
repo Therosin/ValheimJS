@@ -20,6 +20,7 @@ client branch; session authority is checked live. See [Process branches](guides/
 | Verified connections mapped to persistent accounts | `Services/AccountSessions.cs`, `Core/PlayerIdentity.cs` | `AccountService.fromPeer(...)` |
 | Default roles, role grants, direct grants/denials and permission catalogue | `Services/PermissionService.cs` | `PermissionService` queries; no JS editing methods |
 | Command routes, aliases, access checks, async stages and invocation lifetime | `Core/ChatCommands.cs`, `Commands/` | `ChatCommand` and `ChatCommands` |
+| Condition sampling, edges, per-handler isolation and cadence | `Utils/ConditionObserver.cs`, `Bindings/SignalBindings.cs` | `signals` binding and SDK `signals`/`predicates` |
 | Private command submission/replies over `valheimjs:commands` | `Networking/CommandService.cs`, `Hooks/CommandInputHook.cs` | `!` input and private `Commands` lines |
 | Script engine, branch components, dependency order, contexts and timers | `Scripting/` | Plugin descriptors and host API |
 | Atomic per-document persistence | `Storage/DocumentDatabase.cs` | Plugin document store and host service stores |
@@ -43,7 +44,9 @@ Setup/teardown, RPC responders and help callbacks are synchronous contracts. Com
 their validation/execution tasks and recheck role/permission policy before both stages.
 Ordinary event-hook promises are not awaited for results or command-style error handling.
 Synchronous hook failures unload that plugin; a failing interval stops that interval; command
-failure ends the invocation; request responder failure fails that request.
+failure ends the invocation; request responder failure fails that request. Observed conditions
+are sampled by the host and evaluate at most once per tick: a failing predicate keeps its last
+value, and a failing handler is logged without stopping the other subscriptions or the plugin.
 
 Callbacks and promise jobs restore their owning plugin context. Cross-plugin exports are ordinary
 JS calls: capture provider-owned collections or scoped APIs when exporting operations. `use`
@@ -76,6 +79,15 @@ is a confirmed backend limitation, retained here because changing persisted key 
 a separate data-format decision. Prefer already-safe stable ids such as account GUIDs and simple
 collection names. Host account/publisher keys use GUIDs/hashes and do not need that escaping.
 
+Isolation is host-enforced, not SDK-enforced. Scoped bindings receive the calling plugin's name
+through a per-plugin closure, and their services owner-check every removal (`net.off`, `sync.off`,
+command unregister/reply), so one plugin cannot release another's registrations. World spawn
+handles are owner-tagged in `Core/SpawnHandleTable`: `destroy`/`alive`/`getData`/`setData` reject a
+foreign handle, and `spawn`/`setData`/`destroy` require live authority plus ZDO ownership. The
+remaining deliberate gap is naming: RPC channel/event and sync stream names are process-wide, so
+two plugins can subscribe to or emit on the same name and `meta.sender` carries no plugin
+attribution.
+
 General player/inventory APIs, general chat broadcasting, new content registration and automatic
 sync replication are not implemented. See the [roadmap](api-roadmap.md) for proposed work.
 
@@ -86,8 +98,9 @@ the broader game-snapshot type, so that annotation alone does not guarantee the 
 ## Verification coverage
 
 `task check` covers typechecking, SDK unit tests, native compilation, generated-declaration drift,
-bundling, binding/process/network/command/account/management probes and example reloads. Role
-and help probes include actual JS registration through the native bindings, not only facade mocks.
+bundling, binding/process/network/command/account/management/world-handle/signals probes and
+example reloads. Role and help probes include actual JS registration through the native bindings,
+not only facade mocks.
 
 Development live checks exercised client/dedicated startup, private commands, Valheim admin
 recognition, management CRUD, default-role persistence, account lookup/shared-data boundaries,

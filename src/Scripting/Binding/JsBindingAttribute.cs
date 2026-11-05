@@ -144,6 +144,14 @@ public abstract class JsBindings : IDisposable
     {
     }
 
+    /// <summary>
+    /// Called once per host tick before JS timers run. Bindings that sample host state belong here
+    /// so cadence and main-thread timing stay host-owned.
+    /// </summary>
+    public virtual void Pump()
+    {
+    }
+
     public virtual void Dispose()
     {
     }

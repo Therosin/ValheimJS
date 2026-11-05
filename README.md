@@ -166,6 +166,7 @@ export default definePlugin(Greeter);
 | `input` | `InputBindings` | keyboard bindings + phase callbacks (client) |
 | `fs` | `FileSystemBindings` | sandboxed files |
 | `db` | `DatabaseBindings` | per-plugin document collections |
+| `signals` | `SignalBindings` | host-sampled conditions with enter/exit events |
 
 Adding a namespace is one class:
 

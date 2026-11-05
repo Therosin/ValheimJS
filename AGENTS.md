@@ -39,7 +39,8 @@ optional imported libraries · `docs/guides` modder docs · `harness/` host with
 
 ## Rules
 
-Networking ownership: `src/Core/Networking.cs` owns the channel/event service and consumer
+- **MUST** check `.local/mods/` (decompiled mods) and the game assembly before adding a binding, hook or gameplay behavior; decompile a missing reference with `ilspycmd -p -o .local/mods/<mod> <dll>` from `BEPINEX_PLUGINS`. Cite the mod file/type relied on. `.local/` is gitignored.
+- Networking ownership: `src/Core/Networking.cs` owns the channel/event service and consumer
 scopes over `Utils.RpcBus`; `src/Core/NetworkSync.cs` owns binary sync and delta/codec logic.
 `src/Networking` contains networked services (such as `CommandService`) and the transport adapter.
 `ChatService` is deliberately dormant; keep its code without constructing it at startup.

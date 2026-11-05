@@ -61,3 +61,47 @@ export interface Account {
     lastSeenAt: number;
     profile: { displayName: string; locale: string };
 }
+
+/** `game.peerList()` — connected peers with routed id and identity. */
+export interface PeerInfo {
+    /** Routed peer id; use it for `Rpc` targets. */
+    uid: number;
+    /** Player name as published by the peer. */
+    name: string;
+    /** Platform/player id when available; kept as text to avoid 64-bit precision loss. */
+    playerId: string;
+    server: boolean;
+    ready: boolean;
+}
+
+/** `world.charactersNear()` — live character snapshot, nearest first. */
+export interface WorldCharacter {
+    /** Stable ZDO id (`user:counter`) or null when the object has no ZDO. */
+    id: string | null;
+    prefab: string | null;
+    name: string;
+    x: number;
+    y: number;
+    z: number;
+    distance: number;
+    health: number;
+    maxHealth: number;
+    isPlayer: boolean;
+    isDead: boolean;
+    isTamed: boolean;
+}
+
+/** `world.containersNear()` — container snapshot, nearest first. */
+export interface WorldContainer {
+    /** Stable ZDO id (`user:counter`) or null when the object has no ZDO. */
+    id: string | null;
+    prefab: string | null;
+    x: number;
+    y: number;
+    z: number;
+    distance: number;
+    /** Width x height inventory slots. */
+    slots: number;
+    /** Items currently stored; contents require the container inventory API. */
+    items: number;
+}

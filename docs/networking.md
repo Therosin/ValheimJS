@@ -99,6 +99,11 @@ not proof that the peer is authorised for a given action.
 - **Multiple listeners, one responder** per channel/event on each peer.
 - **Unsubscribe** by calling the function returned from `on`/`handle`; plugin unload removes every
   registration it owns.
+- **Channel and event names are process-wide, not plugin-scoped.** Subscriptions and pending
+  requests are owner-checked, so `off(id)`/`Release(plugin)` cannot touch another plugin's
+  registrations, but the names themselves are a shared namespace: any plugin on a peer can
+  subscribe to or emit on `my_mod.shop`. `meta.sender` is a routed peer id and carries no plugin
+  attribution, so treat incoming payloads as untrusted and namespace your channel names yourself.
 
 The C# API and transport lifecycle are described in [rpc-bus.md](rpc-bus.md). Prefer Valheim's ZDO
 replication for persistent world state and late joiners; bus notifications are transient. Joining

@@ -103,7 +103,7 @@ public sealed class JsBindingContext : IDisposable
         }
     }
 
-    /// <summary>Drains posted work. Must run on the game thread.</summary>
+    /// <summary>Drains posted work and samples binding-owned state. Must run on the game thread.</summary>
     public void Pump()
     {
         while (true)
@@ -113,7 +113,7 @@ public sealed class JsBindingContext : IDisposable
             {
                 if (_posted.Count == 0)
                 {
-                    return;
+                    break;
                 }
 
                 next = _posted.Dequeue();
@@ -126,6 +126,18 @@ public sealed class JsBindingContext : IDisposable
             catch (Exception exception)
             {
                 Log("error", "posted work failed: " + exception.GetType().Name + ": " + exception.Message);
+            }
+        }
+
+        foreach (var binder in _binders)
+        {
+            try
+            {
+                binder.Pump();
+            }
+            catch (Exception exception)
+            {
+                Log("warn", $"pumping {binder.GetType().Name} failed: {exception.GetType().Name}: {exception.Message}");
             }
         }
     }
