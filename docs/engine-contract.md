@@ -49,8 +49,7 @@ shapes — only the public JS surface documented in `guides/api-reference.md` is
 Implemented: `JsPayload`, `Ticker`, `JsContextScope`, `ScopedBindings`, `JsCallback.InvokeOn`,
 `JsTypeRegistry` + `[JsType]`/`[JsName]`/`[JsIgnore]`, `ReturnKind.Native`, engine/registry wiring
 into `JsBindingContext`/`JsRuntime`/`JsBindings.Install`. Migrated: `game`, `world` proximity
-queries, `signals`, and the first game facade: `players` + `ValheimPlayer` (class declarations now
-generated from `[JsType]` metadata, with `[JsNullable]` for nullable members).
+queries, `signals`, and the first game facade: `players` + `ValheimPlayer` and `npc` + `ValheimBaseNPC`
+(class declarations generated from `[JsType]` metadata, with `[JsNullable]` for nullable members).
 
-Next: `ValheimBaseNPC` + the NPC slice on the class API, then containers. See
-`docs/api-roadmap.md`.
+Next: NPC dormancy/combat/interaction surfaces, then containers. See `docs/api-roadmap.md`.

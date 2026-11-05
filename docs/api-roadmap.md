@@ -47,7 +47,8 @@ Outstanding:
 - [ ] inventory handles: player inventory query/grant/remove behind the same async contract
 - [ ] interactable discovery: pickables, pieces, smelters, cooking stations near a point
 - [ ] character ZDO ownership and authority helpers for plugin-driven entities
-- [ ] NPC base: prefab registration, `ScriptedAI`, perception, intents, dormancy records
+- [x] NPC base: prefab registration, `ScriptedAI`, perception, intents, durable state, rehydrate
+- [ ] NPC dormancy records and combat/interaction surfaces
 - [ ] entity state: declared fields mapped to ZDO keys vs coalesced sync, with join snapshots
 
 ## Next gameplay APIs

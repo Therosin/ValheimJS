@@ -3,7 +3,29 @@
 // Do not edit by hand; run `task declarations:check` to verify drift.
 // </auto-generated>
 
-import type { Account, ChatCommandDefinition, GameSnapshot, KeyState, PeerInfo, SyncEntity, WorldCharacter, WorldContainer } from "./types";
+import type { Account, ChatCommandDefinition, GameSnapshot, KeyState, NpcView, PeerInfo, SyncEntity, WorldCharacter, WorldContainer } from "./types";
+
+/**
+ * A ZDO-backed scripted NPC.
+ */
+export declare class ValheimBaseNPC {
+    private constructor();
+    readonly id: string;
+    readonly kind: string;
+    readonly name: string;
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+    readonly health: number;
+    readonly maxHealth: number;
+    readonly isAlive: boolean;
+    moveTo(x: number, y: number, z: number, run: boolean): boolean;
+    idle(): boolean;
+    state(key: string): string | null;
+    setState(key: string, value: string): boolean;
+    removeState(key: string): boolean;
+    stateKeys(): string[];
+}
 
 /**
  * A connected or local player.
@@ -317,6 +339,40 @@ export interface PlayersApi {
 }
 
 /**
+ * Scripted NPC entities: spawn, perception, intents and durable state.
+ */
+export interface NpcApi {
+    /**
+     * True when the world scene can host NPCs.
+     */
+    available(): boolean;
+    /**
+     * Base constructor for plugin NPC subclasses.
+     */
+    base(): new (handle: string) => ValheimBaseNPC;
+    /**
+     * Despawns one of this plugin's NPCs.
+     */
+    despawn(entity: unknown): boolean;
+    /**
+     * Live NPCs of one kind owned by this plugin.
+     */
+    handles(kind: string): ValheimBaseNPC[];
+    /**
+     * Perception for one NPC (same object onTick receives).
+     */
+    perception(entity: unknown): NpcView | null;
+    /**
+     * Registers an NPC kind and its plugin subclass constructor.
+     */
+    register(kind: string, prefab: string, tickMs: number, constructor: (...args: unknown[]) => unknown): void;
+    /**
+     * Spawns one NPC on the world authority; returns the entity or null.
+     */
+    spawn(kind: string, x: number, y: number, z: number, name: string | null): ValheimBaseNPC | null;
+}
+
+/**
  * Keyboard bindings and press/hold/release callbacks.
  * @availability client only
  */
@@ -482,6 +538,7 @@ export interface Api {
     signals: SignalsApi;
     world: WorldApi;
     players: PlayersApi;
+    npc: NpcApi;
     /** Availability: client only. */
     input: InputApi;
     AccountService: AccountServiceApi;

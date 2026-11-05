@@ -48,7 +48,7 @@ public sealed class JsNameAttribute : Attribute
 }
 
 /// <summary>Marks a reference member as nullable in generated declarations.</summary>
-[AttributeUsage(AttributeTargets.Property | AttributeTargets.Method, Inherited = false)]
+[AttributeUsage(AttributeTargets.Property | AttributeTargets.Method | AttributeTargets.Parameter, Inherited = false)]
 public sealed class JsNullableAttribute : Attribute
 {
 }

@@ -150,6 +150,59 @@ method does not exist on clients. `get` resolves one known player on either side
 `null` for unknown/offline ids. Keep `platformId` for durable identity and resolve the account with
 `AccountService.fromPeer(uid)`; `name` and `uid` are not durable.
 
+## `npc`
+
+```ts
+npc.available(): boolean
+npc.register(ctor, { kind, prefab, tickMs? }): void
+npc.spawn(kind, { position: { x, y, z }, name? }): ValheimBaseNPC | null
+npc.despawn(entity): boolean
+npc.handles(kind): ValheimBaseNPC[]
+npc.perception(entity): NpcView | null
+npcBase(): new (handle: string) => ValheimBaseNPC   // base for plugin subclasses
+```
+
+`ValheimBaseNPC` is a native class (generated declarations):
+
+```ts
+readonly id: string; kind: string; name: string;
+readonly x, y, z: number; readonly health, maxHealth: number; readonly isAlive: boolean;
+moveTo(x, y, z, run: boolean): boolean;
+idle(): boolean;
+state(key): string | null;
+setState(key, value): boolean;
+removeState(key): boolean;
+stateKeys(): string[];
+```
+
+Register a kind once (kind matches `^[a-z0-9_-]{1,32}$`; existing vanilla prefab cloned as
+`vjs_npc_<kind>`), then subclass the native base:
+
+```ts
+class Wanderer extends npcBase() {
+    onSpawn(view: NpcView) {}
+    onRehydrate(view: NpcView) {}
+    onTick(view: NpcView) { this.moveTo(5, view.y, 0, false); }
+    onDespawn() {}
+}
+npc.register(Wanderer, { kind: "wanderer", prefab: "Dverger", tickMs: 500 });
+```
+
+Rules:
+- **Authority.** Spawn, intents and state writes require live world authority and the owning
+  plugin; reads work on any process that can resolve the entity. `handles`/`perception`/`despawn`
+  are plugin-scoped.
+- **Persistence.** Entities are ZDOs with `vjs.plugin`, `vjs.kind`, `vjs.name`; `setState` writes
+  `vjs.s.<key>` (key `^[A-Za-z0-9_.-]{1,48}$`). They survive restarts; `onRehydrate` fires when the
+  entity becomes visible again.
+- **Cadence.** `tickMs` defaults to 500 and is clamped to 100..5000; the host pump (default 200 ms)
+  sets the real floor, so a tick fires at the first pump at/after the interval.
+- **Perception.** `NpcView.nearby` is a 20 m scan, nearest first, capped at 8, with prefab/display
+  names (never raw localization tokens). `lastIntent.reason` reports `nav-stuck` after 5 s without
+  progress toward the target.
+- **Limits.** 32 live instances per kind per plugin. Combat, interaction, inventory and dialogue
+  are not part of this surface.
+
 ## `net`
 
 ```ts

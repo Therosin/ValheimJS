@@ -34,6 +34,7 @@ public class Plugin : BaseUnityPlugin
     private float _tickAccumulator;
     private readonly List<IStartupModule> _modules = new();
     private Core.Networking? _network;
+    private Entities.NpcWorld? _npcWorld;
     internal Core.Networking Network => _network ?? throw new InvalidOperationException("Networking has not started.");
     private Core.ChatCommands? _commands;
     private Commands.ManagementCommands? _managementCommands;
@@ -116,6 +117,7 @@ public class Plugin : BaseUnityPlugin
         _helpCommands = _commands.OpenScope();
         _helpCommands.Register("host", new Commands.HelpCommand(_commands));
         CommandTransport = new global::ValheimJS.Networking.CommandService(_network, _commands, Accounts, Permissions);
+        _npcWorld = new Entities.NpcWorld();
         _host = new JsHost(
             _pluginRoot.Value,
             GameEnvironment.Side,
@@ -146,6 +148,8 @@ public class Plugin : BaseUnityPlugin
         _accountSessions = null;
         Accounts = null;
         Permissions = null;
+        _npcWorld?.Dispose();
+        _npcWorld = null;
         _network?.Dispose();
         _network = null;
         Utils.RpcBus.Shutdown();

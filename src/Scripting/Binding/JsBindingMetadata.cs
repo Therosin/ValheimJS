@@ -400,6 +400,11 @@ public static class JsBindingDiscovery
                         continue;
                     }
 
+                    if (parameter.GetCustomAttributesData().Any(attribute => attribute.AttributeType.Name == "JsNullableAttribute"))
+                    {
+                        parameterType = parameterType.AsNullable();
+                    }
+
                     parameterMetadata.Add(new JsParameterMetadata(parameter.Name ?? "arg", parameterType, parameter.ParameterType));
                 }
 

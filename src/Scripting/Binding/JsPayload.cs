@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Jint;
 using Jint.Native;
 
@@ -64,6 +65,11 @@ public static class JsPayload
         if (value is double or int or long or short or byte or bool or string)
         {
             return JsValue.FromObject(engine, value);
+        }
+
+        if (value is IEnumerable<string> strings)
+        {
+            return Array(engine, strings.Select(item => JsValue.FromObject(engine, item))!);
         }
 
         throw new ArgumentException($"npc/binding payload: unsupported value type '{value.GetType().Name}'; use JsPayload/JsValue.", nameof(value));

@@ -105,3 +105,31 @@ export interface WorldContainer {
     /** Items currently stored; contents require the container inventory API. */
     items: number;
 }
+
+/** One character in an NPC perception scan. */
+export interface NpcNearby {
+    /** Stable ZDO id (`user:counter`). */
+    id: string;
+    prefab: string | null;
+    /** Prefab/display name; never a localization token. */
+    name: string;
+    x: number;
+    y: number;
+    z: number;
+    distance: number;
+    health: number;
+    isPlayer: boolean;
+}
+
+/** `npc.perception(entity)` and the object passed to NPC hooks. */
+export interface NpcView {
+    id: string;
+    kind: string;
+    x: number;
+    y: number;
+    z: number;
+    health: number;
+    maxHealth: number;
+    lastIntent: { kind: string; ok: boolean; reason?: string } | null;
+    nearby: NpcNearby[];
+}

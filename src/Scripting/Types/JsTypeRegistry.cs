@@ -43,12 +43,24 @@ public sealed class JsTypeRegistry
             throw new InvalidOperationException($"{typeof(T).FullName}: missing [JsType].");
         }
 
-        return Register<T>(attribute.Name, attribute.Description, attributed: true);
+        return Register<T>(attribute.Name, attribute.Description, attributed: true, construct: null);
     }
 
     /// <summary>Registers the class under an explicit JavaScript name.</summary>
     public JsNativeType Register<T>(string name) where T : class =>
-        Register<T>(name, null, attributed: false);
+        Register<T>(name, null, attributed: false, construct: null);
+
+    /// <summary>Registers an attributed class with a host-owned constructor (opaque handle in).</summary>
+    public JsNativeType Register<T>(Func<JsValue[], object?> construct) where T : class
+    {
+        var attribute = typeof(T).GetCustomAttribute<JsTypeAttribute>();
+        if (attribute == null)
+        {
+            throw new InvalidOperationException($"{typeof(T).FullName}: missing [JsType].");
+        }
+
+        return Register<T>(attribute.Name, attribute.Description, attributed: true, construct);
+    }
 
     /// <summary>Builds a class explicitly; the builder wins over attribute-driven discovery.</summary>
     public JsClassBuilder Define<T>(string name) where T : class
@@ -106,7 +118,8 @@ public sealed class JsTypeRegistry
     /// <summary>Drops every plugin cache; classes stay registered.</summary>
     public void Clear() => _instances.Clear();
 
-    internal string CurrentPlugin
+    /// <summary>Calling plugin for the current script execution.</summary>
+    public string CurrentPlugin
     {
         get
         {
@@ -160,9 +173,14 @@ public sealed class JsTypeRegistry
         return cache;
     }
 
-    private JsNativeType Register<T>(string name, string? description, bool attributed) where T : class
+    private JsNativeType Register<T>(string name, string? description, bool attributed, Func<JsValue[], object?>? construct) where T : class
     {
         var builder = new JsClassBuilder(this, name, typeof(T), description);
+        if (construct != null)
+        {
+            builder.Construct(construct);
+        }
+
         if (attributed)
         {
             DiscoverMembers(builder, typeof(T));
@@ -407,6 +425,11 @@ public sealed class JsClassBuilder
     internal static bool SupportsType(Type type)
     {
         var name = TypeName(type);
+        if (type.IsArray && type.GetArrayRank() == 1)
+        {
+            return TypeName(type.GetElementType()!) == "System.String";
+        }
+
         return name == "System.String" || name == "Jint.Native.JsValue" || (Nullable.GetUnderlyingType(type) ?? type).IsPrimitive;
     }
 
@@ -433,7 +456,8 @@ public sealed class JsClassBuilder
 
         var returnName = TypeName(method.ReturnType);
         if (returnName == "System.Void" || returnName == "Jint.Native.JsValue" ||
-            returnName == "System.String" || (Nullable.GetUnderlyingType(method.ReturnType) ?? method.ReturnType).IsPrimitive)
+            returnName == "System.String" || SupportsType(method.ReturnType) ||
+            (Nullable.GetUnderlyingType(method.ReturnType) ?? method.ReturnType).IsPrimitive)
         {
             return true;
         }
