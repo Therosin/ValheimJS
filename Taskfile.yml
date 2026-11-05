@@ -114,6 +114,7 @@ tasks:
       - task: probe:management
       - task: probe:world
       - task: probe:signals
+      - task: probe:types
       - task: harness
 
   probe:management:
@@ -129,6 +130,11 @@ tasks:
     desc: Verify condition observation, edge dispatch, failure isolation and the signals binding
     deps: [build]
     cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-signals
+
+  probe:types:
+    desc: Verify native facade classes, payload construction and shared cadence
+    deps: [build]
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-types
 
   deploy:
     desc: Deploy to client and dedicated server

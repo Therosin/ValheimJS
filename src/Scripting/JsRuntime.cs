@@ -141,6 +141,7 @@ internal sealed class JsRuntime : IDisposable
             }
         });
 
+        bindingContext.AttachEngine(_engine, new ValheimJS.Scripting.Types.JsTypeRegistry(_engine));
         InstallTimers();
     }
 
@@ -198,7 +199,7 @@ internal sealed class JsRuntime : IDisposable
                         var declared = target.Get("exports");
                         if (declared.IsObject())
                         {
-                            foreach (var key in declared.AsObject().GetOwnPropertyKeys(Types.String))
+                            foreach (var key in declared.AsObject().GetOwnPropertyKeys(Jint.Runtime.Types.String))
                             {
                                 if (exports.HasOwnProperty(key)) throw new InvalidOperationException($"Duplicate export '{key}'.");
                                 exports.Set(key, declared.AsObject().Get(key), true);
@@ -410,23 +411,23 @@ internal sealed class JsRuntime : IDisposable
             return context is ObjectInstance ? context : null;
         }
         protected override object? Enter(Engine engine, object hostDefined)
-        {
-            var previous = engine.GetValue("__vjs_context");
-            engine.SetValue("__vjs_context", (JsValue)hostDefined);
-            return previous;
-        }
+            => JsContextScope.Enter(engine, (JsValue)hostDefined);
         protected override void Exit(Engine engine, object? token)
-            => engine.SetValue("__vjs_context", token as JsValue ?? JsValue.Undefined);
+            => JsContextScope.Exit(engine, token as JsValue ?? JsValue.Undefined);
     }
 
     /// <summary>Marks the executing plugin so timers, context lookups and errors are attributed correctly.</summary>
     private T Run<T>(string plugin, Func<T> action)
     {
         _active.Add(plugin);
-        var previous = _engine.GetValue("__vjs_context");
+        JsValue previous;
         if (_contextsByPlugin.TryGetValue(plugin, out var context))
         {
-            _engine.SetValue("__vjs_context", context);
+            previous = JsContextScope.Enter(_engine, context);
+        }
+        else
+        {
+            previous = _engine.GetValue("__vjs_context");
         }
 
         try
@@ -435,7 +436,7 @@ internal sealed class JsRuntime : IDisposable
         }
         finally
         {
-            _engine.SetValue("__vjs_context", previous);
+            JsContextScope.Exit(_engine, previous);
             _active.RemoveAt(_active.Count - 1);
         }
     }
@@ -479,7 +480,7 @@ internal sealed class JsRuntime : IDisposable
 
         while (current != null && depth++ < 8)
         {
-            foreach (var key in current.GetOwnPropertyKeys(Types.String))
+            foreach (var key in current.GetOwnPropertyKeys(Jint.Runtime.Types.String))
             {
                 var name = key.ToString();
                 if (ReservedMembers.Contains(name) || hooks.ContainsKey(name))

@@ -123,7 +123,14 @@ public enum JsReturnKind
     Raw,
 
     /// <summary>JSON text; the bridge parses it so scripts receive a real object.</summary>
-    Json
+    Json,
+
+    /// <summary>
+    /// A <c>JsValue</c>/<c>JsObject</c> built natively (see <c>JsPayload</c>); passed through
+    /// untouched. Prefer this over <see cref="Json"/>: no string round trip, no duplicated field
+    /// names. Declarations require <c>Returns</c>.
+    /// </summary>
+    Native
 }
 
 /// <summary>
@@ -138,6 +145,18 @@ public abstract class JsBindings : IDisposable
     }
 
     protected JsBindingContext Context { get; }
+
+    /// <summary>Live Jint engine; bindings use it to build native payloads and expose types.</summary>
+    protected Jint.Engine Engine => Context.Engine;
+
+    /// <summary>
+    /// Called once, after the engine exists, before any plugin API is built. Register native
+    /// facade classes here; do not capture plugin identity (classes are engine-global, the caller
+    /// is resolved per call).
+    /// </summary>
+    public virtual void Install(Types.JsTypeRegistry types)
+    {
+    }
 
     /// <summary>Drops per-plugin resources (registrations, pending calls) when a plugin unloads.</summary>
     public virtual void Release(string plugin)

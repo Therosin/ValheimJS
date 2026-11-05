@@ -29,6 +29,9 @@ internal sealed class ProbeBindings : JsBindings
     [JsBinding(ReturnKind = JsReturnKind.Json, Returns = "ProbeShape")]
     public string Shape() => "{\"ok\":true}";
 
+    [JsBinding(ReturnKind = JsReturnKind.Native, Returns = "ProbeShape")]
+    public Jint.Native.JsValue ShapeNative() => Jint.Native.JsValue.Undefined;
+
     [JsBinding]
     public string CamelName() => "camel";
 
@@ -175,6 +178,7 @@ internal static class BindingProbe
         Assert(text.Contains("twice(callback: (...args: unknown[]) => unknown): number;"), "callback signature wrong");
         Assert(text.Contains("@availability dedicated server only"), "availability not documented");
         Assert(text.Contains("import type { ProbeShape } from \"./types\";"), "declared return type not imported");
+        Assert(text.Contains("shapeNative(): ProbeShape;"), "native return type not declared");
         Assert(!text.Contains("Hidden"), "unattributed method declared");
     }
 

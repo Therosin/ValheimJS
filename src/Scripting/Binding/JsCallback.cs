@@ -31,11 +31,25 @@ public sealed class JsCallback
 
     internal Engine Engine => _engine;
 
+    /// <summary>The wrapped script function, for bindings that build JS classes or prototypes.</summary>
+    internal Function Function => _function;
+
+    /// <summary>The plugin context captured when the callback was created.</summary>
+    internal JsValue Context => _context;
+
     /// <summary>Where the callback came from, for diagnostics: <c>db.find(predicate)</c>.</summary>
     public string Description => _description;
 
     /// <summary>Calls the function with CLR arguments and returns the raw JavaScript result.</summary>
-    public JsValue Invoke(params object?[] arguments)
+    public JsValue Invoke(params object?[] arguments) => Call(JsValue.Undefined, arguments);
+
+    /// <summary>
+    /// Calls the function with an explicit <c>this</c>. Used by native classes and per-instance
+    /// hooks so callbacks keep their plugin context without a second save/restore implementation.
+    /// </summary>
+    internal JsValue InvokeOn(JsValue target, params object?[] arguments) => Call(target, arguments);
+
+    private JsValue Call(JsValue target, object?[] arguments)
     {
         var values = new JsValue[arguments.Length];
         for (var index = 0; index < arguments.Length; index++)
@@ -45,13 +59,12 @@ public sealed class JsCallback
 
         try
         {
-            var previous = _engine.GetValue("__vjs_context");
+            var previous = JsContextScope.Enter(_engine, _context);
             try
             {
-                _engine.SetValue("__vjs_context", _context);
-                return _function.Call(JsValue.Undefined, values);
+                return _function.Call(target, values);
             }
-            finally { _engine.SetValue("__vjs_context", previous); }
+            finally { JsContextScope.Exit(_engine, previous); }
         }
         catch (Exception exception)
         {

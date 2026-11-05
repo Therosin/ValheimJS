@@ -1,8 +1,7 @@
 using System;
-using System.Text;
+using System.Collections.Generic;
 using ValheimJS.Core;
 using ValheimJS.Scripting.Binding;
-using JsonText = ValheimJS.Utils.Json;
 
 namespace ValheimJS.Bindings;
 
@@ -58,24 +57,23 @@ internal sealed class GameBindings : JsBindings
     [JsBinding(Description = "\"day\", \"night\", or \"unknown\" before the world loads.")]
     public string TimeOfDay() => GameEnvironment.TimeOfDay;
 
-    [JsBinding(ReturnKind = JsReturnKind.Json, Returns = "GameSnapshot",
+    [JsBinding(ReturnKind = JsReturnKind.Native, Returns = "GameSnapshot",
         Description = "One object with name, peers, day, dayFraction and timeOfDay.")]
-    public string Snapshot() =>
-        "{" +
-        $"\"world\":{ValheimJS.Utils.Json.Quote(GameEnvironment.WorldName)}," +
-        $"\"peers\":{GameEnvironment.Peers}," +
-        $"\"day\":{GameEnvironment.Day}," +
-        $"\"dayFraction\":{GameEnvironment.DayFraction.ToString(System.Globalization.CultureInfo.InvariantCulture)}," +
-        $"\"timeOfDay\":{ValheimJS.Utils.Json.Quote(GameEnvironment.TimeOfDay)}" +
-        "}";
+    public Jint.Native.JsValue Snapshot() =>
+        JsPayload.Object(Engine)
+            .Set("world", GameEnvironment.WorldName)
+            .Set("peers", GameEnvironment.Peers)
+            .Set("day", GameEnvironment.Day)
+            .Set("dayFraction", GameEnvironment.DayFraction)
+            .Set("timeOfDay", GameEnvironment.TimeOfDay)
+            .Build();
 
-    [JsBinding(ReturnKind = JsReturnKind.Json, Returns = "PeerInfo[]",
+    [JsBinding(ReturnKind = JsReturnKind.Native, Returns = "PeerInfo[]",
         Description = "Connected peers with routed id, player name, player id and server/ready flags.")]
-    public string PeerList()
+    public Jint.Native.JsValue PeerList()
     {
         var peers = ZNet.instance?.GetPeers();
-        var text = new StringBuilder("[");
-        var written = 0;
+        var items = new List<Jint.Native.JsValue>();
         if (peers != null)
         {
             foreach (var peer in peers)
@@ -85,20 +83,16 @@ internal sealed class GameBindings : JsBindings
                     continue;
                 }
 
-                if (written++ > 0)
-                {
-                    text.Append(',');
-                }
-
-                text.Append("{\"uid\":").Append(peer.m_uid)
-                    .Append(",\"name\":").Append(JsonText.Quote(peer.m_playerName))
-                    .Append(",\"playerId\":").Append(JsonText.Quote(peer.m_playerID.ToString()))
-                    .Append(",\"server\":").Append(peer.m_server ? "true" : "false")
-                    .Append(",\"ready\":").Append(peer.IsReady() ? "true" : "false")
-                    .Append('}');
+                items.Add(JsPayload.Object(Engine)
+                    .Set("uid", peer.m_uid)
+                    .Set("name", peer.m_playerName)
+                    .Set("playerId", peer.m_playerID.ToString())
+                    .Set("server", peer.m_server)
+                    .Set("ready", peer.IsReady())
+                    .Build());
             }
         }
 
-        return text.Append(']').ToString();
+        return JsPayload.Array(Engine, items);
     }
 }

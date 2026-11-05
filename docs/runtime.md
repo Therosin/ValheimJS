@@ -23,6 +23,7 @@ client branch; session authority is checked live. See [Process branches](guides/
 | Condition sampling, edges, per-handler isolation and cadence | `Utils/ConditionObserver.cs`, `Bindings/SignalBindings.cs` | `signals` binding and SDK `signals`/`predicates` |
 | Private command submission/replies over `valheimjs:commands` | `Networking/CommandService.cs`, `Hooks/CommandInputHook.cs` | `!` input and private `Commands` lines |
 | Script engine, branch components, dependency order, contexts and timers | `Scripting/` | Plugin descriptors and host API |
+| Native values, cadence, scoped registries and JS classes | `Scripting/Binding/` (`JsPayload`, `Ticker`, `ScopedBindings`, `JsCallback`), `Scripting/Types/` (`JsTypeRegistry`) | `ReturnKind.Native`, `[JsType]` classes, all bindings |
 | Atomic per-document persistence | `Storage/DocumentDatabase.cs` | Plugin document store and host service stores |
 
 Bindings adapt values and callbacks. The SDK shapes calls and types; it does not own subsystem

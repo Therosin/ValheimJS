@@ -20,6 +20,8 @@ public sealed class JsBindingContext : IDisposable
     private readonly Core.ChatCommands? _commands;
     private readonly Services.AccountService? _accounts;
     private readonly Services.PermissionService? _permissions;
+    private Scripting.Types.JsTypeRegistry? _types;
+    private Jint.Engine? _engine;
 
     public JsBindingContext(
         ProcessSide side,
@@ -61,6 +63,25 @@ public sealed class JsBindingContext : IDisposable
     public Core.ChatCommands ChatCommands => _commands ?? throw new InvalidOperationException("Command registry was not supplied by the host.");
     public Services.AccountService Accounts => _accounts ?? throw new InvalidOperationException("AccountService was not supplied by the host.");
     public Services.PermissionService Permissions => _permissions ?? throw new InvalidOperationException("PermissionService was not supplied by the host.");
+
+    /// <summary>
+    /// Native facade classes exposed to scripts. Attached by the runtime once the engine exists;
+    /// binders register their types in <see cref="JsBindings.Install"/>.
+    /// </summary>
+    public Scripting.Types.JsTypeRegistry Types =>
+        _types ?? throw new InvalidOperationException("Type registry was not supplied by the runtime.");
+
+    /// <summary>Type registry when the runtime attached one; probes may run without it.</summary>
+    internal Scripting.Types.JsTypeRegistry? TypesOrNull => _types;
+
+    /// <summary>The live Jint engine, for bindings that build native payloads/classes.</summary>
+    public Jint.Engine Engine => _engine ?? throw new InvalidOperationException("Engine was not supplied by the runtime.");
+
+    internal void AttachEngine(Jint.Engine engine, Scripting.Types.JsTypeRegistry types)
+    {
+        _engine = engine;
+        _types = types;
+    }
 
     /// <summary>Root of the script data area: <c>&lt;plugin root&gt;/data</c>.</summary>
     public string DataRoot { get; }

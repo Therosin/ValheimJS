@@ -21,6 +21,7 @@ the runtime, start with [runtime ownership](runtime.md) and the repository [READ
 | Bind client keys | [Keyboard bindings](keyboard.md) |
 | Check exact JS signatures | [API reference](guides/api-reference.md) and [generated declarations](../scripting/sdk/api/generated.ts) |
 | Diagnose or package a plugin | [Troubleshooting](guides/troubleshooting.md), [publishing](guides/publishing.md) |
+| Change the runtime or add a binding/type | [Engine contract](engine-contract.md) |
 | Inspect capture points or future work | [Hook map](hook-map.md), [API roadmap](api-roadmap.md) |
 
 The API version is **1**. The roadmap separates proposed work from implemented behavior;

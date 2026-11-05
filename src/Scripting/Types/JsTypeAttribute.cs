@@ -1,0 +1,54 @@
+using System;
+using ValheimJS.Scripting.Binding;
+
+namespace ValheimJS.Scripting.Types;
+
+/// <summary>
+/// Marks a native facade class as a JavaScript type. The name is what scripts see
+/// (<c>ValheimBaseNPC</c>), and may differ from the CLR type name.
+/// </summary>
+[AttributeUsage(AttributeTargets.Class, Inherited = false)]
+public sealed class JsTypeAttribute : Attribute
+{
+    public JsTypeAttribute(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("A JavaScript type name is required.", nameof(name));
+        }
+
+        Name = name;
+    }
+
+    /// <summary>Name scripts see.</summary>
+    public string Name { get; }
+
+    /// <summary>One-paragraph description used in generated declarations.</summary>
+    public string? Description { get; set; }
+
+    /// <summary>Side availability used in generated declarations.</summary>
+    public JsAvailability Availability { get; set; } = JsAvailability.Always;
+}
+
+/// <summary>Renames one property or method on a registered type.</summary>
+[AttributeUsage(AttributeTargets.Property | AttributeTargets.Method, Inherited = false)]
+public sealed class JsNameAttribute : Attribute
+{
+    public JsNameAttribute(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("A JavaScript member name is required.", nameof(name));
+        }
+
+        Name = name;
+    }
+
+    public string Name { get; }
+}
+
+/// <summary>Keeps a public member out of the JavaScript surface.</summary>
+[AttributeUsage(AttributeTargets.Property | AttributeTargets.Method | AttributeTargets.Field, Inherited = false)]
+public sealed class JsIgnoreAttribute : Attribute
+{
+}

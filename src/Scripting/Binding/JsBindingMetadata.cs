@@ -426,6 +426,12 @@ public static class JsBindingDiscovery
                     continue;
                 }
 
+                if (returnKind == JsReturnKind.Native && string.IsNullOrEmpty(returnOverride))
+                {
+                    errors.Add($"{methodWhere}: ReturnKind.Native requires Returns = \"<TypeScript type>\" for declarations.");
+                    continue;
+                }
+
                 var qualified = nameSpace + "." + exportedName;
                 if (exported.TryGetValue(qualified, out var owner))
                 {

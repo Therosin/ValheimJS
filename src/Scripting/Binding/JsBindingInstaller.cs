@@ -22,6 +22,7 @@ public sealed class JsBindingInstaller : IDisposable
     private readonly JsBindingContext _context;
     private readonly List<(JsBinderMetadata Binder, JsBindings Instance)> _instances = new();
     private readonly List<(JsBinderMetadata Binder, JsMethodMetadata Method)> _methods = new();
+    private bool _typesReady;
 
     public JsBindingInstaller(JsBindingCatalog catalog, JsBindingContext context)
     {
@@ -77,6 +78,19 @@ public sealed class JsBindingInstaller : IDisposable
     public JsValue BuildApi(Engine engine, string pluginName)
     {
         var root = new JsObject(engine);
+
+        if (!_typesReady)
+        {
+            _typesReady = true;
+            var types = _context.TypesOrNull;
+            if (types != null)
+            {
+                foreach (var (_, instance) in _instances)
+                {
+                    instance.Install(types);
+                }
+            }
+        }
 
         foreach (var (binder, instance) in _instances)
         {

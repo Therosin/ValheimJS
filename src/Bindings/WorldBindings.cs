@@ -2,11 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Text;
 using UnityEngine;
 using ValheimJS.Core;
 using ValheimJS.Scripting.Binding;
-using JsonText = ValheimJS.Utils.Json;
 using Object = UnityEngine.Object;
 
 namespace ValheimJS.Bindings;
@@ -236,9 +234,9 @@ internal sealed class WorldBindings : JsBindings
         return id.ToString();
     }
 
-    [JsBinding(ReturnKind = JsReturnKind.Json, Returns = "WorldCharacter[]",
+    [JsBinding(ReturnKind = JsReturnKind.Native, Returns = "WorldCharacter[]",
         Description = "Live characters within a radius, nearest first; limit 0 returns everything.")]
-    public string CharactersNear(float x, float y, float z, float radius, int limit)
+    public Jint.Native.JsValue CharactersNear(float x, float y, float z, float radius, int limit)
     {
         var origin = new Vector3(x, y, z);
         var found = new List<(Character Character, float Distance)>();
@@ -261,11 +259,10 @@ internal sealed class WorldBindings : JsBindings
         }
 
         found.Sort((left, right) => left.Distance.CompareTo(right.Distance));
-        var text = new StringBuilder("[");
-        var written = 0;
+        var items = new List<Jint.Native.JsValue>();
         foreach (var pair in found)
         {
-            if (limit > 0 && written >= limit)
+            if (limit > 0 && items.Count >= limit)
             {
                 break;
             }
@@ -273,34 +270,28 @@ internal sealed class WorldBindings : JsBindings
             var character = pair.Character;
             var view = character.GetComponent<ZNetView>();
             var zdo = view != null ? view.GetZDO() : null;
-            var prefab = PrefabName(zdo, character.gameObject);
-            if (written > 0)
-            {
-                text.Append(',');
-            }
-
-            text.Append("{\"id\":").Append(JsonText.Quote(zdo != null ? zdo.m_uid.ToString() : null))
-                .Append(",\"prefab\":").Append(JsonText.Quote(prefab))
-                .Append(",\"name\":").Append(JsonText.Quote(character.m_name))
-                .Append(",\"x\":").Append(JsonText.Number(character.transform.position.x))
-                .Append(",\"y\":").Append(JsonText.Number(character.transform.position.y))
-                .Append(",\"z\":").Append(JsonText.Number(character.transform.position.z))
-                .Append(",\"distance\":").Append(JsonText.Number(pair.Distance))
-                .Append(",\"health\":").Append(JsonText.Number(character.GetHealth()))
-                .Append(",\"maxHealth\":").Append(JsonText.Number(character.GetMaxHealth()))
-                .Append(",\"isPlayer\":").Append(character.IsPlayer() ? "true" : "false")
-                .Append(",\"isDead\":").Append(character.IsDead() ? "true" : "false")
-                .Append(",\"isTamed\":").Append(character.IsTamed() ? "true" : "false")
-                .Append('}');
-            written++;
+            items.Add(JsPayload.Object(Engine)
+                .Set("id", zdo != null ? zdo.m_uid.ToString() : null)
+                .Set("prefab", PrefabName(zdo, character.gameObject))
+                .Set("name", character.m_name)
+                .Set("x", character.transform.position.x)
+                .Set("y", character.transform.position.y)
+                .Set("z", character.transform.position.z)
+                .Set("distance", pair.Distance)
+                .Set("health", character.GetHealth())
+                .Set("maxHealth", character.GetMaxHealth())
+                .Set("isPlayer", character.IsPlayer())
+                .Set("isDead", character.IsDead())
+                .Set("isTamed", character.IsTamed())
+                .Build());
         }
 
-        return text.Append(']').ToString();
+        return JsPayload.Array(Engine, items);
     }
 
-    [JsBinding(ReturnKind = JsReturnKind.Json, Returns = "WorldContainer[]",
+    [JsBinding(ReturnKind = JsReturnKind.Native, Returns = "WorldContainer[]",
         Description = "Containers within a radius, nearest first; limit 0 returns everything.")]
-    public string ContainersNear(float x, float y, float z, float radius, int limit)
+    public Jint.Native.JsValue ContainersNear(float x, float y, float z, float radius, int limit)
     {
         var origin = new Vector3(x, y, z);
         var found = new List<(Container Container, float Distance)>();
@@ -319,11 +310,10 @@ internal sealed class WorldBindings : JsBindings
         }
 
         found.Sort((left, right) => left.Distance.CompareTo(right.Distance));
-        var text = new StringBuilder("[");
-        var written = 0;
+        var items = new List<Jint.Native.JsValue>();
         foreach (var pair in found)
         {
-            if (limit > 0 && written >= limit)
+            if (limit > 0 && items.Count >= limit)
             {
                 break;
             }
@@ -332,24 +322,19 @@ internal sealed class WorldBindings : JsBindings
             var view = container.GetComponent<ZNetView>();
             var zdo = view != null ? view.GetZDO() : null;
             var inventory = container.GetInventory();
-            if (written > 0)
-            {
-                text.Append(',');
-            }
-
-            text.Append("{\"id\":").Append(JsonText.Quote(zdo != null ? zdo.m_uid.ToString() : null))
-                .Append(",\"prefab\":").Append(JsonText.Quote(PrefabName(zdo, container.gameObject)))
-                .Append(",\"x\":").Append(JsonText.Number(container.transform.position.x))
-                .Append(",\"y\":").Append(JsonText.Number(container.transform.position.y))
-                .Append(",\"z\":").Append(JsonText.Number(container.transform.position.z))
-                .Append(",\"distance\":").Append(JsonText.Number(pair.Distance))
-                .Append(",\"slots\":").Append(container.m_width * container.m_height)
-                .Append(",\"items\":").Append(inventory != null ? inventory.NrOfItems() : 0)
-                .Append('}');
-            written++;
+            items.Add(JsPayload.Object(Engine)
+                .Set("id", zdo != null ? zdo.m_uid.ToString() : null)
+                .Set("prefab", PrefabName(zdo, container.gameObject))
+                .Set("x", container.transform.position.x)
+                .Set("y", container.transform.position.y)
+                .Set("z", container.transform.position.z)
+                .Set("distance", pair.Distance)
+                .Set("slots", container.m_width * container.m_height)
+                .Set("items", inventory != null ? inventory.NrOfItems() : 0)
+                .Build());
         }
 
-        return text.Append(']').ToString();
+        return JsPayload.Array(Engine, items);
     }
 
     private static string? PrefabName(ZDO? zdo, GameObject instance)
