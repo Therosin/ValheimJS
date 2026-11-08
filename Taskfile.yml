@@ -12,6 +12,7 @@ vars:
   buildDir: bin/Release/netstandard2.1
   jsRoot: scripting
   jsOut: scripting/dist
+  jsDevOut: scripting/dist-testing
 
 tasks:
   default:
@@ -37,11 +38,18 @@ tasks:
       - ./Valheim.targets
 
   bundle:
-    desc: Bundle TypeScript plugins into scripting/dist
+    desc: Bundle shipped plugins from scripting/plugins into scripting/dist
     dir: '{{.jsRoot}}'
     cmds:
       - bun install
       - bun run build.ts
+
+  bundle:testing:
+    desc: Bundle development/test plugins from scripting/testing into scripting/dist-testing
+    dir: '{{.jsRoot}}'
+    cmds:
+      - bun install
+      - bun run build.ts --source testing --out dist-testing
     generates:
       - ./dist/*/*.js
       - ./dist/*/manifest.ini
@@ -73,9 +81,26 @@ tasks:
     cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-bindings
 
   harness:
-    desc: Load bundled example plugins in the headless host harness
-    deps: [bundle]
-    cmd: dotnet run --project harness/Harness.csproj -c Release -- {{.jsOut}}
+    desc: Load development example plugins in the headless host harness
+    deps: [bundle:testing]
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- {{.jsDevOut}}
+
+  dev:nav:
+    desc: Bundle the unshipped nav-debug plugin and copy it to the client plugins folder
+    dir: '{{.jsRoot}}'
+    cmd: 'bun run build.ts nav-debug --source testing-optional --out dist-testing --deploy "{{.CLIENT_PLUGINS}}"'
+
+  dev:deploy:client:
+    desc: Deploy the test plugin set (not shipped) to the client
+    prompt: "Overwrite the client plugin and JS plugin folders with test plugins?"
+    deps: [build, bundle:testing]
+    cmd: '{{.ps}} -NoProfile -File ./scripts/deploy.ps1 -Target client -JsOut scripting/dist-testing'
+
+  dev:deploy:server:
+    desc: Deploy the test plugin set (not shipped) to the dedicated server
+    prompt: "Overwrite the server plugin and JS plugin folders with test plugins?"
+    deps: [build, bundle:testing]
+    cmd: '{{.ps}} -NoProfile -File ./scripts/deploy.ps1 -Target server -JsOut scripting/dist-testing'
 
   probe:process:
     desc: Verify process gates, component lifecycle, dependencies and cleanup
@@ -113,8 +138,11 @@ tasks:
       - task: probe:accounts
       - task: probe:management
       - task: probe:world
+      - task: probe:world-manager
       - task: probe:signals
       - task: probe:types
+      - task: probe:behaviour
+      - task: probe:ai
       - task: harness
 
   probe:management:
@@ -126,6 +154,10 @@ tasks:
     deps: [build]
     cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-world
 
+  probe:world-manager:
+    desc: Verify world relevance, navigation, cache and world messages
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-world-manager
+
   probe:signals:
     desc: Verify condition observation, edge dispatch, failure isolation and the signals binding
     deps: [build]
@@ -135,6 +167,15 @@ tasks:
     desc: Verify native facade classes, payload construction and shared cadence
     deps: [build]
     cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-types
+
+  probe:behaviour:
+    desc: Verify the YAML parser and behaviour tree engine
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-behaviour
+
+  probe:ai:
+    desc: Verify the ai binding over compiled behaviour trees
+    deps: [build]
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-ai
 
   deploy:
     desc: Deploy to client and dedicated server

@@ -2,13 +2,14 @@ using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
+using ValheimJS.Entities;
 
-namespace ValheimJS.Entities;
+namespace ValheimJS.World;
 
 /// <summary>
 /// Clones a vanilla prefab into a scripted NPC prefab and registers it in the world scene.
 /// Recipe mirrors the proven companion-mod approach: hidden container, base AI/talk/drop removed,
-/// `ScriptedAI` added, then `m_prefabs` + `m_namedPrefabs` updated.
+/// client presenter added, then `m_prefabs` + `m_namedPrefabs` updated.
 /// </summary>
 internal static class NpcPrefabs
 {
@@ -63,6 +64,21 @@ internal static class NpcPrefabs
         var clone = Object.Instantiate(source, _container.transform, false);
         clone.name = name;
 
+        if (definition.Faction != null)
+        {
+            if (System.Enum.TryParse<Character.Faction>(definition.Faction, true, out var faction))
+            {
+                foreach (var character in clone.GetComponents<Character>())
+                {
+                    character.m_faction = faction;
+                }
+            }
+            else
+            {
+                PluginLogger.Warn($"npc prefab: unknown faction '{definition.Faction}' for kind '{definition.Kind}'");
+            }
+        }
+
         foreach (var ai in clone.GetComponents<BaseAI>())
         {
             Object.DestroyImmediate(ai);
@@ -85,7 +101,8 @@ internal static class NpcPrefabs
             return;
         }
 
-        clone.AddComponent<ScriptedAI>();
+        clone.AddComponent<NpcVisualAI>();
+        clone.AddComponent<NpcPresenter>();
 
         scene.m_prefabs.Add(clone);
         if (NamedPrefabsField?.GetValue(scene) is Dictionary<int, GameObject> named)

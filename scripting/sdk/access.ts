@@ -12,6 +12,11 @@ export function world() {
     return context().host.api.world;
 }
 
+/** Navigation volume inspection and the debug overlay. */
+export function nav() {
+    return context().host.api.nav;
+}
+
 /** Players: local identity, lookups and the authoritative online roster. */
 export function players() {
     return context().host.api.players;

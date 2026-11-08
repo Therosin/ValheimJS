@@ -51,5 +51,8 @@ Implemented: `JsPayload`, `Ticker`, `JsContextScope`, `ScopedBindings`, `JsCallb
 into `JsBindingContext`/`JsRuntime`/`JsBindings.Install`. Migrated: `game`, `world` proximity
 queries, `signals`, and the first game facade: `players` + `ValheimPlayer` and `npc` + `ValheimBaseNPC`
 (class declarations generated from `[JsType]` metadata, with `[JsNullable]` for nullable members).
+NPCs now expose a perception store (`npc.sensed`), durable per-entity memory, intent lifecycle and
+the YAML `ai` bridge with automatic `ctx.state.senses` injection.
 
-Next: NPC dormancy/combat/interaction surfaces, then containers. See `docs/api-roadmap.md`.
+Next: NPC dormancy/combat/interaction surfaces, then containers. See `docs/api-roadmap.md` and
+`docs/guides/npc-ai.md`.

@@ -15,14 +15,24 @@
     <Compile Include="..\src\Utils\Json.cs" LinkBase="Shared\Utils" />
     <Compile Include="..\src\Utils\CompilerSupport.cs" LinkBase="Shared\Utils" />
     <Compile Include="..\src\Utils\ConditionObserver.cs" LinkBase="Shared\Utils" />
+    <Compile Include="..\src\Utils\Yaml.cs" LinkBase="Shared\Utils" />
+    <Compile Include="..\src\Core\BehaviourTree.cs" LinkBase="Shared\Core" />
+    <Compile Include="..\src\Entities\NpcModels.cs" LinkBase="Shared\Entities" />
+    <Compile Include="..\src\Core\AiSenses.cs" LinkBase="Shared\Core" />
     <Compile Include="..\src\Core\Networking.cs" LinkBase="Shared\Core" />
     <Compile Include="..\src\Core\NetworkSync.cs" LinkBase="Shared\Core" />
+    <Compile Include="..\src\World\WorldMessages.cs" LinkBase="Shared\World" />
+    <Compile Include="..\src\World\WorldRelevancy.cs" LinkBase="Shared\World" />
+    <Compile Include="..\src\World\Navigation\NavModel.cs" LinkBase="Shared\World\Navigation" />
+    <Compile Include="..\src\World\Navigation\NavCache.cs" LinkBase="Shared\World\Navigation" />
+    <Compile Include="..\src\World\Navigation\NavVolume.cs" LinkBase="Shared\World\Navigation" />
     <Compile Include="..\src\Core\SpawnHandleTable.cs" LinkBase="Shared\Core" />
     <Compile Include="..\src\Networking\IRpcTransport.cs" LinkBase="Shared\Networking" />
     <Compile Include="..\src\Networking\NetworkJson.cs" LinkBase="Shared\Networking" />
     <Compile Include="..\src\Bindings\NetBindings.cs" LinkBase="Shared\Bindings" />
     <Compile Include="..\src\Bindings\SyncBindings.cs" LinkBase="Shared\Bindings" />
     <Compile Include="..\src\Bindings\SignalBindings.cs" LinkBase="Shared\Bindings" />
+    <Compile Include="..\src\Bindings\AiBindings.cs" LinkBase="Shared\Bindings" />
     <Compile Include="..\src\Bindings\ChatCommandsBindings.cs" LinkBase="Shared\Bindings" />
     <Compile Include="..\src\Core\ChatCommands.cs" LinkBase="Shared\Core" />
     <Compile Include="..\src\Storage\**\*.cs" LinkBase="Shared\Storage" />

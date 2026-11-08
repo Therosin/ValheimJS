@@ -20,6 +20,7 @@ are design sketches, not functions a plugin can call.
 | Administration | Private `!manage:roles`, `!manage:permission` and `!manage:user` commands; Valheim admin recovery and delegated management permission |
 | Networking | Native channel/event scopes over RpcBus, notifications and synchronous request responders; explicit transient binary sync |
 | World | Existing networked prefab spawning, session handles, ZDO data, object and prefab queries |
+| NPC / AI | Server-simulated NPCs with perception store, memory, intents and YAML behaviour trees |
 | Input | Client keyboard bindings and callbacks; no mouse API |
 | Events | Coarse heartbeat, routed chat, peer/character changes and read-only damage observation |
 
@@ -47,8 +48,16 @@ Outstanding:
 - [ ] inventory handles: player inventory query/grant/remove behind the same async contract
 - [ ] interactable discovery: pickables, pieces, smelters, cooking stations near a point
 - [ ] character ZDO ownership and authority helpers for plugin-driven entities
-- [x] NPC base: prefab registration, `ScriptedAI`, perception, intents, durable state, rehydrate
+- [x] NPC base: server-authoritative `WorldManager`/`NpcBehavior`, prefab registration, perception,
+      intents, durable state, rehydrate, relevance subscriptions
+- [x] Perception store with characters and world objects, relative/directional queries and
+      short-term recognition memory
+- [x] Per-NPC durable memory (`npc.memory`) and YAML behaviour-tree binding (`ai`) with automatic
+      `ctx.state.senses` injection
+- [x] Lazy navigation volume with terrain/structure/stairs, disk cache, A* and debug overlay
+- [x] World-space `draw` API for lines/meshes; server calls replicate to clients
 - [ ] NPC dormancy records and combat/interaction surfaces
+- [ ] hearing/noise, stealth, status-effect, equipment and per-NPC damage events as perception sources
 - [ ] entity state: declared fields mapped to ZDO keys vs coalesced sync, with join snapshots
 
 ## Next gameplay APIs
@@ -61,6 +70,8 @@ Outstanding:
 | Build/interaction/crafting hooks | Regions, automation and quests | Choose funnels that run on the deciding process rather than assuming every client UI hook is authoritative |
 | Opt-in damage cancellation | PvP rules and safe areas | Current damage hooks observe after the call; vetoing requires a different interception contract |
 | General chat output | Announcements outside commands | Define presentation and sender/authority policy before reactivating or replacing dormant ChatService behavior |
+
+See [NPCs and AI](guides/npc-ai.md) for the current end-to-end example.
 
 The installed mod research suggests where to inspect, not what ValheimJS already implements:
 EpicLoot for item/loot and crafting paths; KG Marketplace for client-rendered NPCs, dialogs and
@@ -80,7 +91,7 @@ management commands provide administrative editing today.
 
 ## Content and presentation work
 
-- Client NPC renderer and dialog protocol, with authority-owned definitions and explicit readiness.
+- NPC dialogs and richer presentation; the renderer, relevance subscription and server-owned simulation exist.
 - Asset/content registration, deciding whether to integrate an established mod library or own the pipeline.
 - Client UI beyond keyboard callbacks, with server-authorized actions sent through networking.
 - Optional scheduling and localization helpers driven by demonstrated plugin needs.

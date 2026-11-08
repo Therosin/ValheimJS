@@ -20,8 +20,11 @@ if (args.Contains("--probe-commands")) return CommandProbe.Run();
 if (args.Contains("--probe-accounts")) return AccountProbe.Run();
 if (args.Contains("--probe-management")) return ManagementProbe.Run();
 if (args.Contains("--probe-world")) return WorldProbe.Run();
+if (args.Contains("--probe-world-manager")) return WorldManagerProbe.Run();
 if (args.Contains("--probe-signals")) return SignalProbe.Run();
 if (args.Contains("--probe-types")) return TypeProbe.Run();
+if (args.Contains("--probe-behaviour")) return BehaviourProbe.Run();
+if (args.Contains("--probe-ai")) return AiProbe.Run();
 
 // Headless smoke test for the JS host: loads bundles from a directory, pumps timers,
 // dispatches hooks, reloads. No Unity, no BepInEx — same code the plugin runs.

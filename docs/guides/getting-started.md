@@ -16,7 +16,7 @@ bun install                 # once
 mkdir -p plugins/greeter/shared
 ```
 
-`scripting/plugins/greeter/manifest.ini`
+`scripting/testing/greeter/manifest.ini` (or `scripting/plugins/` for a shipped plugin)
 
 ```ini
 name=greeter
@@ -25,7 +25,7 @@ apiVersion=1
 enabled=true
 ```
 
-`scripting/plugins/greeter/shared/main.ts`
+`scripting/testing/greeter/shared/main.ts`
 
 ```ts
 import { definePlugin, game, log } from "../../../sdk/index";
@@ -57,7 +57,7 @@ export default definePlugin({
 
 ```bash
 bun run typecheck                    # catches typos before the host sees them
-bun run build.ts greeter             # → scripting/dist/greeter/{shared.js,manifest.ini}
+bun run build.ts greeter --source testing --out dist-testing   # → scripting/dist-testing/greeter/…
 ```
 
 Bundling flattens imports into a plain script for each entry. Use local source modules or bundled
@@ -98,8 +98,8 @@ reload would interrupt players' work.
 
 | What | Where |
 |---|---|
-| Your sources | `scripting/plugins/<name>/shared/main.ts` |
-| Built bundle | `scripting/dist/<name>/shared.js` |
+| Your sources | `scripting/testing/<name>/shared/main.ts` (or `scripting/plugins/` to ship) |
+| Built bundle | `scripting/dist-testing/<name>/shared.js` |
 | Installed plugin | `<root>/ValheimJS/plugins/<name>/` |
 | Your files at runtime | `<root>/ValheimJS/data/<name>/` |
 | Your database | `<root>/ValheimJS/data/<name>/db/` |
@@ -111,3 +111,8 @@ Next: [Process branches](process-branches.md) for shared/client/server structure
 For an interactive first plugin, the bundled `commands` example registers `!hello` and
 `!demo:hello`. Both peers need ValheimJS. Try `!hello name="Test Player" welcome home`, then
 `!help hello name`. Commands and their replies are private. See [Chat commands](chat-commands.md).
+
+## Next
+
+- [NPCs and AI](npc-ai.md) — register scripted NPCs, read the perception store, drive intents
+  and run YAML behaviour trees.

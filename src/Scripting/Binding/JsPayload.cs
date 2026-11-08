@@ -44,6 +44,87 @@ public static class JsPayload
         return new JsArray(engine, values.ToArray());
     }
 
+    /// <summary>
+    /// Converts a plain CLR graph (dictionaries, lists and primitives) into JS objects/arrays.
+    /// Use for structured payloads produced by native services; no CLR type reaches script.
+    /// </summary>
+    public static JsValue FromPlain(Engine engine, object? value)
+    {
+        if (value == null)
+        {
+            return JsValue.Null;
+        }
+
+        if (value is JsValue jsValue)
+        {
+            return jsValue;
+        }
+
+        if (value is string text)
+        {
+            return JsValue.FromObject(engine, text);
+        }
+
+        if (value is bool flag)
+        {
+            return JsValue.FromObject(engine, flag);
+        }
+
+        if (value is double number)
+        {
+            return JsValue.FromObject(engine, number);
+        }
+
+        if (value is float single)
+        {
+            return JsValue.FromObject(engine, (double)single);
+        }
+
+        if (value is long integer)
+        {
+            return JsValue.FromObject(engine, (double)integer);
+        }
+
+        if (value is int small)
+        {
+            return JsValue.FromObject(engine, (double)small);
+        }
+
+        if (value is IReadOnlyDictionary<string, object?> readOnly)
+        {
+            return FromPlainDictionary(engine, readOnly);
+        }
+
+        if (value is IDictionary<string, object?> dictionary)
+        {
+            return FromPlainDictionary(engine, dictionary);
+        }
+
+        if (value is IEnumerable<object?> items)
+        {
+            var values = new List<JsValue>();
+            foreach (var item in items)
+            {
+                values.Add(FromPlain(engine, item));
+            }
+
+            return new JsArray(engine, values.ToArray());
+        }
+
+        return From(engine, value);
+    }
+
+    private static JsValue FromPlainDictionary(Engine engine, IEnumerable<KeyValuePair<string, object?>> entries)
+    {
+        var builder = new JsObjectBuilder(engine);
+        foreach (var pair in entries)
+        {
+            builder.Set(pair.Key, FromPlain(engine, pair.Value));
+        }
+
+        return builder.Build();
+    }
+
     /// <summary>Converts a primitive to a JS value; null becomes <c>null</c>.</summary>
     public static JsValue From(Engine engine, object? value)
     {

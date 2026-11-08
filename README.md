@@ -17,7 +17,7 @@ independent shared/server/client scripts, and executed in-process by [Jint](http
 a BepInEx 5 plugin. The C# side is the authoritative implementation of the JavaScript API.
 
 ```
-TypeScript plugin ──bun──► plugins/<name>/{shared,server,client}.js ──► Jint engine ──► [JsBinder] classes
+TypeScript plugin ──bun──► <name>/{shared,server,client}.js ──► Jint engine ──► [JsBinder] classes
                                                           │
                                              Harmony capture points (C#)
                                                           │
@@ -50,7 +50,9 @@ authors only (TypeScript, no engine internals). This README is for working on th
 | `src/Utils/` | RPC bus, JSON helpers, netstandard shims |
 | `scripting/sdk/` | TypeScript SDK: generated declarations + thin facades |
 | `scripting/lib/` | Optional imported helpers (host-backed sync facade) |
-| `scripting/plugins/` | example plugin sources |
+| `scripting/plugins/` | shipped plugin sources (empty by default) |
+| `scripting/testing/` | development/test plugin sources; never packaged |
+| `scripting/testing-optional/` | opt-in test tools (nav overlay); built only on request |
 | `docs/guides/` | modder-facing guides |
 | `harness/` | net8 console running the real host code without Unity |
 
@@ -159,7 +161,10 @@ export default definePlugin(Greeter);
 | `game` | `GameBindings` | side, world identity, live snapshot |
 | `world` | `WorldBindings` | ZDO counts, spawning, per-object data |
 | `players` | `PlayerBindings` | local player, lookups and the authority-owned online roster |
-| `npc` | `NpcBindings` | scripted NPC spawn, perception, intents and durable state |
+| `npc` | `NpcBindings` | server-simulated NPCs: spawn, perception store, intents, memory, state |
+| `ai` | `AiBindings` | YAML behaviour trees with JS actions/conditions and NPC senses |
+| `nav` | `NavBindings` | navigation-volume stats and debug overlay toggle |
+| `draw` | `DrawBindings` | world-space lines/meshes; server calls replicate to clients |
 | `net` | `NetBindings` | adapter over `Core/Networking` channels/events |
 | `sync` | `SyncBindings` | adapter over `Core/NetworkSync` binary frames |
 | `ChatCommands` | `ChatCommandsBindings` | native command registry, account gates and contextual help |

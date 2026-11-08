@@ -1,14 +1,14 @@
 using System;
-using System.Globalization;
 using UnityEngine;
 using ValheimJS.Scripting.Types;
+using ValheimJS.World;
 
 namespace ValheimJS.Entities;
 
 /// <summary>
-/// A ZDO-backed scripted NPC, exposed to scripts as <c>ValheimBaseNPC</c>. Game objects, ZDOs,
-/// the AI component and the intent queue stay internal; the public surface is identity, pose,
-/// health, intents and durable string state.
+/// A ZDO-backed scripted world object, exposed to scripts as <c>ValheimBaseNPC</c>. Game objects,
+/// ZDOs, simulation and durable state stay native; this facade is identity, pose, health,
+/// commands and string state.
 /// </summary>
 [JsType("ValheimBaseNPC", Description = "A ZDO-backed scripted NPC.")]
 public sealed class BaseNPC
@@ -34,39 +34,54 @@ public sealed class BaseNPC
 
     public string Kind => _kind;
 
-    public string Name => NpcWorld.Zdo(_id)?.GetString("vjs.name", _name) ?? _name;
+    public string Name => WorldManager.Zdo(Id)?.GetString(WorldKeys.Name, _name) ?? _name;
 
-    public double X => NpcWorld.Zdo(_id)?.GetPosition().x ?? 0d;
+    public double X => WorldManager.Zdo(Id)?.GetPosition().x ?? 0d;
 
-    public double Y => NpcWorld.Zdo(_id)?.GetPosition().y ?? 0d;
+    public double Y => WorldManager.Zdo(Id)?.GetPosition().y ?? 0d;
 
-    public double Z => NpcWorld.Zdo(_id)?.GetPosition().z ?? 0d;
+    public double Z => WorldManager.Zdo(Id)?.GetPosition().z ?? 0d;
 
-    public float Health => NpcWorld.HealthOf(_id, MaxHealth);
+    public float Health => NpcBehavior.HealthOf(_id, MaxHealth);
 
-    public float MaxHealth => NpcWorld.MaxHealthOf(_id);
+    public float MaxHealth => NpcBehavior.MaxHealthOf(_id);
 
-    public bool IsAlive => NpcWorld.IsAlive(_id, Health);
+    public bool IsAlive => NpcBehavior.IsAlive(_id, Health);
 
-    /// <summary>Sets the current intent. False when refused (no authority/ownership).</summary>
+    /// <summary>Sets the current intent. False when refused (no authority).</summary>
     public bool MoveTo(double x, double y, double z, bool run) =>
-        NpcWorld.Instance?.ApplyIntent(_plugin, _id, NpcIntent.MoveTo(x, y, z, run)) == true;
+        WorldManager.Instance?.Command(_plugin, Id, "moveTo", x, y, z, run) == true;
 
-    /// <summary>Clears movement; the AI wanders near the spawn point.</summary>
-    public bool Idle() => NpcWorld.Instance?.ApplyIntent(_plugin, _id, NpcIntent.Idle) == true;
+    /// <summary>Clears movement; the NPC wanders near its home point.</summary>
+    public bool Idle() => WorldManager.Instance?.Command(_plugin, Id, "idle") == true;
+
+    /// <summary>Stops movement and wandering until the next intent.</summary>
+    public bool Stop() => WorldManager.Instance?.Command(_plugin, Id, "stop") == true;
+
+    /// <summary>Waits in place; the intent reports arrived when the timer elapses.</summary>
+    public bool Wait(double seconds) => WorldManager.Instance?.Command(_plugin, Id, "wait", seconds) == true;
+
+    /// <summary>Turns toward a world point and reports the intent as arrived.</summary>
+    public bool LookAt(double x, double y, double z) =>
+        WorldManager.Instance?.Command(_plugin, Id, "lookAt", x, y, z) == true;
+
+    /// <summary>Turns toward another ZDO-backed entity; fails when it no longer exists.</summary>
+    public bool Face(string id) => WorldManager.Instance?.Command(_plugin, Id, "face", id) == true;
 
     [JsNullable]
-    public string? State(string key) => NpcWorld.Instance?.StateGet(_plugin, _id, key);
+    public string? State(string key) => WorldManager.Instance?.StateGet(_plugin, Id, key);
 
     public bool SetState(string key, string value) =>
-        NpcWorld.Instance?.StateSet(_plugin, _id, key, value) == true;
+        WorldManager.Instance?.StateSet(_plugin, Id, key, value) == true;
 
     public bool RemoveState(string key) =>
-        NpcWorld.Instance?.StateRemove(_plugin, _id, key) == true;
+        WorldManager.Instance?.StateRemove(_plugin, Id, key) == true;
 
-    public string[] StateKeys() => NpcWorld.Instance?.StateKeys(_plugin, _id) ?? Array.Empty<string>();
+    public string[] StateKeys() => WorldManager.Instance?.StateKeys(_plugin, Id) ?? Array.Empty<string>();
 
-    [JsIgnore] internal NpcPerception Perception() => NpcWorld.Instance?.Perception(_plugin, _id.ToString()) ?? EmptyPerception();
+    [JsIgnore]
+    internal NpcPerception Perception() =>
+        WorldManager.Instance?.Snapshot(_plugin, Id) as NpcPerception ?? EmptyPerception();
 
     private NpcPerception EmptyPerception() => new()
     {
@@ -76,6 +91,12 @@ public sealed class BaseNPC
         Y = Y,
         Z = Z,
         Health = Health,
-        MaxHealth = MaxHealth
+        MaxHealth = MaxHealth,
+        IsAlive = IsAlive,
+        Faction = string.Empty,
+        Level = 1,
+        HomeX = X,
+        HomeY = Y,
+        HomeZ = Z
     };
 }

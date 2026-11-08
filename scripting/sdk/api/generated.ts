@@ -3,7 +3,7 @@
 // Do not edit by hand; run `task declarations:check` to verify drift.
 // </auto-generated>
 
-import type { Account, ChatCommandDefinition, GameSnapshot, KeyState, NpcView, PeerInfo, SyncEntity, WorldCharacter, WorldContainer } from "./types";
+import type { Account, AiTickResult, ChatCommandDefinition, GameSnapshot, KeyState, NpcSensed, NpcView, PeerInfo, SyncEntity, WorldCharacter, WorldContainer } from "./types";
 
 /**
  * A ZDO-backed scripted NPC.
@@ -21,6 +21,10 @@ export declare class ValheimBaseNPC {
     readonly isAlive: boolean;
     moveTo(x: number, y: number, z: number, run: boolean): boolean;
     idle(): boolean;
+    stop(): boolean;
+    wait(seconds: number): boolean;
+    lookAt(x: number, y: number, z: number): boolean;
+    face(id: string): boolean;
     state(key: string): string | null;
     setState(key: string, value: string): boolean;
     removeState(key: string): boolean;
@@ -359,17 +363,123 @@ export interface NpcApi {
      */
     handles(kind: string): ValheimBaseNPC[];
     /**
+     * Persistent plugin-owned memory object for one NPC (survives restarts).
+     */
+    memory(entity: unknown): Record<string, unknown>;
+    /**
      * Perception for one NPC (same object onTick receives).
      */
     perception(entity: unknown): NpcView | null;
     /**
      * Registers an NPC kind and its plugin subclass constructor.
      */
-    register(kind: string, prefab: string, tickMs: number, constructor: (...args: unknown[]) => unknown): void;
+    register(kind: string, prefab: string, tickMs: number, constructor: (...args: unknown[]) => unknown, options: unknown): void;
+    /**
+     * Queries the NPC's perception store; entities persist as memory after leaving range.
+     */
+    sensed(entity: unknown, options: unknown): NpcSensed[];
+    /**
+     * Replaces the NPC's persistent memory object (16 KiB JSON limit).
+     */
+    setMemory(entity: unknown, value: unknown): boolean;
     /**
      * Spawns one NPC on the world authority; returns the entity or null.
      */
     spawn(kind: string, x: number, y: number, z: number, name: string | null): ValheimBaseNPC | null;
+}
+
+/**
+ * Inspect the navigation volume and toggle its debug overlay.
+ */
+export interface NavApi {
+    /**
+     * Number of navigation cells loaded.
+     */
+    cells(): number;
+    /**
+     * Toggles the navigation debug overlay.
+     */
+    enable(enabled: boolean): void;
+    /**
+     * Number of navigation zones loaded or cached.
+     */
+    zones(): number;
+}
+
+/**
+ * Draw world-space lines and meshes; server calls replicate to clients.
+ */
+export interface DrawApi {
+    /**
+     * Draws an axis-aligned wire box.
+     */
+    box(x: number, y: number, z: number, sx: number, sy: number, sz: number, color: string | null, duration: number): void;
+    /**
+     * Draws a horizontal circle.
+     */
+    circle(x: number, y: number, z: number, radius: number, color: string | null, duration: number, segments: number): void;
+    /**
+     * Clears queued world-space primitives.
+     */
+    clear(): void;
+    /**
+     * Draws one line between two world points.
+     */
+    line(ax: number, ay: number, az: number, bx: number, by: number, bz: number, color: string | null, duration: number): void;
+    /**
+     * Draws a triangle mesh (wireframe or filled).
+     */
+    mesh(vertices: unknown, indices: unknown, color: string | null, filled: boolean, duration: number): void;
+    /**
+     * Draws a connected world-space line strip.
+     */
+    polyline(points: unknown, color: string | null, duration: number): void;
+}
+
+/**
+ * YAML behaviour trees: compile, run per-entity instances, and bridge JS actions/conditions.
+ */
+export interface AiApi {
+    /**
+     * Stops the instance and runs active execAfter hooks as interrupted.
+     */
+    cancel(instanceId: string): void;
+    /**
+     * Compiles YAML into a tree id. Imports come from options.imports keyed by alias.
+     */
+    compile(yaml: string, options: unknown): string;
+    /**
+     * Creates an independent instance of a compiled tree; returns its id.
+     */
+    instantiate(treeId: string, options: unknown): string;
+    /**
+     * Drops one instance without running hooks.
+     */
+    release(instanceId: string): boolean;
+    /**
+     * Clears execution progress; optionally restores declared state defaults.
+     */
+    reset(instanceId: string, resetState: boolean): void;
+    /**
+     * Replaces one top-level state value.
+     */
+    set(instanceId: string, key: string, value: unknown): void;
+    /**
+     * Deep copy of the instance state.
+     */
+    state(instanceId: string): Record<string, unknown>;
+    /**
+     * Current status of the last tick, or cancelled.
+     */
+    status(instanceId: string): string;
+    /**
+     * Advances one instance; status is success, failure, running or cancelled.
+     */
+    tick(instanceId: string, deltaTime: number): AiTickResult;
+    /**
+     * Drops a compiled tree and every instance using it.
+     */
+    unload(treeId: string): boolean;
 }
 
 /**
@@ -539,6 +649,9 @@ export interface Api {
     world: WorldApi;
     players: PlayersApi;
     npc: NpcApi;
+    nav: NavApi;
+    draw: DrawApi;
+    ai: AiApi;
     /** Availability: client only. */
     input: InputApi;
     AccountService: AccountServiceApi;

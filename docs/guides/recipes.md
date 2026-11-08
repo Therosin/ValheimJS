@@ -4,7 +4,7 @@ title: Recipes
 
 # Recipes
 
-Copy these entries into `scripting/plugins/<name>/shared/main.ts` unless a recipe says otherwise.
+Copy these entries into `scripting/testing/<name>/shared/main.ts` for development, or `scripting/plugins/<name>/shared/main.ts` for a shipped plugin.
 Each example imports the SDK from that location; deploy matching entries to the processes that need them.
 
 ## Spawn an object and remember its data

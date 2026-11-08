@@ -18,8 +18,13 @@ has the exact signatures.
 | [`AccountService`](accounts.md) | account queries and publisher-owned shared data |
 | [`PermissionService`](accounts.md#roles-and-permissions) | live role and permission queries |
 | [`input`](#input) | keyboard bindings and phase callbacks |
+| [`npc`](#npc) | scripted NPCs, perception store, intents and memory |
+| [`signals`](#signals) | host-sampled observed conditions |
+| [`ai`](#ai) | YAML behaviour trees for scripted AI |
 | [`fs`](#fs) | sandboxed files |
 | [`db`](#db) | per-plugin document collections |
+
+End-to-end NPC examples live in [NPCs and AI](npc-ai.md).
 
 Availability is declared per binding. `input` is client-only; everything else installs on both
 sides unless a method says otherwise. Availability is decided at startup — use `game.isServer()`
@@ -154,12 +159,15 @@ method does not exist on clients. `get` resolves one known player on either side
 
 ```ts
 npc.available(): boolean
-npc.register(ctor, { kind, prefab, tickMs? }): void
+npc.register(ctor, { kind, prefab, tickMs?, faction?, perception? }): void
 npc.spawn(kind, { position: { x, y, z }, name? }): ValheimBaseNPC | null
 npc.despawn(entity): boolean
 npc.handles(kind): ValheimBaseNPC[]
 npc.perception(entity): NpcView | null
-npcBase(): new (handle: string) => ValheimBaseNPC   // base for plugin subclasses
+npc.sensed(entity, filter?): NpcSensed[]        // store query; remembered: true includes lost contacts
+npc.memory(entity): Record<string, unknown>     // durable plugin-owned memory
+npc.setMemory(entity, value): boolean
+npcBase(): new (handle: string) => ValheimBaseNPC
 ```
 
 `ValheimBaseNPC` is a native class (generated declarations):
@@ -167,41 +175,258 @@ npcBase(): new (handle: string) => ValheimBaseNPC   // base for plugin subclasse
 ```ts
 readonly id: string; kind: string; name: string;
 readonly x, y, z: number; readonly health, maxHealth: number; readonly isAlive: boolean;
-moveTo(x, y, z, run: boolean): boolean;
-idle(): boolean;
+moveTo(x, y, z, run: boolean): boolean;   // async intent; status in view.intent
+idle(): boolean;                          // wander near home
+stop(): boolean;                          // stand still
+wait(seconds: number): boolean;
+lookAt(x, y, z): boolean;
+face(entityId: string): boolean;
 state(key): string | null;
 setState(key, value): boolean;
 removeState(key): boolean;
 stateKeys(): string[];
 ```
 
-Register a kind once (kind matches `^[a-z0-9_-]{1,32}$`; existing vanilla prefab cloned as
-`vjs_npc_<kind>`), then subclass the native base:
+Registration is per kind (kind matches `^[a-z0-9_-]{1,32}$`; the vanilla prefab is cloned as
+`vjs_npc_<kind>`). `faction` selects the clone's stance (`"Players"` for friendly companions);
+`perception` tunes the sensor. Call `npcBase()` only while a plugin context is active, so use a
+factory from `setup`:
 
 ```ts
-class Wanderer extends npcBase() {
-    onSpawn(view: NpcView) {}
-    onRehydrate(view: NpcView) {}
-    onTick(view: NpcView) { this.moveTo(5, view.y, 0, false); }
-    onDespawn() {}
+function makeWanderer() {
+    const Base = npcBase();
+    return class Wanderer extends Base {
+        onSpawn(view: NpcView) {}
+        onRehydrate(view: NpcView) {}
+        onSensed(entry: NpcSensed) {}
+        onIntent(view: NpcView, intent: NpcIntent) {}
+        onTick(view: NpcView) { this.moveTo(5, view.y, 0, false); }
+        onDespawn() {}
+    };
 }
-npc.register(Wanderer, { kind: "wanderer", prefab: "Dverger", tickMs: 500 });
+
+export default definePlugin({
+    setup() {
+        npc.register(makeWanderer(), {
+            kind: "wanderer",
+            prefab: "Dverger",
+            tickMs: 500,
+            faction: "Players",
+            perception: {
+                radius: 24, max: 12, viewRange: 24, viewAngle: 90,
+                lineOfSight: true, objectRadius: 12
+            }
+        });
+    }
+});
+```
+
+### Perception store
+
+Every NPC keeps a store of recognized entities, updated on its tick. Entries persist after the
+entity leaves range so behaviours can remember last-known positions and recognition counts:
+
+```ts
+interface NpcSensed {
+    id: string; name: string; kind: string; prefab: string | null; faction: string;
+    pos: { x: number; y: number; z: number };   // last known
+    rel: { x: number; y: number; z: number };   // relative to the NPC
+    distance: number; bearing: number;          // bearing is signed from facing
+    visible: boolean; inRange: boolean; enemy: boolean;
+    isPlayer: boolean; isNpc: boolean; isTamed: boolean; isDead: boolean;
+    level: number; isObject: boolean;
+    health: number; maxHealth: number;
+    firstSeen: number; lastSeen: number;        // seconds; lastSeen -1 when never visible
+    seenCount: number;
+}
+```
+
+`NpcView` adds self data, intent and environment:
+
+```ts
+interface NpcView {
+    id: string; kind: string; x: number; y: number; z: number;
+    health: number; maxHealth: number; isAlive: boolean;
+    faction: string; isTamed: boolean; level: number;
+    home: { x: number; y: number; z: number };
+    intent: NpcIntent | null;
+    environment: { day: number; isDay: boolean; biome: string; weather: string | null } | null;
+    nearby: NpcSensed[];      // current characters
+    remembered: NpcSensed[];  // out-of-range contacts
+    objects: NpcSensed[];     // in-range world objects
+}
+```
+
+Query the store instead of scanning arrays yourself:
+
+```ts
+npc.sensed(this, { radius: 12, dir: { x: 0, z: 1 }, angle: 45, kinds: ["player", "creature"] });
+npc.sensed(this, { enemy: true, visible: true });
+npc.sensed(this, { remembered: true, max: 64 });
+```
+
+`dir` defaults to the NPC facing and `angle` is a half-angle. `kinds` accepts `player`, `npc`,
+`creature`, `tamed`, `enemy`, `dead`, or an exact kind/prefab/object class. World objects
+(`container`, `door`, `bed`, `smelter`, `station`, `item`, `portal`) enter the same store when
+`perception.objectRadius > 0`; they appear in `view.objects` and in `npc.sensed` results
+(`isObject: true`).
+
+### Durable memory
+
+`npc.memory(entity)` is a plugin-owned JSON object stored in the NPC ZDO (`vjs.memory`, 16 KiB
+limit). It survives restarts and is the place for ownership, interaction history and arbitrary
+recognition data:
+
+```ts
+const memory = npc.memory(this);
+const player = npc.sensed(this, { players: true })[0];
+if (player) {
+    memory.lastPlayer = { id: player.id, name: player.name, at: Date.now() };
+    npc.setMemory(this, memory);
+}
+```
+
+### Intents and hooks
+
+Intents run on the server and report state through `view.intent`:
+`{ kind, status: "idle" | "running" | "arrived" | "failed", reason, target, targetId }`.
+`onIntent` fires once when an intent settles; AI actions can return `running` while the intent is
+still active (`npc.perception(this)?.intent?.status === "running"`). `onSensed` fires once for each
+new entity or object added to the store.
+
+Signals sample the same cached store, so predicates are cheap:
+
+```ts
+const observer = signals({ intervalMs: 250 });
+observer.observe("hunter-threat", () =>
+    npc.handles("hunter").some((entity) =>
+        npc.sensed(entity, { enemy: true, visible: true, radius: 24 }).length > 0));
+observer.on("hunter-threat:Enter", () => log("a hunter has a visible enemy"));
 ```
 
 Rules:
-- **Authority.** Spawn, intents and state writes require live world authority and the owning
-  plugin; reads work on any process that can resolve the entity. `handles`/`perception`/`despawn`
-  are plugin-scoped.
-- **Persistence.** Entities are ZDOs with `vjs.plugin`, `vjs.kind`, `vjs.name`; `setState` writes
-  `vjs.s.<key>` (key `^[A-Za-z0-9_.-]{1,48}$`). They survive restarts; `onRehydrate` fires when the
-  entity becomes visible again.
-- **Cadence.** `tickMs` defaults to 500 and is clamped to 100..5000; the host pump (default 200 ms)
-  sets the real floor, so a tick fires at the first pump at/after the interval.
-- **Perception.** `NpcView.nearby` is a 20 m scan, nearest first, capped at 8, with prefab/display
-  names (never raw localization tokens). `lastIntent.reason` reports `nav-stuck` after 5 s without
-  progress toward the target.
-- **Limits.** 32 live instances per kind per plugin. Combat, interaction, inventory and dialogue
-  are not part of this surface.
+- **Server authority.** `spawn`/`despawn`, intents, perception and memory writes run on the server;
+  clients are viewers. `onTick`/`onSensed`/`onIntent` only run on the server.
+- **Persistence.** Entities are ZDOs with `vjs.sim`, `vjs.plugin`, `vjs.kind`, `vjs.name`,
+  `vjs.home.*`, `vjs.intent.*` and `vjs.memory`; `setState` writes `vjs.s.<key>`.
+- **Cadence.** `tickMs` defaults to 500 and is clamped to 100..5000; the host pump sets the floor.
+- **Relations.** `enemy` mirrors the game's faction matrix (`BaseAI.IsEnemy`), including tamed and
+  group overrides. `faction` at registration chooses the clone's stance.
+- **Limits.** 32 live instances per kind per plugin; perception stores retain memories for 5
+  minutes. Combat, inventory and dialogue are not part of this surface.
+
+## `ai`
+
+```ts
+ai.compile(yaml, { source?, imports?, warn? }): string
+ai.instantiate(tree, { this?, state?, exec?, action?, condition?, random?, senses?, maxJumpsPerTick? }): string
+ai.tick(instance, deltaTime?): { status: "success" | "failure" | "running" | "cancelled"; output: unknown }
+ai.state(instance): Record<string, unknown>
+ai.set(instance, key, value): void
+ai.status(instance): "success" | "failure" | "running" | "cancelled"
+ai.cancel(instance): void
+ai.reset(instance, resetState?): void
+ai.release(instance): boolean
+ai.unload(tree): boolean
+```
+
+YAML behaviour trees with `sequence`, `selector`, `random`, `action`, `condition`, `goto` and
+`use`, `execBefore`/`exec`/`execAfter`, `@[state]` references and `out` assignment. The engine
+never ticks itself: call `ai.tick` from `onServerTick` or an NPC `onTick`. Compile once and
+instantiate per entity; instances keep independent state.
+
+```ts
+const tree = ai.compile(yaml);
+const entity = npc.handles("wanderer")[0];
+const brain = ai.instantiate(tree, {
+    this: entity,
+    action: (name, c) => name === "find_target"
+        ? { status: "success", output: "Dverger" }
+        : (entity.moveTo(5, entity.y, 0, true) ? "running" : "failure"),
+    exec: (code, c) => { /* the host has no YAML script interpreter */ },
+    random: () => Math.random()
+});
+ai.tick(brain, 0.5);   // "running" until move_to returns success
+```
+
+Rules:
+- **In-memory imports.** `imports:` in YAML is keyed by alias; `ai.compile` resolves aliases from
+  `options.imports` (`{ wander: yamlText }`). The JS bridge never reads YAML from disk.
+- **Callback context.** `ctx.args` is a resolved copy; `ctx.state` is copied into JS and written
+  back after every `action`/`condition`/`exec` call. `ctx.this` is the value passed to
+  `instantiate`. Mutating `ctx.state.x` in a callback is visible to later nodes and ticks.
+- **Actions.** Return `"success"`, `"failure"`, `"running"` or `{ status, output }`; `output` is
+  assigned to `out` on success only. `undefined`/`null` means success. `condition` returns boolean.
+- **`exec` snippets.** The engine passes snippet text to `exec`; there is no embedded interpreter.
+- **Goto scope and limits.** `goto` targets nodes in the same YAML file; imported trees keep their
+  own id scope. Jumps are limited per tick (`maxJumpsPerTick`, default 64).
+- **Scoping and limits.** Trees and instances are plugin-scoped ids (`tree1`, `brain1`). At most
+  32 trees, 64 instances and 32 imports per plugin; YAML is capped at 512 KiB.
+- **NPC integration.** When `this` has a string `id` (a `ValheimBaseNPC`), the binding injects the
+  NPC perception store into `ctx.state.senses` before every tick
+  (`senses.nearby`, `senses.remembered`, `senses.objects`, `senses.environment`, `senses.intent`).
+  YAML can use `@[senses.nearby.0.id]`; JS callbacks use `ctx.state.senses`. Set `senses: false`
+  to opt out; `senses` is reserved while enabled.
+
+A complete per-NPC tree (see [NPCs and AI](npc-ai.md) for the full plugin):
+
+```ts
+const tree = ai.compile(yaml);
+
+function makeHunter() {
+    const Base = npcBase();
+    return class Hunter extends Base {
+        brain = "";
+        onSpawn() {
+            this.brain = ai.instantiate(tree, {
+                this: this,
+                condition: (name, c) => {
+                    const senses = c.state.senses as NpcView;
+                    return name === "threat" && senses.nearby.some(e => e.enemy && e.visible);
+                },
+                action: (name, c) => {
+                    if (name !== "chase") return "success";
+                    const senses = c.state.senses as NpcView;
+                    const target = senses.nearby.find(e => e.enemy && e.visible);
+                    if (!target) return "failure";
+                    return this.moveTo(target.pos.x, target.pos.y, target.pos.z, true) ? "running" : "failure";
+                }
+            });
+        }
+        onRehydrate() { if (!this.brain) this.onSpawn(); }
+        onTick() { if (this.brain) ai.tick(this.brain, 0.5); }
+    };
+}
+```
+
+## `nav`
+
+```ts
+nav.enable(enabled: boolean): void   // copy the debug overlay plugin to see it in-world
+nav.zones(): number                  // loaded navigation zones
+nav.cells(): number                  // loaded navigation cells
+```
+
+The volume is lazily built around simulated objects and around the local player when the overlay
+is enabled; walkable cells are sparse green crosses, stairs yellow crosses/vertical ticks and
+blocked cells red crosses, all depth-tested against world geometry. The optional `scripting/testing-optional/nav-debug` plugin (built with `task dev:nav`) enables it
+on clients; it is not part of the default test bundle.
+
+## `draw`
+
+```ts
+draw.line(a, b, { color?: string; duration?: number }): void
+draw.polyline(points, { color?, duration? }): void
+draw.box(center, size, { color?, duration? }): void
+draw.circle(center, radius, { color?, duration?, segments? }): void
+draw.mesh(vertices, indices, { color?, duration?, filled? }): void
+draw.clear(): void
+```
+
+World-space lines and meshes. The same call works on both sides: server draw calls broadcast to
+connected clients and player-host servers draw locally; client calls draw only in that client's
+world. Colors are HTML strings (`#rrggbb`/`#rrggbbaa`), duration is seconds, and every primitive
+is depth-tested and excluded from the depth buffer so it cannot make world geometry translucent.
 
 ## `net`
 

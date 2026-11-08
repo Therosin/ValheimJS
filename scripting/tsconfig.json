@@ -9,5 +9,5 @@
     "lib": ["ES2024"],
     "types": ["bun-types"]
   },
-  "include": ["sdk", "lib", "plugins", "build.ts"]
+  "include": ["sdk", "lib", "plugins", "testing", "testing-optional", "build.ts"]
 }

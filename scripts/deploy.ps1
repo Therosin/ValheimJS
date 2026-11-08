@@ -20,6 +20,8 @@ param(
     [ValidateSet('client', 'server')]
     [string]$Target,
 
+    [string]$JsOut = 'scripting/dist',
+
     [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot)
 )
 
@@ -59,7 +61,7 @@ if (-not $resolvedPluginRoot.Equals($expectedPluginRoot, [StringComparison]::Ord
 $pluginRoot = $resolvedPluginRoot
 
 $buildDir = Join-Path $ProjectRoot 'bin/Release/netstandard2.1'
-$jsOut = Join-Path $ProjectRoot 'scripting/dist'
+$jsOut = Join-Path $ProjectRoot $JsOut
 
 $runtimeFiles = @('ValheimJS.dll', 'Jint.dll', 'Acornima.dll', 'ValheimJS.pdb')
 $pluginDir = if ($bepInEx -like '*\plugins') { Join-Path $bepInEx 'ValheimJS' } else { Join-Path $bepInEx 'plugins/ValheimJS' }

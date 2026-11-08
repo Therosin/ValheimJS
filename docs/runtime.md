@@ -22,7 +22,12 @@ client branch; session authority is checked live. See [Process branches](guides/
 | Command routes, aliases, access checks, async stages and invocation lifetime | `Core/ChatCommands.cs`, `Commands/` | `ChatCommand` and `ChatCommands` |
 | Condition sampling, edges, per-handler isolation and cadence | `Utils/ConditionObserver.cs`, `Bindings/SignalBindings.cs` | `signals` binding and SDK `signals`/`predicates` |
 | Player identity/state resolution (uid ↔ peer ↔ ZDO) | `Entities/PlayerDirectory.cs`, `Entities/Player.cs` | `players` binding and `ValheimPlayer` |
-| NPC prefab registration, spawn/persistence, perception, intents | `Entities/NpcWorld.cs`, `Entities/NpcPrefabs.cs`, `Entities/ScriptedAI.cs` | `npc` binding and `ValheimBaseNPC` |
+| World simulation registry, lifecycle, ZDO writes and ownership retention | `World/WorldManager.cs`, `World/WorldOwnership.cs` | `npc` binding; future world kinds |
+| Relevance subscriptions and control messages | `World/WorldRelevancy.cs`, `World/WorldMessages.cs`, `World/WorldManager.cs` | Clients receive relevance diffs on `valheimjs:world` |
+| NPC behavior, prefab recipe and client presentation | `World/Npc/NpcBehavior.cs`, `World/Npc/NpcPrefabs.cs`, `World/Npc/NpcPresenter.cs` | `npc` binding and `ValheimBaseNPC` |
+| Perception store, durable memory and YAML AI bridge | `Entities/NpcModels.cs`, `World/Npc/NpcBehavior.cs`, `Core/AiSenses.cs`, `Bindings/AiBindings.cs` | `npc.sensed`/`npc.memory`; `ai` with `ctx.state.senses` |
+| Lazy navigation volume, pathfinder, cache and debug overlay | `World/Navigation/` | `nav` binding; `nav-debug` example |
+| World-space line/mesh drawing and server replication | `Debugging/WorldDraw.cs`, `Bindings/DrawBindings.cs` | `draw` binding and SDK `draw` |
 | Private command submission/replies over `valheimjs:commands` | `Networking/CommandService.cs`, `Hooks/CommandInputHook.cs` | `!` input and private `Commands` lines |
 | Script engine, branch components, dependency order, contexts and timers | `Scripting/` | Plugin descriptors and host API |
 | Native values, cadence, scoped registries and JS classes | `Scripting/Binding/` (`JsPayload`, `Ticker`, `ScopedBindings`, `JsCallback`), `Scripting/Types/` (`JsTypeRegistry`) | `ReturnKind.Native`, `[JsType]` classes, all bindings |
@@ -101,8 +106,9 @@ the broader game-snapshot type, so that annotation alone does not guarantee the 
 ## Verification coverage
 
 `task check` covers typechecking, SDK unit tests, native compilation, generated-declaration drift,
-bundling, binding/process/network/command/account/management/world-handle/signals probes and
-example reloads. Role and help probes include actual JS registration through the native bindings,
+bundling, binding/process/network/command/account/management/world-handle/world-manager/signals/
+behaviour/ai probes and example reloads. `--probe-world-manager` covers relevance hysteresis/diffs, A* paths
+(flat, blocked, stairs, water), nav-cache round-trips and draw/message DTOs. Role and help probes include actual JS registration through the native bindings,
 not only facade mocks.
 
 Development live checks exercised client/dedicated startup, private commands, Valheim admin

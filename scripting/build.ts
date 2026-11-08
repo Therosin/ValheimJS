@@ -10,9 +10,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join, resolve } from "node:path";
 
 const here = import.meta.dir;
-const pluginsDir = join(here, "plugins");
-const distDir = join(here, "dist");
-const tmpDir = join(distDir, ".tmp");
+let pluginsDir = join(here, "plugins");
+let distDir = join(here, "dist");
+let tmpDir = join(distDir, ".tmp");
 
 const argv = process.argv.slice(2);
 let deployRoot: string | null = null;
@@ -22,6 +22,11 @@ for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
     if (arg === "--deploy") {
         deployRoot = resolve(argv[++index] ?? "");
+    } else if (arg === "--source") {
+        pluginsDir = resolve(argv[++index] ?? "");
+    } else if (arg === "--out") {
+        distDir = resolve(argv[++index] ?? "");
+        tmpDir = join(distDir, ".tmp");
     } else if (!arg.startsWith("-")) {
         names.push(arg);
     }

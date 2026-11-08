@@ -8,5 +8,5 @@ namespace ValheimJS.Hooks;
 internal static class NpcSceneHook
 {
     [HarmonyPostfix]
-    private static void Postfix() => Entities.NpcWorld.Instance?.ApplyPendingPrefabs();
+    private static void Postfix() => World.WorldManager.Instance?.ApplyPendingPrefabs();
 }

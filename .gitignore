@@ -14,3 +14,5 @@ scripting/dist/
 # Task fingerprint cache
 .task/
 .local/
+scripting/dist-testing/
+scripting/testing-optional/

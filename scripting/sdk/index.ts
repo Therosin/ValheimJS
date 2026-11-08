@@ -9,7 +9,7 @@
 
 import type { PluginContext } from "./runtime";
 
-export type { Api, ValheimPlayer } from "./api/generated";
+export type { Api, ValheimBaseNPC, ValheimPlayer } from "./api/generated";
 export type { GameSnapshot, KeyState, RpcMeta, ServerTickSnapshot } from "./api/types";
 export type {
     ChatPayload,
@@ -23,15 +23,29 @@ export { input, type KeyboardHandler, type KeyboardPhase } from "./input";
 export { Rpc, RpcChannel } from "./net";
 export { Sync } from "./sync";
 export { signals, type Signals, type SignalsOptions } from "./signals";
-export { npc, npcBase, type NpcRegistration, type NpcSpawnOptions } from "./npc";
-export type { NpcNearby, NpcView } from "./api/types";
+export {
+    npc,
+    npcBase,
+    type NpcEnvironment,
+    type NpcIntent,
+    type NpcObject,
+    type NpcPerceptionOptions,
+    type NpcPos,
+    type NpcRegistration,
+    type NpcSenseFilter,
+    type NpcSensed,
+    type NpcSpawnOptions,
+    type NpcView
+} from "./npc";
+export { ai, type AiActionOutcome, type AiContext, type AiInstantiateOptions, type AiLoadOptions, type AiStatus, type AiTickResult } from "./ai";
+export { draw, type DrawOptions, type DrawPoint } from "./draw";
 export { all, any, cooldown, delay, never, not, once, predicates, stable, type Predicate } from "./predicates";
 export { ChatCommand, ChatCommands, type ChatCommandContext, type ChatCommandUser } from "./commands";
 export { AccountService, PermissionService } from "./accounts";
 export type { Account } from "./api/types";
 export type { ChatCommandDefinition } from "./api/types";
 export type { SyncEntity } from "./api/types";
-export { fs, game, players, world } from "./access";
+export { fs, game, nav, players, world } from "./access";
 export type {
     Handler,
     HostApiSurface,

@@ -188,6 +188,12 @@ public sealed class JsBindingInstaller : IDisposable
             return new JsCallback(engine, function, label);
         }
 
+        // Methods that declare JsValue opt out of CLR conversion and receive the live value.
+        if (parameter.ClrType == typeof(JsValue))
+        {
+            return value;
+        }
+
         if (type.Kind == JsTypeKind.Unknown)
         {
             return value.ToObject();
