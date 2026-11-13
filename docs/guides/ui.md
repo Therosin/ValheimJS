@@ -101,6 +101,16 @@ Host-owned panel kinds:
 - `tabs`: children are `tab` panels; `active` can be a local or bound value.
 - `section`/`setting-row`/`list-row`/`footer`: the flat settings layout from the reference.
 
+## Input and focus
+
+- `modal: true` blocks `Player.TakeInput` / `PlayerController.TakeInput` while the panel is open.
+- A focused text field also blocks player input and suppresses `input.*` callbacks until focus
+  leaves the field.
+- Hold `Alt` while any panel is open to release the cursor and click UI; the game re-captures it
+  when `Alt` is released.
+- Panels are client-only. Closing a panel, plugin unload and host reload destroy its instances and
+  release the host canvas.
+
 ## Local state
 
 ```yaml

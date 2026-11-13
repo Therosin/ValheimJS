@@ -108,9 +108,11 @@ the broader game-snapshot type, so that annotation alone does not guarantee the 
 
 `task check` covers typechecking, SDK unit tests, native compilation, generated-declaration drift,
 bundling, binding/process/network/command/account/management/world-handle/world-manager/signals/
-behaviour/ai probes and example reloads. `--probe-world-manager` covers relevance hysteresis/diffs, A* paths
+behaviour/ai/ui probes and example reloads. `--probe-world-manager` covers relevance hysteresis/diffs, A* paths
 (flat, blocked, stairs, water), nav-cache round-trips and draw/message DTOs. Role and help probes include actual JS registration through the native bindings,
-not only facade mocks.
+not only facade mocks. Live dedicated-server checks confirmed the heartbeat payload, the absence
+of client-only `ui`/`input`, query-only account/permission bindings and session-scoped spawn
+handles.
 
 Development live checks exercised client/dedicated startup, private commands, Valheim admin
 recognition, management CRUD, default-role persistence, account lookup/shared-data boundaries,

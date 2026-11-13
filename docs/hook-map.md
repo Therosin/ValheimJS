@@ -28,6 +28,8 @@ should offer. Not modder-facing — see `guides/` for that.
 | `onServerTick` | `ZNet.Update` postfix, ~1 Hz | shared patch on dedicated and client processes; use live authority checks before mutations |
 | `onPlayerSpawned` / `onPlayerDespawned` | heartbeat poll over spawned character lookups | character readiness is distinct from peer connection |
 | `onDamage` | `Character.Damage` postfix | read-only observation on the process receiving the call; this hook does not veto damage |
+| UI input | `Player.TakeInput` / `PlayerController.TakeInput` postfix | blocks game input while a plugin modal is open or a panel text field is focused |
+| UI cursor | `GameCamera.UpdateMouseCapture` postfix | holding Alt while any plugin panel is open releases the cursor |
 | Native private commands | `Chat.InputText` prefix (client-only) | consumes `!` input and submits it through `CommandService`; ordinary chat and `/` input continue normally |
 | `game.*` | `ProcessPolicy` (executable/override), `ZNet.IsServer()` | side detection at startup and at runtime |
 

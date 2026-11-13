@@ -68,6 +68,6 @@ bun run build.ts greeter --deploy "<server>/ValheimJS/plugins"
   lifecycle. See [Plugin anatomy](plugin-anatomy.md#lifecycle).
 - A plugin can only touch its own `data/` folder and its own database.
 - The API version is `1`. A plugin declaring another `apiVersion` is refused at load.
-- The game API is grouped: `game`, `world`, `npc`, `ai`, `ui`, `signals`, `net`, `sync`,
-  `ChatCommands`, `AccountService`, `PermissionService`, `input`, `fs`, `db`. Types are generated
-  from the C# bindings, so your editor always matches the running host.
+- The game API is grouped: `game`, `world`, `players`, `npc`, `ai`, `ui`, `nav`, `draw`,
+  `signals`, `net`, `sync`, `ChatCommands`, `AccountService`, `PermissionService`, `input`, `fs`,
+  `db`. Types are generated from the C# bindings, so your editor always matches the running host.

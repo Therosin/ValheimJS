@@ -35,8 +35,9 @@ binds a raw key name on first lookup; `input.rawState(key)` never registers anyt
 
 Returning `true` sets `input.handledAny()` for that frame. Valheim's named `ZInput` button reads are
 masked when their resolved keyboard control matches a claimed key; unrelated controls and active
-alternative button controls are left alone. This does not suppress direct low-level key reads or
-every UI path, and does not ignore text fields — handlers must account for their own context.
+alternative button controls are left alone. While a declarative UI text field is focused,
+callbacks are skipped and `Player.TakeInput` is suppressed. This does not suppress direct
+low-level key reads or every other UI path — handlers must account for their own context.
 
 Bindings and callbacks are scoped per JS plugin and removed on reload or unload. The C# side can
 use `ValheimJS.Input.KeyboardManager` directly; `Clear()` removes all native and script entries, so

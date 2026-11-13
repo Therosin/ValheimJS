@@ -30,9 +30,9 @@ has the exact signatures.
 
 End-to-end NPC examples live in [NPCs and AI](npc-ai.md).
 
-Availability is declared per binding. `input` is client-only; everything else installs on both
-sides unless a method says otherwise. Availability is decided at startup — use `game.isServer()`
-for live authority checks.
+Availability is declared per binding. `input` and `ui` are client-only; everything else installs
+on both sides unless a method says otherwise. Availability is decided at startup — use
+`game.isServer()` for live authority checks.
 
 ## `game`
 
@@ -571,9 +571,10 @@ interface KeyState {
 ```
 
 Return `true` from a handler to consume the input for that frame; Valheim's named `ZInput` button
-reads are masked when their key was claimed. This does not suppress direct low-level key reads or
-every UI path, and does not ignore text fields automatically. Bindings and handlers are removed on
-reload and on plugin unload.
+reads are masked when their key was claimed. While a declarative UI text field is focused, input
+callbacks are skipped and `Player.TakeInput` is suppressed. This does not suppress direct
+low-level key reads or every other UI path. Bindings and handlers are removed on reload and on
+plugin unload.
 
 ## `fs`
 

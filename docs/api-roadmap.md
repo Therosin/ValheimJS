@@ -21,11 +21,12 @@ are design sketches, not functions a plugin can call.
 | Networking | Native channel/event scopes over RpcBus, notifications and synchronous request responders; explicit transient binary sync |
 | World | Existing networked prefab spawning, session handles, ZDO data, object and prefab queries |
 | NPC / AI | Server-simulated NPCs with perception store, memory, intents and YAML behaviour trees |
+| UI | Client-only declarative YAML panels with components, imports, bindings and events |
 | Input | Client keyboard bindings and callbacks; no mouse API |
 | Events | Coarse heartbeat, routed chat, peer/character changes and read-only damage observation |
 
-These support rules, storage, private commands and coordination. They do not yet expose player
-inventory, stats, teleports, item grants, custom assets, NPC rendering or general UI.
+These support rules, storage, private commands, coordination and client panels. They do not yet
+expose player inventory, stats, teleports, item grants or custom UI assets.
 `ChatService` is retained but dormant; command replies use the separate active `CommandService`.
 
 ## Binding gaps for NPCs and containers
