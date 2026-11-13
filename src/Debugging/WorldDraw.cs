@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using ValheimJS.Core;
 
 namespace ValheimJS.Debugging;
 
@@ -156,15 +157,16 @@ internal static class WorldDraw
             return;
         }
 
-        var existing = GameObject.Find("ValheimJS_WorldDraw");
+        var parent = ValheimJsHost.WorldRoot;
+        var existing = parent.Find("WorldDraw");
         if (existing != null)
         {
-            _renderer = existing.GetComponent<WorldDrawRenderer>() ?? existing.AddComponent<WorldDrawRenderer>();
+            _renderer = existing.GetComponent<WorldDrawRenderer>() ?? existing.gameObject.AddComponent<WorldDrawRenderer>();
             return;
         }
 
-        var go = new GameObject("ValheimJS_WorldDraw");
-        Object.DontDestroyOnLoad(go);
+        var go = new GameObject("WorldDraw");
+        go.transform.SetParent(parent, false);
         _renderer = go.AddComponent<WorldDrawRenderer>();
     }
 }

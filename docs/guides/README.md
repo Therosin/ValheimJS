@@ -13,6 +13,7 @@ script and a manifest; the host loads it, builds its context and calls your hook
 | [Plugin anatomy](plugin-anatomy.md) | Manifest fields, class vs object form, hooks, state, deps |
 | [API reference](api-reference.md) | Every namespace, function and hook you can call |
 | [NPCs and AI](npc-ai.md) | Scripted NPCs, perception store, intents, memory and behaviour trees |
+| [Declarative UI](ui.md) | YAML panels, components, imports, bindings and events |
 | [Signals](api-reference.md#signals) | Observe state transitions and compose predicates |
 | [Recipes](recipes.md) | Spawning, status files, persistence, RPC, keyboard |
 | [Process branches](process-branches.md) | Shared/server/client entries, startup gates and player hosts |
@@ -67,6 +68,6 @@ bun run build.ts greeter --deploy "<server>/ValheimJS/plugins"
   lifecycle. See [Plugin anatomy](plugin-anatomy.md#lifecycle).
 - A plugin can only touch its own `data/` folder and its own database.
 - The API version is `1`. A plugin declaring another `apiVersion` is refused at load.
-- The game API is grouped: `game`, `world`, `npc`, `ai`, `signals`, `net`, `sync`,
+- The game API is grouped: `game`, `world`, `npc`, `ai`, `ui`, `signals`, `net`, `sync`,
   `ChatCommands`, `AccountService`, `PermissionService`, `input`, `fs`, `db`. Types are generated
   from the C# bindings, so your editor always matches the running host.

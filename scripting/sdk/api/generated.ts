@@ -570,6 +570,29 @@ export interface NetApi {
 }
 
 /**
+ * Declarative YAML panels with bound values and event callbacks.
+ * @availability client only
+ */
+export interface UiApi {
+    /**
+     * Closes and destroys one open panel.
+     */
+    close(instanceId: string): void;
+    /**
+     * Compiles a YAML panel document; imports come from options.imports.
+     */
+    define(yaml: string, options: unknown): string;
+    /**
+     * Marks a panel for a binding refresh on the next host tick.
+     */
+    invalidate(instanceId: string): void;
+    /**
+     * Opens a compiled document as a panel; returns its instance id.
+     */
+    open(documentId: string, options: unknown): string;
+}
+
+/**
  * Live account role and permission queries. Policy editing is host-owned.
  */
 export interface PermissionServiceApi {
@@ -656,6 +679,8 @@ export interface Api {
     input: InputApi;
     AccountService: AccountServiceApi;
     net: NetApi;
+    /** Availability: client only. */
+    ui: UiApi;
     PermissionService: PermissionServiceApi;
     sync: SyncApi;
     ChatCommands: ChatCommandsApi;

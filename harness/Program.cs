@@ -25,6 +25,7 @@ if (args.Contains("--probe-signals")) return SignalProbe.Run();
 if (args.Contains("--probe-types")) return TypeProbe.Run();
 if (args.Contains("--probe-behaviour")) return BehaviourProbe.Run();
 if (args.Contains("--probe-ai")) return AiProbe.Run();
+if (args.Contains("--probe-ui")) return UiProbe.Run();
 
 // Headless smoke test for the JS host: loads bundles from a directory, pumps timers,
 // dispatches hooks, reloads. No Unity, no BepInEx — same code the plugin runs.

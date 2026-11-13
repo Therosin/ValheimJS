@@ -163,6 +163,7 @@ export default definePlugin(Greeter);
 | `players` | `PlayerBindings` | local player, lookups and the authority-owned online roster |
 | `npc` | `NpcBindings` | server-simulated NPCs: spawn, perception store, intents, memory, state |
 | `ai` | `AiBindings` | YAML behaviour trees with JS actions/conditions and NPC senses |
+| `ui` | `UiBindings` | client-side YAML panels, bindings and events |
 | `nav` | `NavBindings` | navigation-volume stats and debug overlay toggle |
 | `draw` | `DrawBindings` | world-space lines/meshes; server calls replicate to clients |
 | `net` | `NetBindings` | adapter over `Core/Networking` channels/events |

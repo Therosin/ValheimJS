@@ -38,6 +38,7 @@ export {
     type NpcView
 } from "./npc";
 export { ai, type AiActionOutcome, type AiContext, type AiInstantiateOptions, type AiLoadOptions, type AiStatus, type AiTickResult } from "./ai";
+export { ui, type UiDefineOptions, type UiOpenOptions } from "./ui";
 export { draw, type DrawOptions, type DrawPoint } from "./draw";
 export { all, any, cooldown, delay, never, not, once, predicates, stable, type Predicate } from "./predicates";
 export { ChatCommand, ChatCommands, type ChatCommandContext, type ChatCommandUser } from "./commands";

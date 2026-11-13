@@ -1,4 +1,5 @@
 using UnityEngine;
+using ValheimJS.Core;
 using ValheimJS.Scripting.Binding;
 using ValheimJS.World;
 using ValheimJS.World.Navigation;
@@ -51,8 +52,8 @@ internal sealed class NavBindings : JsBindings
     {
         if (_debug == null)
         {
-            _debug = new GameObject("ValheimJS_NavDebug");
-            Object.DontDestroyOnLoad(_debug);
+            _debug = new GameObject("NavDebug");
+            _debug.transform.SetParent(ValheimJsHost.WorldRoot, false);
             _debug.AddComponent<NavDebugRenderer>();
         }
 

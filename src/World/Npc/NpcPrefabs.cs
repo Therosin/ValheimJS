@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using ValheimJS.Core;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
@@ -55,10 +56,10 @@ internal static class NpcPrefabs
 
         if (_container == null)
         {
-            _container = new GameObject("ValheimJS_NPC_Prefabs");
+            _container = new GameObject("NPC_Prefabs");
+            _container.transform.SetParent(ValheimJsHost.PrefabRoot, false);
             _container.hideFlags = HideFlags.HideAndDontSave;
             _container.SetActive(false);
-            Object.DontDestroyOnLoad(_container);
         }
 
         var clone = Object.Instantiate(source, _container.transform, false);

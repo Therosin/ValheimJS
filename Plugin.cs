@@ -69,6 +69,7 @@ public class Plugin : BaseUnityPlugin
         }
 
         Logger.LogInfo($"settings file: {Config.ConfigFilePath}");
+        ValheimJsHost.Ensure();
         try
         {
             using var process = Process.GetCurrentProcess();
@@ -167,6 +168,9 @@ public class Plugin : BaseUnityPlugin
 
     private void Update()
     {
+#if USE_GUI
+        UI.UiHost.Tick();
+#endif
         Utils.RpcBus.Refresh();
         _network?.Pump();
         _world?.Tick(Time.unscaledDeltaTime);
@@ -227,6 +231,7 @@ public class Plugin : BaseUnityPlugin
             catch (Exception exception) { Logger.LogWarning("Module cleanup failed: " + exception); }
         }
         _modules.Clear();
+        ValheimJsHost.Dispose();
     }
 
     private sealed class BepInExJsLog : IJsLog

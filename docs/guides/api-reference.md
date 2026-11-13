@@ -12,6 +12,9 @@ has the exact signatures.
 |---|---|
 | [`game`](#game) | process side, world identity, live snapshot |
 | [`world`](#world) | object counts, spawning, per-object data |
+| [`players`](#players) | local player, lookups and the online roster |
+| [`nav`](#nav) | navigation volume stats and debug overlay |
+| [`draw`](#draw) | world-space debug/gameplay primitives |
 | [`net`](#net) | routed RPC channels |
 | [`sync`](#sync) | explicit transient binary frames |
 | [`ChatCommands`](#chatcommands) | private command registry and replies |
@@ -21,6 +24,7 @@ has the exact signatures.
 | [`npc`](#npc) | scripted NPCs, perception store, intents and memory |
 | [`signals`](#signals) | host-sampled observed conditions |
 | [`ai`](#ai) | YAML behaviour trees for scripted AI |
+| [`ui`](#ui) | client-side YAML panels with bound values and events |
 | [`fs`](#fs) | sandboxed files |
 | [`db`](#db) | per-plugin document collections |
 
@@ -398,6 +402,20 @@ function makeHunter() {
     };
 }
 ```
+
+## `ui`
+
+```ts
+ui.define(yaml, { source?, imports? }): string
+ui.open(document, { mount?, modal?, get?, set?, onEvent? }): string
+ui.close(panel): void
+ui.invalidate(panel): void
+```
+
+Client-only declarative panels. One YAML document has a root `panel` and optional reusable
+`components`; imports supply other documents by alias. `get`/`set` resolve `{ bind: "key" }`
+values and `onEvent` receives scoped node paths and event names. See [Declarative UI](ui.md) for
+the full syntax, panel kinds and limits.
 
 ## `nav`
 

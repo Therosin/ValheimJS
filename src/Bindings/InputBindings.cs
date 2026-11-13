@@ -144,6 +144,12 @@ internal sealed class InputBindings : JsBindings
     {
         try
         {
+#if USE_GUI
+            if (ValheimJS.UI.UiHost.TextFocused)
+            {
+                return false;
+            }
+#endif
             return handler.Invoke(action, phase).AsBoolean();
         }
         catch (Exception exception)

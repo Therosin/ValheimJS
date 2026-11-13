@@ -268,3 +268,25 @@ export interface AiInstantiateOptions {
     random?: () => number;
     maxJumpsPerTick?: number;
 }
+
+/** Options for `ui.define`. */
+export interface UiDefineOptions {
+    /** Name used in compile errors. */
+    source?: string;
+    /** YAML text keyed by the alias declared in `imports:`. */
+    imports?: Record<string, string>;
+}
+
+/** Options for `ui.open`. */
+export interface UiOpenOptions {
+    /** Which host canvas receives the panel; default "window". */
+    mount?: "overlay" | "window" | "popup";
+    /** Block game input while this panel is open. */
+    modal?: boolean;
+    /** Resolves `{ bind: "key" }` values. */
+    get?: (key: string) => unknown;
+    /** Writes values from inputs/controls back to plugin state. */
+    set?: (key: string, value: unknown) => void;
+    /** Receives button/input/window events with a scoped node path. */
+    onEvent?: (path: string, event: string, value?: unknown) => void;
+}
