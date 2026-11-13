@@ -222,6 +222,27 @@ describe("villager controller", () => {
         expect(actor.calls).toContain("lookAt 9,11,0");
     });
 
+    test("a completed forage trip makes the brain head home", () => {
+        const actor = new FakeActor();
+        const brain = controller(actor, { needs: { curiosity: 0.95, social: 0.9, energy: 0.9 } });
+        const current = view();
+
+        brain.tick(current, 1000);
+        expect(brain.current).toBe("forage");
+
+        current.intent = { ...idle, kind: "moveTo", status: "arrived" };
+        brain.tick(current, 2000);
+        current.intent = { ...idle, kind: "lookAt", status: "arrived" };
+        brain.tick(current, 3000);
+        current.intent = { ...idle, kind: "wait", status: "arrived" };
+        brain.tick(current, 4000);
+
+        const player = sensed({ id: "player-1", isPlayer: true, distance: 5, pos: { x: 25, y: 10, z: 0 } });
+        const far = view({ x: 20, z: 0, nearby: [player] });
+        expect(brain.tick(far, 5000)).toBe("return");
+        expect(actor.calls.at(-1)).toContain("moveTo 0,10,0");
+    });
+
     test("remembers an unreachable object instead of retrying it", () => {
         const actor = new FakeActor();
         const brain = controller(actor, { needs: { social: 0.1, curiosity: 0.9 } });
