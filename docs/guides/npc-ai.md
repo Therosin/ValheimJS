@@ -385,6 +385,25 @@ The tree and the NPC have separate lifetimes: `ai` owns the compiled definition 
 `npc` owns movement, ZDO persistence and the perception store. `ai.release` on despawn prevents
 the brain from leaking after the entity is removed.
 
+## Example: a villager with a life
+
+`scripting/testing/life-demo` is a complete utility-driven example. One villager is spawned near
+the first player (or at `home=x,y,z` from its config for a dedicated test world), then a central
+brain picks one simple behaviour at a time from needs and perception: `flee`, `rest`, `return`,
+`seekHome`, `socialize`, `inspect`, `forage`, `wander`.
+
+- Needs (`energy`, `social`, `curiosity`) drift every tick; behaviours satisfy or spend them.
+- `seekHome` claims a visible empty `bed`/`door` as the persistent home.
+- `forage` walks 10–18 m from home, looks around and lowers curiosity; `return` scores higher once
+  the villager is far away, it is getting dark or energy is low.
+- Recognition facts live in `npc.memory` (`home`, `shelter`, `visited`, `blocked`, `lastMet`), so a
+  reload or restart resumes the same life.
+- `controller.request(activity, target?)` is the seam for manual control or an LLM planner: issue
+  one of the same activity names and the brain resumes normal selection afterwards.
+
+The brain and its tests are in `scripting/testing/life-demo/lib/controller.ts` and
+`scripting/test/life-demo.test.ts`; the plugin wrapper is `shared/main.ts`.
+
 ## Authority, cadence and limits
 
 - **Server only.** Spawning, intents, perception and memory writes are authority-side. Clients
