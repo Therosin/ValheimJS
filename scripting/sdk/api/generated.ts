@@ -172,6 +172,14 @@ export interface AssetsApi {
      * Absolute path of this plugin's folder.
      */
     root(): string;
+    /**
+     * Parses a shipped TOML file into plain JavaScript objects/arrays.
+     */
+    toml(path: string): unknown;
+    /**
+     * Parses a shipped YAML file into plain JavaScript objects/arrays.
+     */
+    yaml(path: string): unknown;
 }
 
 /**

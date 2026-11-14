@@ -395,8 +395,8 @@ the brain from leaking after the entity is removed.
 - **YAML behaviours** (`behaviours/*.yaml`) own *how* the activity runs. `wander`, `forage`,
   `return-home`, `rest`, `seek-home`, `inspect`, `socialize` and `flee` compose the micro trees in
   `behaviours/micro/` (`move`, `wait`, `look`, `look-around`, `face`, `claim`).
-- **Loader** (`lib/behaviours.ts`) reads the YAML from the plugin folder through `importYaml` and
-  compiles each activity once in setup; the YAML ships as files rather than source strings.
+- **Loader** (`lib/behaviours.ts`) reads the YAML text from the plugin folder through `importText`
+  and compiles each activity once in setup; the YAML ships as files rather than source strings.
 
 The activity names are also the manual/LLM vocabulary: `brain.request(activity, target?)` cancels
 the current tree and runs one activity before normal selection resumes.

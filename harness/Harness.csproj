@@ -16,6 +16,7 @@
     <Compile Include="..\src\Utils\CompilerSupport.cs" LinkBase="Shared\Utils" />
     <Compile Include="..\src\Utils\ConditionObserver.cs" LinkBase="Shared\Utils" />
     <Compile Include="..\src\Utils\Yaml.cs" LinkBase="Shared\Utils" />
+    <Compile Include="..\src\Utils\Toml.cs" LinkBase="Shared\Utils" />
     <Compile Include="..\src\Core\BehaviourTree.cs" LinkBase="Shared\Core" />
     <Compile Include="..\src\Entities\NpcModels.cs" LinkBase="Shared\Entities" />
     <Compile Include="..\src\Core\AiSenses.cs" LinkBase="Shared\Core" />

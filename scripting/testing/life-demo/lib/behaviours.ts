@@ -1,14 +1,15 @@
-import { ai, importYaml } from "../../../sdk/index";
+import { ai, importText } from "../../../sdk/index";
 import type { VillagerActivity } from "./brain";
 
 /**
  * Loads the shipped YAML behaviour library from the plugin folder. Files are copied next to the
  * bundle by `build.ts`; runtime reads go through the read-only `assets` binding.
  *
+ * Behaviour trees need YAML *text* for `ai.compile`, so this uses `importText`, not `importYaml`.
  * Every activity is compiled once in plugin setup; each NPC instantiates the tree it selects.
  */
 function read(path: string): string {
-    return importYaml(`behaviours/${path}`);
+    return importText(`behaviours/${path}`);
 }
 
 const ACTIVITY_FILES: Record<VillagerActivity, string> = {

@@ -1,7 +1,9 @@
 using System;
 using System.IO;
 using System.Linq;
+using Jint.Native;
 using ValheimJS.Scripting.Binding;
+using ValheimJS.Utils;
 
 namespace ValheimJS.Bindings;
 
@@ -33,6 +35,24 @@ internal sealed class AssetBindings : JsBindings
     {
         var full = Resolve(plugin, path);
         return File.Exists(full) ? File.ReadAllText(full) : null;
+    }
+
+    [JsBinding("yaml", Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "unknown",
+        Description = "Parses a shipped YAML file into plain JavaScript objects/arrays.")]
+    public JsValue ParseYaml(string plugin, string path)
+    {
+        var full = Resolve(plugin, path);
+        if (!File.Exists(full)) throw new FileNotFoundException($"asset not found: {path}", full);
+        return JsPayload.FromPlain(Engine, Yaml.Parse(File.ReadAllText(full), path));
+    }
+
+    [JsBinding("toml", Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "unknown",
+        Description = "Parses a shipped TOML file into plain JavaScript objects/arrays.")]
+    public JsValue ParseToml(string plugin, string path)
+    {
+        var full = Resolve(plugin, path);
+        if (!File.Exists(full)) throw new FileNotFoundException($"asset not found: {path}", full);
+        return JsPayload.FromPlain(Engine, Toml.Parse(File.ReadAllText(full), path));
     }
 
     [JsBinding(Scoped = true, Description = "Entry names in a shipped folder, sorted; empty when missing.")]

@@ -15,6 +15,14 @@ export const assets = {
     read(path: string): string | null {
         return context().host.api.assets.read(path);
     },
+    /** Parsed YAML document (plain objects, arrays, strings, numbers, booleans and null). */
+    yaml(path: string): unknown {
+        return context().host.api.assets.yaml(path);
+    },
+    /** Parsed TOML document (plain objects, arrays, strings, numbers, booleans and null). */
+    toml(path: string): unknown {
+        return context().host.api.assets.toml(path);
+    },
     list(path: string): string[] {
         return context().host.api.assets.list(path);
     }
@@ -27,15 +35,12 @@ export function importText(path: string): string {
     return text;
 }
 
-/** Read a shipped YAML document as text; pass it to `ai.compile` or your own parser. */
-export function importYaml(path: string): string {
-    return importText(path);
+/** Read and parse a shipped YAML document. */
+export function importYaml<T = unknown>(path: string): T {
+    return assets.yaml(path) as T;
 }
 
-/**
- * Read a shipped TOML document as text. ValheimJS does not bundle a TOML parser, so parse it in
- * the plugin (or with a bundled library).
- */
-export function importToml(path: string): string {
-    return importText(path);
+/** Read and parse a shipped TOML document. */
+export function importToml<T = unknown>(path: string): T {
+    return assets.toml(path) as T;
 }

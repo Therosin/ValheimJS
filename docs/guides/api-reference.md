@@ -602,7 +602,9 @@ that belong to the mod. Escaping the plugin folder throws.
 ```ts
 assets.root(): string
 assets.exists(path: string): boolean
-assets.read(path: string): string | null  // null when missing
+assets.read(path: string): string | null   // raw text; null when missing
+assets.yaml(path: string): unknown          // parsed YAML object/array
+assets.toml(path: string): unknown          // parsed TOML object
 assets.list(path: string): string[]
 ```
 
@@ -611,14 +613,16 @@ The SDK wraps the common cases synchronously:
 ```ts
 import { importText, importYaml, importToml } from "../../../sdk/index";
 
-const tree = importYaml("behaviours/wander.yaml"); // text; pass to ai.compile
-const config = importToml("config/defaults.toml"); // text; parse in the plugin
+const treeText = importText("behaviours/wander.yaml"); // raw text, e.g. for ai.compile
+const config = importYaml<{ enabled: boolean }>("config/defaults.yaml"); // parsed object
+const toml = importToml<{ owner: { name: string } }>("config/defaults.toml"); // parsed object
 const notes = importText("notes.txt");
 ```
 
-`importYaml`/`importToml` return raw text. ValheimJS parses behaviour YAML through `ai.compile`;
-it does not bundle a TOML parser, so parse TOML in the plugin or with a bundled library. `build.ts`
-copies `assets/` and `behaviours/` from the plugin source into the bundle output.
+`importYaml`/`importToml` parse the file into plain JavaScript objects, arrays and primitives.
+Behaviour trees need YAML text for `ai.compile`, so the `life-demo` loader uses `importText`.
+Missing files throw. `build.ts` copies `assets/` and `behaviours/` from the plugin source into the
+bundle output.
 
 ## `db`
 
