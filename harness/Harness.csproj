@@ -26,9 +26,6 @@
     <Compile Include="..\src\Core\NetworkSync.cs" LinkBase="Shared\Core" />
     <Compile Include="..\src\World\WorldMessages.cs" LinkBase="Shared\World" />
     <Compile Include="..\src\World\WorldRelevancy.cs" LinkBase="Shared\World" />
-    <Compile Include="..\src\World\Navigation\NavModel.cs" LinkBase="Shared\World\Navigation" />
-    <Compile Include="..\src\World\Navigation\NavCache.cs" LinkBase="Shared\World\Navigation" />
-    <Compile Include="..\src\World\Navigation\NavVolume.cs" LinkBase="Shared\World\Navigation" />
     <Compile Include="..\src\Core\SpawnHandleTable.cs" LinkBase="Shared\Core" />
     <Compile Include="..\src\Networking\IRpcTransport.cs" LinkBase="Shared\Networking" />
     <Compile Include="..\src\Networking\NetworkJson.cs" LinkBase="Shared\Networking" />

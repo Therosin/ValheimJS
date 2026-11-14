@@ -55,7 +55,6 @@ Outstanding:
       short-term recognition memory
 - [x] Per-NPC durable memory (`npc.memory`) and YAML behaviour-tree binding (`ai`) with automatic
       `ctx.state.senses` injection
-- [x] Lazy navigation volume with terrain/structure/stairs, disk cache, A* and debug overlay
 - [x] World-space `draw` API for lines/meshes; server calls replicate to clients
 - [ ] NPC dormancy records and combat/interaction surfaces
 - [ ] hearing/noise, stealth, status-effect, equipment and per-NPC damage events as perception sources

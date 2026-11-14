@@ -52,7 +52,7 @@ authors only (TypeScript, no engine internals). This README is for working on th
 | `scripting/lib/` | Optional imported helpers (host-backed sync facade) |
 | `scripting/plugins/` | shipped plugin sources (empty by default) |
 | `scripting/testing/` | development/test plugin sources; never packaged |
-| `scripting/testing-optional/` | opt-in test tools (nav overlay); built only on request |
+| `scripting/testing-optional/` | optional development-only tools; not packaged |
 | `docs/guides/` | modder-facing guides |
 | `harness/` | net8 console running the real host code without Unity |
 
@@ -164,7 +164,6 @@ export default definePlugin(Greeter);
 | `npc` | `NpcBindings` | server-simulated NPCs: spawn, perception store, intents, memory, state |
 | `ai` | `AiBindings` | YAML behaviour trees with JS actions/conditions and NPC senses |
 | `ui` | `UiBindings` | client-side YAML panels, bindings and events |
-| `nav` | `NavBindings` | navigation-volume stats and debug overlay toggle |
 | `draw` | `DrawBindings` | world-space lines/meshes; server calls replicate to clients |
 | `net` | `NetBindings` | adapter over `Core/Networking` channels/events |
 | `sync` | `SyncBindings` | adapter over `Core/NetworkSync` binary frames |

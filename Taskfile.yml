@@ -89,11 +89,6 @@ tasks:
     deps: [bundle:testing]
     cmd: dotnet run --project harness/Harness.csproj -c Release -- {{.jsDevOut}}
 
-  dev:nav:
-    desc: Bundle the unshipped nav-debug plugin and copy it to the client plugins folder
-    dir: '{{.jsRoot}}'
-    cmd: 'bun run build.ts nav-debug --source testing-optional --out dist-testing --deploy "{{.CLIENT_PLUGINS}}"'
-
   dev:deploy:client:
     desc: Deploy the active test plugin set (life-demo) to the client
     prompt: "Overwrite the client plugin and JS plugin folders with the active test plugins?"
@@ -163,7 +158,7 @@ tasks:
     cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-world
 
   probe:world-manager:
-    desc: Verify world relevance, navigation, cache and world messages
+    desc: Verify world relevance and world messages
     cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-world-manager
 
   probe:signals:
