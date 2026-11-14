@@ -19,11 +19,19 @@ internal static class WorldKeys
     internal const string StatePrefix = "vjs.s.";
     internal const string StateIndex = "vjs.sk";
     internal const string Memory = "vjs.memory";
-    internal const string IntentKind = "vjs.intent.kind";
-    internal const string IntentX = "vjs.intent.x";
-    internal const string IntentY = "vjs.intent.y";
-    internal const string IntentZ = "vjs.intent.z";
-    internal const string IntentRun = "vjs.intent.run";
+    internal const string ActionKind = "vjs.action.kind";
+    internal const string ActionX = "vjs.action.x";
+    internal const string ActionY = "vjs.action.y";
+    internal const string ActionZ = "vjs.action.z";
+    internal const string ActionRun = "vjs.action.run";
+    internal const string ActionTarget = "vjs.action.target";
+    internal const string ActionSeconds = "vjs.action.seconds";
+    internal const string Stats = "vjs.stats";
+    internal const string Food = "vjs.food";
+    internal const string Inventory = "vjs.inv";
+    internal const string Equipment = "vjs.equip";
+    internal const string InventoryInitialized = "vjs.inv.init";
+    internal const string Death = "vjs.death";
     internal const string Generation = "vjs.gen";
 }
 
@@ -41,6 +49,12 @@ internal sealed class WorldObject
     internal Vector3 Position;
     internal float Yaw;
     internal Vector3 Home;
+    internal ZNetView? View;
+    internal Character? Character;
+    internal VjsNpcAI? AI;
+    internal VjsBodyStats? Stats;
+    internal bool BodyBound;
+    internal bool BodyReady => Character != null && Stats != null && Stats.Ready;
     internal float Speed;
     internal bool Moving;
     internal double TickAccumulator;
@@ -64,11 +78,35 @@ internal sealed class WorldKind
     internal Action? Prepare;
 }
 
+/// <summary>Outcome of one native action request; reasons are stable, script-facing facts.</summary>
+internal readonly struct CommandResult
+{
+    private CommandResult(bool ok, string? reason)
+    {
+        Ok = ok;
+        Reason = reason;
+    }
+
+    internal bool Ok { get; }
+
+    internal string? Reason { get; }
+
+    internal static CommandResult Success => new(true, null);
+
+    internal static CommandResult Fail(string reason) => new(false, reason);
+}
+
 /// <summary>Per-object simulation owned by a kind. Only invoked on the world authority.</summary>
 internal interface IWorldBehavior
 {
+    /// <summary>
+    /// Called when the object gains (or regains) its native body. Behaviours replay any action
+    /// they hold so movement survives body culling, rehydrate and server restarts.
+    /// </summary>
+    void Bind(WorldObject obj);
+
     void Tick(WorldObject obj, float dt);
     void Write(WorldObject obj, ZDO zdo);
     object? Snapshot(WorldObject obj);
-    bool Command(WorldObject obj, string command, object?[] args);
+    CommandResult Command(WorldObject obj, string command, object?[] args);
 }

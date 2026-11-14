@@ -58,3 +58,23 @@ public sealed class JsNullableAttribute : Attribute
 public sealed class JsIgnoreAttribute : Attribute
 {
 }
+
+/// <summary>
+/// Overrides the generated TypeScript return/member type for a <c>[JsType]</c> member that
+/// returns a native <c>JsValue</c>. Runtime exposure is unchanged; declarations stay truthful.
+/// </summary>
+[AttributeUsage(AttributeTargets.Property | AttributeTargets.Method, Inherited = false)]
+public sealed class JsReturnsAttribute : Attribute
+{
+    public JsReturnsAttribute(string type)
+    {
+        if (string.IsNullOrWhiteSpace(type))
+        {
+            throw new ArgumentException("A TypeScript type is required.", nameof(type));
+        }
+
+        Type = type;
+    }
+
+    public string Type { get; }
+}

@@ -69,7 +69,8 @@ public static class JsTypeDiscovery
 
             JsBindingDiscovery.TryMap(property.PropertyType, out var mapped, out _);
 
-            var propertyType = mapped.ToTypeScript();
+            var propertyType = CtorString(Find(property.GetCustomAttributesData(), "JsReturnsAttribute"), 0)
+                               ?? mapped.ToTypeScript();
             if (Find(property.GetCustomAttributesData(), "JsNullableAttribute") != null && !propertyType.EndsWith("| null", StringComparison.Ordinal))
             {
                 propertyType += " | null";
@@ -100,11 +101,12 @@ public static class JsTypeDiscovery
             var parameters = method.GetParameters().Select(parameter =>
             {
                 JsBindingDiscovery.TryMap(parameter.ParameterType, out var mapped, out _);
-                return (parameter.Name ?? "arg") + ": " + mapped.ToTypeScript();
+                return (parameter.Name ?? "arg") + (parameter.HasDefaultValue ? "?" : "") + ": " + mapped.ToTypeScript();
             }).ToList();
 
             JsBindingDiscovery.TryMap(method.ReturnType, out var returnType, out _);
-            var methodType = returnType.ToTypeScript();
+            var methodType = CtorString(Find(method.GetCustomAttributesData(), "JsReturnsAttribute"), 0)
+                             ?? returnType.ToTypeScript();
             if (Find(method.GetCustomAttributesData(), "JsNullableAttribute") != null && !methodType.EndsWith("| null", StringComparison.Ordinal))
             {
                 methodType += " | null";

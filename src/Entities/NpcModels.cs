@@ -4,28 +4,31 @@ using System.Text.RegularExpressions;
 
 namespace ValheimJS.Entities;
 
-internal enum NpcIntentKind
+internal enum NpcActionKind
 {
     Idle,
     Stop,
     MoveTo,
     Wait,
     LookAt,
-    Face
+    Face,
+    Pick
 }
 
-internal enum NpcIntentStatus
+internal enum NpcActionStatus
 {
     Idle,
     Running,
+    Paused,
     Arrived,
-    Failed
+    Failed,
+    Cancelled
 }
 
-/// <summary>Queued AI decision; internal to the NPC world (never crosses into JS).</summary>
-internal sealed class NpcIntent
+/// <summary>One native body action; internal to the NPC world (never crosses into JS).</summary>
+internal sealed class NpcAction
 {
-    private NpcIntent(NpcIntentKind kind, double x, double y, double z, bool run, double seconds, string? targetId)
+    private NpcAction(NpcActionKind kind, double x, double y, double z, bool run, double seconds, string? targetId)
     {
         Kind = kind;
         X = x;
@@ -36,7 +39,7 @@ internal sealed class NpcIntent
         TargetId = targetId;
     }
 
-    internal NpcIntentKind Kind { get; }
+    internal NpcActionKind Kind { get; }
 
     internal double X { get; }
 
@@ -50,23 +53,25 @@ internal sealed class NpcIntent
 
     internal string? TargetId { get; }
 
-    internal static NpcIntent Idle { get; } = new(NpcIntentKind.Idle, 0d, 0d, 0d, false, 0d, null);
+    internal static NpcAction Idle { get; } = new(NpcActionKind.Idle, 0d, 0d, 0d, false, 0d, null);
 
-    internal static NpcIntent Stop { get; } = new(NpcIntentKind.Stop, 0d, 0d, 0d, false, 0d, null);
+    internal static NpcAction Stop { get; } = new(NpcActionKind.Stop, 0d, 0d, 0d, false, 0d, null);
 
-    internal static NpcIntent MoveTo(double x, double y, double z, bool run) =>
-        new(NpcIntentKind.MoveTo, x, y, z, run, 0d, null);
+    internal static NpcAction MoveTo(double x, double y, double z, bool run) =>
+        new(NpcActionKind.MoveTo, x, y, z, run, 0d, null);
 
-    internal static NpcIntent Wait(double seconds) => new(NpcIntentKind.Wait, 0d, 0d, 0d, false, seconds, null);
+    internal static NpcAction Wait(double seconds) => new(NpcActionKind.Wait, 0d, 0d, 0d, false, seconds, null);
 
-    internal static NpcIntent LookAt(double x, double y, double z) =>
-        new(NpcIntentKind.LookAt, x, y, z, false, 0d, null);
+    internal static NpcAction LookAt(double x, double y, double z) =>
+        new(NpcActionKind.LookAt, x, y, z, false, 0d, null);
 
-    internal static NpcIntent Face(string targetId) => new(NpcIntentKind.Face, 0d, 0d, 0d, false, 0d, targetId);
+    internal static NpcAction Face(string targetId) => new(NpcActionKind.Face, 0d, 0d, 0d, false, 0d, targetId);
+
+    internal static NpcAction Pick(string targetId) => new(NpcActionKind.Pick, 0d, 0d, 0d, false, 0d, targetId);
 }
 
-/// <summary>Serializable view of the current intent and its last outcome.</summary>
-internal sealed class NpcIntentView
+/// <summary>Serializable view of the current native action and its last outcome.</summary>
+internal sealed class NpcActionView
 {
     internal string Kind { get; init; } = "idle";
 
@@ -82,6 +87,8 @@ internal sealed class NpcIntentView
 
     internal string? TargetId { get; init; }
 
+    internal double? Progress { get; init; }
+
     internal Dictionary<string, object?> ToPlain()
     {
         var target = X.HasValue
@@ -94,7 +101,8 @@ internal sealed class NpcIntentView
             ["status"] = Status,
             ["reason"] = Reason,
             ["targetId"] = TargetId,
-            ["target"] = target
+            ["target"] = target,
+            ["progress"] = Progress
         };
     }
 }
@@ -126,6 +134,8 @@ internal sealed class NpcSensedEntity
     internal bool Enemy { get; set; }
     internal bool Visible { get; set; }
     internal bool InRange { get; set; }
+    internal bool Ready { get; set; }
+    internal bool Food { get; set; }
     internal float FirstSeenAt { get; set; }
     internal float LastSeenAt { get; set; } = -1f;
     internal int SeenCount { get; set; }
@@ -158,6 +168,8 @@ internal sealed class NpcSensedEntity
             ["bearing"] = bearing,
             ["visible"] = Visible,
             ["inRange"] = InRange,
+            ["ready"] = Ready,
+            ["food"] = Food,
             ["enemy"] = Enemy,
             ["isPlayer"] = IsPlayer,
             ["isNpc"] = IsNpc,
@@ -342,19 +354,26 @@ internal sealed class NpcDefinition
 {
     internal string Kind { get; private init; } = "";
 
+    /// <summary>Source prefab for the body; "Player" for the default human body.</summary>
     internal string Prefab { get; private init; } = "";
+
+    internal bool Human { get; private init; }
 
     internal double TickMs { get; private init; } = 500d;
 
     internal string? Faction { get; private init; }
 
+    /// <summary>Prefab names placed in the NPC inventory once, on first spawn.</summary>
+    internal IReadOnlyList<string> Items { get; private init; } = Array.Empty<string>();
+
     internal NpcSensors Sensors { get; private init; } = new();
 
     internal static bool TryCreate(
         string? kind,
-        string? prefab,
+        string? body,
         double tickMs,
         string? faction,
+        IReadOnlyList<string>? items,
         NpcSensors? sensors,
         out NpcDefinition definition,
         out string error)
@@ -368,9 +387,12 @@ internal sealed class NpcDefinition
             return false;
         }
 
-        if (string.IsNullOrEmpty(prefab) || prefab.Length > 64)
+        var source = string.IsNullOrWhiteSpace(body) || string.Equals(body, "human", StringComparison.OrdinalIgnoreCase)
+            ? "Player"
+            : body;
+        if (source.Length > 64)
         {
-            error = "npc definition: prefab must be 1..64 characters";
+            error = "npc definition: body prefab must be 1..64 characters";
             return false;
         }
 
@@ -383,6 +405,24 @@ internal sealed class NpcDefinition
         {
             error = "npc definition: faction must be at most 32 characters";
             return false;
+        }
+
+        if (items != null)
+        {
+            if (items.Count > 16)
+            {
+                error = "npc definition: items must contain at most 16 prefab names";
+                return false;
+            }
+
+            foreach (var item in items)
+            {
+                if (string.IsNullOrWhiteSpace(item) || item.Length > 64)
+                {
+                    error = "npc definition: each item must be a 1..64 character prefab name";
+                    return false;
+                }
+            }
         }
 
         NpcSensors effective;
@@ -399,9 +439,11 @@ internal sealed class NpcDefinition
         definition = new NpcDefinition
         {
             Kind = kind!,
-            Prefab = prefab!,
+            Prefab = source,
+            Human = string.Equals(source, "Player", StringComparison.OrdinalIgnoreCase),
             TickMs = Math.Min(5000d, Math.Max(100d, tickMs)),
             Faction = faction,
+            Items = items ?? Array.Empty<string>(),
             Sensors = effective
         };
 
@@ -441,7 +483,9 @@ internal sealed class NpcPerception
     internal double HomeX { get; init; }
     internal double HomeY { get; init; }
     internal double HomeZ { get; init; }
-    internal NpcIntentView? Intent { get; init; }
+    internal bool Ready { get; init; }
+    internal Dictionary<string, object?>? Self { get; init; }
+    internal NpcActionView? Action { get; init; }
     internal NpcEnvironment? Environment { get; init; }
     internal IReadOnlyList<NpcSensedEntity> Nearby { get; init; } = Array.Empty<NpcSensedEntity>();
     internal IReadOnlyList<NpcSensedEntity> Remembered { get; init; } = Array.Empty<NpcSensedEntity>();
@@ -481,7 +525,9 @@ internal sealed class NpcPerception
             ["isTamed"] = IsTamed,
             ["level"] = Level,
             ["home"] = new Dictionary<string, object?> { ["x"] = HomeX, ["y"] = HomeY, ["z"] = HomeZ },
-            ["intent"] = Intent?.ToPlain(),
+            ["ready"] = Ready,
+            ["self"] = Self,
+            ["action"] = Action?.ToPlain(),
             ["environment"] = Environment?.ToPlain(),
             ["nearby"] = nearby,
             ["remembered"] = remembered,

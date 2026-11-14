@@ -6,27 +6,19 @@ using ValheimJS.Entities;
 namespace ValheimJS.World;
 
 /// <summary>
-/// Server-side NPC simulation: navigation, intents, perception and ZDO writes. The vanilla AI is
+/// Server-side NPC simulation: native actions, perception and ZDO writes. The vanilla AI is
 /// removed from the prefab, so this behaviour is the only decision layer; JS drives it through
-/// intents and reads its perception snapshots.
+/// actions and reads its perception snapshots.
 /// </summary>
 internal sealed class NpcBehavior : IWorldBehavior, INpcSenses
 {
-    private const float WalkSpeed = 2f;
-    private const float RunSpeed = 5f;
     private const float ArriveDistance = 0.75f;
-    private const float WaypointDistance = 0.4f;
-    private const float RepathSeconds = 1f;
-    private const float StuckSeconds = 5f;
-    private const float WanderRadius = 6f;
     private const float PerceptionCacheSeconds = 0.1f;
 
     private static readonly int ViewBlockMask = LayerMask.GetMask(
         "Default", "static_solid", "Default_small", "piece", "terrain", "viewblock", "vehicle");
 
     private readonly NpcSensors _sensors;
-    private readonly List<Vector3> _path = new();
-    private readonly System.Random _random = new();
     private readonly Dictionary<string, NpcSensedEntity> _entities = new(StringComparer.Ordinal);
     private readonly Dictionary<string, NpcSensedEntity> _objects = new(StringComparer.Ordinal);
     private readonly List<NpcSensedEntity> _newEntities = new();
@@ -34,23 +26,25 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses
     private float _originYaw;
     private float _now;
 
-    private NpcIntent _intent = NpcIntent.Idle;
-    private NpcIntentStatus _status = NpcIntentStatus.Idle;
+    private NpcAction _action = NpcAction.Idle;
+    private NpcActionStatus _status = NpcActionStatus.Idle;
     private string? _reason;
-    private float _intentAt;
+    private float _actionAt;
     private NpcPerception? _perception;
     private float _perceptionAt = -1f;
     private int _perceptionGeneration = -1;
 
     private int _lastGeneration;
-    private int _writtenGeneration = -1;
-    private int _pathIndex;
-    private float _repathAt;
-    private float _progressAt;
-    private float _bestDistance = float.MaxValue;
-    private float _wanderAt;
-    private Vector3? _wanderTarget;
-    private bool _navMissingLogged;
+    private string _boardAction = "";
+    private string _boardSelf = "";
+    private bool _boardReady;
+    private NpcActionKind _writtenKind = (NpcActionKind)(-1);
+    private double _writtenX;
+    private double _writtenY;
+    private double _writtenZ;
+    private double _writtenSeconds;
+    private bool _writtenRun;
+    private string? _writtenTarget;
 
     internal NpcBehavior(WorldObject obj, NpcSensors? sensors = null)
     {
@@ -62,21 +56,80 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses
             return;
         }
 
-        if (zdo.GetString(WorldKeys.IntentKind, out var kind))
+        if (!zdo.GetString(WorldKeys.ActionKind, out var kind))
         {
-            if (kind == "moveTo")
-            {
-                _intent = NpcIntent.MoveTo(
-                    zdo.GetFloat(WorldKeys.IntentX, obj.Position.x),
-                    zdo.GetFloat(WorldKeys.IntentY, obj.Position.y),
-                    zdo.GetFloat(WorldKeys.IntentZ, obj.Position.z),
-                    zdo.GetBool(WorldKeys.IntentRun));
-                _status = NpcIntentStatus.Running;
-            }
-            else if (kind == "stop")
-            {
-                _intent = NpcIntent.Stop;
-            }
+            return;
+        }
+
+        switch (kind)
+        {
+            case "moveTo":
+                _action = NpcAction.MoveTo(
+                    zdo.GetFloat(WorldKeys.ActionX, obj.Position.x),
+                    zdo.GetFloat(WorldKeys.ActionY, obj.Position.y),
+                    zdo.GetFloat(WorldKeys.ActionZ, obj.Position.z),
+                    zdo.GetBool(WorldKeys.ActionRun));
+                _status = NpcActionStatus.Running;
+                break;
+            case "lookAt":
+                _action = NpcAction.LookAt(
+                    zdo.GetFloat(WorldKeys.ActionX, obj.Position.x),
+                    zdo.GetFloat(WorldKeys.ActionY, obj.Position.y),
+                    zdo.GetFloat(WorldKeys.ActionZ, obj.Position.z));
+                _status = NpcActionStatus.Running;
+                break;
+            case "wait":
+                _action = NpcAction.Wait(zdo.GetFloat(WorldKeys.ActionSeconds, 0f));
+                _status = NpcActionStatus.Running;
+                break;
+            case "face":
+                _action = NpcAction.Face(zdo.GetString(WorldKeys.ActionTarget, ""));
+                _status = NpcActionStatus.Running;
+                break;
+            case "pick":
+                _action = NpcAction.Pick(zdo.GetString(WorldKeys.ActionTarget, ""));
+                _status = NpcActionStatus.Running;
+                break;
+            case "stop":
+                _action = NpcAction.Stop;
+                break;
+        }
+    }
+
+    /// <summary>Replays the current intent onto a body that was just attached.</summary>
+    public void Bind(WorldObject obj)
+    {
+        var ai = obj.AI;
+        if (ai == null)
+        {
+            return;
+        }
+
+        switch (_action.Kind)
+        {
+            case NpcActionKind.MoveTo:
+                ai.GoTo(new Vector3((float)_action.X, (float)_action.Y, (float)_action.Z),
+                    ArriveDistance, _action.Run);
+                break;
+            case NpcActionKind.LookAt:
+                ai.LookAtPoint(new Vector3((float)_action.X, (float)_action.Y, (float)_action.Z));
+                break;
+            case NpcActionKind.Face when !string.IsNullOrWhiteSpace(_action.TargetId):
+                ai.Face(_action.TargetId!);
+                break;
+            case NpcActionKind.Pick:
+                _status = NpcActionStatus.Running;
+                _reason = null;
+                break;
+            default:
+                ai.StopCommand();
+                break;
+        }
+
+        if (_action.Kind is NpcActionKind.MoveTo or NpcActionKind.LookAt or NpcActionKind.Face)
+        {
+            _status = ai.Status;
+            _reason = ai.Reason;
         }
     }
 
@@ -85,62 +138,175 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses
         if (obj.Generation != _lastGeneration)
         {
             _lastGeneration = obj.Generation;
-            _path.Clear();
-            _pathIndex = 0;
             _perception = null;
         }
 
-        switch (_intent.Kind)
+        if (obj.Character != null)
         {
-            case NpcIntentKind.Idle:
-                TickIdle(obj, dt);
-                break;
-            case NpcIntentKind.Stop:
-                Stop(obj);
-                break;
-            case NpcIntentKind.MoveTo:
-                TickMoveTo(obj, dt);
-                break;
-            case NpcIntentKind.Wait:
-                if (Time.realtimeSinceStartup - _intentAt >= (float)_intent.Seconds)
-                {
-                    _status = NpcIntentStatus.Arrived;
-                    Stop(obj);
-                }
-
-                break;
-            case NpcIntentKind.LookAt:
-            case NpcIntentKind.Face:
-                Stop(obj);
-                break;
+            obj.Position = obj.Character.transform.position;
+            obj.Yaw = obj.Character.transform.eulerAngles.y;
         }
 
+        if (obj.Character != null && obj.Character.IsDead() && _status is NpcActionStatus.Running or NpcActionStatus.Paused)
+        {
+            _status = NpcActionStatus.Failed;
+            _reason = "dead";
+            obj.AI?.StopCommand();
+        }
+
+        if (obj.AI != null)
+        {
+            obj.Moving = obj.AI.IsMoving;
+            if (_action.Kind is NpcActionKind.MoveTo or NpcActionKind.LookAt or NpcActionKind.Face)
+            {
+                _status = obj.AI.Status;
+                _reason = obj.AI.Reason;
+            }
+        }
+        else
+        {
+            obj.Moving = false;
+            if (_status == NpcActionStatus.Running &&
+                _action.Kind is NpcActionKind.MoveTo or NpcActionKind.LookAt or NpcActionKind.Face or NpcActionKind.Pick)
+            {
+                _status = NpcActionStatus.Paused;
+                _reason = "body-lost";
+            }
+        }
+
+        if (_action.Kind == NpcActionKind.Pick && _status is NpcActionStatus.Running or NpcActionStatus.Paused &&
+            obj.AI != null)
+        {
+            _status = NpcActionStatus.Running;
+            if (VjsActions.Pick(obj, _action.TargetId ?? "", out var reason))
+            {
+                _status = NpcActionStatus.Arrived;
+                _reason = null;
+            }
+            else
+            {
+                _status = NpcActionStatus.Failed;
+                _reason = reason;
+            }
+        }
+
+        if (_action.Kind == NpcActionKind.Wait &&
+            Time.realtimeSinceStartup - _actionAt >= (float)_action.Seconds)
+        {
+            _status = NpcActionStatus.Arrived;
+            obj.AI?.StopCommand();
+        }
+
+        PublishBoard(obj);
         Refresh(obj);
+    }
+
+    private NpcActionView BuildActionView() => new()
+    {
+        Kind = ActionName(_action.Kind),
+        Status = StatusName(_status),
+        Reason = _reason,
+        X = _action.Kind is NpcActionKind.MoveTo or NpcActionKind.LookAt ? _action.X : null,
+        Y = _action.Kind is NpcActionKind.MoveTo or NpcActionKind.LookAt ? _action.Y : null,
+        Z = _action.Kind is NpcActionKind.MoveTo or NpcActionKind.LookAt ? _action.Z : null,
+        TargetId = _action.Kind is NpcActionKind.Face or NpcActionKind.Pick ? _action.TargetId : null,
+        Progress = _action.Kind == NpcActionKind.Pick && _status == NpcActionStatus.Arrived ? 1d : null
+    };
+
+    private void PublishBoard(WorldObject obj)
+    {
+        var ready = obj.BodyReady;
+        if (ready != _boardReady)
+        {
+            _boardReady = ready;
+            NpcBoard.Publish(obj.Handle, "ready", ready);
+        }
+
+        var action = BuildActionView();
+        var actionKey = $"{action.Kind}:{action.Status}:{action.Reason}:{action.Progress}";
+        if (actionKey != _boardAction)
+        {
+            _boardAction = actionKey;
+            NpcBoard.Publish(obj.Handle, "action", action.ToPlain());
+        }
+
+        if (!ready) return;
+        var self = obj.Stats?.GetView();
+        if (self == null) return;
+        var health = self["health"] is float h ? Math.Round(h, 1) : 0d;
+        var stamina = self["stamina"] is float s ? Math.Round(s, 1) : 0d;
+        var food = self["food"] is System.Collections.ICollection collection ? collection.Count : 0;
+        var hungry = self["hungry"] is true;
+        var selfKey = $"{health}:{stamina}:{food}:{hungry}";
+        if (selfKey == _boardSelf) return;
+        _boardSelf = selfKey;
+        NpcBoard.Publish(obj.Handle, "self", self);
+        NpcBoard.Publish(obj.Handle, "hungry", hungry);
     }
 
     public void Write(WorldObject obj, ZDO zdo)
     {
-        if (_writtenGeneration == obj.Generation)
+        if (!ActionChanged())
         {
             return;
         }
 
-        _writtenGeneration = obj.Generation;
-        zdo.Set(WorldKeys.IntentKind, _intent.Kind switch
-        {
-            NpcIntentKind.MoveTo => "moveTo",
-            NpcIntentKind.Stop => "stop",
-            _ => "idle"
-        });
-        zdo.Set(WorldKeys.IntentX, (float)_intent.X);
-        zdo.Set(WorldKeys.IntentY, (float)_intent.Y);
-        zdo.Set(WorldKeys.IntentZ, (float)_intent.Z);
-        zdo.Set(WorldKeys.IntentRun, _intent.Run);
+        RememberAction();
+        zdo.Set(WorldKeys.ActionKind, ActionName(_action.Kind));
+        zdo.Set(WorldKeys.ActionX, (float)_action.X);
+        zdo.Set(WorldKeys.ActionY, (float)_action.Y);
+        zdo.Set(WorldKeys.ActionZ, (float)_action.Z);
+        zdo.Set(WorldKeys.ActionRun, _action.Run);
+        zdo.Set(WorldKeys.ActionTarget, _action.TargetId ?? string.Empty);
+        zdo.Set(WorldKeys.ActionSeconds, (float)_action.Seconds);
         zdo.Set(WorldKeys.Generation, obj.Generation);
+    }
+
+    /// <summary>True when the current intent differs from what was last written to the ZDO.</summary>
+    private bool ActionChanged()
+    {
+        if (_writtenKind != _action.Kind)
+        {
+            return true;
+        }
+
+        return _action.Kind switch
+        {
+            NpcActionKind.MoveTo => _writtenX != _action.X || _writtenY != _action.Y ||
+                                    _writtenZ != _action.Z || _writtenRun != _action.Run,
+            NpcActionKind.LookAt => _writtenX != _action.X || _writtenY != _action.Y ||
+                                    _writtenZ != _action.Z,
+            NpcActionKind.Wait => _writtenSeconds != _action.Seconds,
+            NpcActionKind.Face => !string.Equals(_writtenTarget, _action.TargetId, StringComparison.Ordinal),
+            _ => false
+        };
+    }
+
+    private void RememberAction()
+    {
+        _writtenKind = _action.Kind;
+        _writtenX = _action.X;
+        _writtenY = _action.Y;
+        _writtenZ = _action.Z;
+        _writtenSeconds = _action.Seconds;
+        _writtenRun = _action.Run;
+        _writtenTarget = _action.TargetId;
     }
 
     public object? Snapshot(WorldObject obj)
     {
+        if (obj.Character != null)
+        {
+            obj.Position = obj.Character.transform.position;
+            obj.Yaw = obj.Character.transform.eulerAngles.y;
+        }
+
+        if (obj.AI != null && _action.Kind is NpcActionKind.MoveTo or NpcActionKind.LookAt or NpcActionKind.Face)
+        {
+            _status = obj.AI.Status;
+            _reason = obj.AI.Reason;
+        }
+
         var now = Time.realtimeSinceStartup;
         if (_perception == null || _perceptionGeneration != obj.Generation ||
             now - _perceptionAt >= PerceptionCacheSeconds)
@@ -151,90 +317,112 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses
         return _perception;
     }
 
-    public bool Command(WorldObject obj, string command, object?[] args)
+    public CommandResult Command(WorldObject obj, string command, object?[] args)
     {
+        var ai = obj.AI;
         var now = Time.realtimeSinceStartup;
         switch (command)
         {
             case "moveTo" when args.Length >= 3:
-                _intent = NpcIntent.MoveTo(Convert.ToDouble(args[0]), Convert.ToDouble(args[1]),
-                    Convert.ToDouble(args[2]), args.Length > 3 && Convert.ToBoolean(args[3]));
-                _status = NpcIntentStatus.Running;
-                _reason = null;
-                _intentAt = now;
-                Reset(obj);
-                return true;
+            {
+                var x = Convert.ToDouble(args[0]);
+                var y = Convert.ToDouble(args[1]);
+                var z = Convert.ToDouble(args[2]);
+                if (!IsFinite(x) || !IsFinite(y) || !IsFinite(z))
+                {
+                    return CommandResult.Fail("invalid-target");
+                }
+
+                _action = NpcAction.MoveTo(x, y, z, args.Length > 3 && Convert.ToBoolean(args[3]));
+                _status = NpcActionStatus.Running;
+                _reason = ai == null ? "body-pending" : null;
+                _actionAt = now;
+                ai?.GoTo(new Vector3((float)x, (float)y, (float)z), ArriveDistance, _action.Run);
+                return CommandResult.Success;
+            }
             case "idle":
-                _intent = NpcIntent.Idle;
-                _status = NpcIntentStatus.Idle;
+                _action = NpcAction.Idle;
+                _status = NpcActionStatus.Idle;
                 _reason = null;
-                _intentAt = now;
-                Reset(obj);
-                return true;
+                _actionAt = now;
+                ai?.StopCommand();
+                return CommandResult.Success;
             case "stop":
-                _intent = NpcIntent.Stop;
-                _status = NpcIntentStatus.Idle;
+                _action = NpcAction.Stop;
+                _status = NpcActionStatus.Idle;
                 _reason = null;
-                _intentAt = now;
-                Stop(obj);
-                Reset(obj);
-                return true;
+                _actionAt = now;
+                ai?.StopCommand();
+                return CommandResult.Success;
             case "wait" when args.Length >= 1:
             {
                 var seconds = Convert.ToDouble(args[0]);
-                if (double.IsNaN(seconds) || double.IsInfinity(seconds))
+                if (!IsFinite(seconds))
                 {
-                    return false;
+                    return CommandResult.Fail("invalid-duration");
                 }
 
-                _intent = NpcIntent.Wait(Math.Clamp(seconds, 0d, 3600d));
-                _status = NpcIntentStatus.Running;
-                _reason = null;
-                _intentAt = now;
-                Stop(obj);
-                Reset(obj);
-                if (_intent.Seconds <= 0d)
-                {
-                    _status = NpcIntentStatus.Arrived;
-                }
-
-                return true;
+                _action = NpcAction.Wait(Math.Clamp(seconds, 0d, 3600d));
+                _status = NpcActionStatus.Running;
+                _reason = ai == null ? "body-pending" : null;
+                _actionAt = now;
+                ai?.StopCommand();
+                if (_action.Seconds <= 0d) _status = NpcActionStatus.Arrived;
+                return CommandResult.Success;
             }
             case "lookAt" when args.Length >= 3:
-                _intent = NpcIntent.LookAt(Convert.ToDouble(args[0]), Convert.ToDouble(args[1]), Convert.ToDouble(args[2]));
-                _status = NpcIntentStatus.Arrived;
-                _reason = null;
-                _intentAt = now;
-                Stop(obj);
-                SetYaw(obj, _intent.X, _intent.Z);
-                Reset(obj);
-                return true;
+            {
+                var x = Convert.ToDouble(args[0]);
+                var y = Convert.ToDouble(args[1]);
+                var z = Convert.ToDouble(args[2]);
+                if (!IsFinite(x) || !IsFinite(y) || !IsFinite(z))
+                {
+                    return CommandResult.Fail("invalid-target");
+                }
+
+                _action = NpcAction.LookAt(x, y, z);
+                _status = ai == null ? NpcActionStatus.Running : NpcActionStatus.Arrived;
+                _reason = ai == null ? "body-pending" : null;
+                _actionAt = now;
+                ai?.LookAtPoint(new Vector3((float)x, (float)y, (float)z));
+                return CommandResult.Success;
+            }
             case "face" when args.Length >= 1:
             {
                 var handle = args[0] as string ?? string.Empty;
-                var target = TargetPosition(handle);
-                if (!target.HasValue)
+                if (string.IsNullOrWhiteSpace(handle))
                 {
-                    _intent = NpcIntent.Face(handle);
-                    _status = NpcIntentStatus.Failed;
-                    _reason = "target-missing";
-                    _intentAt = now;
-                    return true;
+                    return CommandResult.Fail("invalid-target");
                 }
 
-                _intent = NpcIntent.Face(handle);
-                _status = NpcIntentStatus.Arrived;
-                _reason = null;
-                _intentAt = now;
-                Stop(obj);
-                SetYaw(obj, target.Value.x, target.Value.z);
-                Reset(obj);
-                return true;
+                _action = NpcAction.Face(handle);
+                _status = NpcActionStatus.Running;
+                _reason = ai == null ? "body-pending" : null;
+                _actionAt = now;
+                ai?.Face(handle);
+                return CommandResult.Success;
+            }
+            case "pick" when args.Length >= 1:
+            {
+                var handle = args[0] as string ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(handle))
+                {
+                    return CommandResult.Fail("invalid-target");
+                }
+
+                _action = NpcAction.Pick(handle);
+                _status = ai == null ? NpcActionStatus.Paused : NpcActionStatus.Running;
+                _reason = ai == null ? "body-lost" : null;
+                _actionAt = now;
+                ai?.StopCommand();
+                return CommandResult.Success;
             }
             default:
-                return false;
+                return CommandResult.Fail("unknown-action");
         }
     }
+
+    private static bool IsFinite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
 
     internal static float HealthOf(ZDOID id, float fallback)
     {
@@ -290,6 +478,11 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses
         var level = liveCharacter != null
             ? liveCharacter.GetLevel()
             : zdo != null ? zdo.GetInt(ZDOVars.s_level, 1) : 1;
+        var stats = obj.Stats;
+        if (stats == null && obj.Character != null)
+        {
+            stats = obj.Character.GetComponent<VjsBodyStats>();
+        }
 
         return new NpcPerception
         {
@@ -307,16 +500,9 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses
             HomeX = obj.Home.x,
             HomeY = obj.Home.y,
             HomeZ = obj.Home.z,
-            Intent = new NpcIntentView
-            {
-                Kind = IntentName(_intent.Kind),
-                Status = StatusName(_status),
-                Reason = _reason,
-                X = _intent.Kind is NpcIntentKind.MoveTo or NpcIntentKind.LookAt ? _intent.X : null,
-                Y = _intent.Kind is NpcIntentKind.MoveTo or NpcIntentKind.LookAt ? _intent.Y : null,
-                Z = _intent.Kind is NpcIntentKind.MoveTo or NpcIntentKind.LookAt ? _intent.Z : null,
-                TargetId = _intent.Kind == NpcIntentKind.Face ? _intent.TargetId : null
-            },
+            Ready = obj.BodyReady,
+            Self = stats?.GetView(),
+            Action = BuildActionView(),
             Environment = new NpcEnvironment
             {
                 Day = ZNet.instance != null ? EnvMan.instance?.GetDay() ?? 0 : 0,
@@ -647,6 +833,10 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses
             entry.Y = position.y;
             entry.Z = position.z;
             entry.Distance = distance;
+            var live = scene.FindInstance(zdo.m_uid);
+            var pickable = live != null ? live.GetComponent<Pickable>() : prefab.GetComponent<Pickable>();
+            entry.Ready = kind != "pickable" || VjsActions.IsPickableReady(pickable);
+            entry.Food = kind == "pickable" && VjsActions.IsFoodPickable(pickable);
             entry.Visible = true;
             entry.InRange = true;
             entry.LastSeenAt = _now;
@@ -694,6 +884,21 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses
 
     private static string? Classify(GameObject prefab)
     {
+        if (prefab.GetComponent<Pickable>() != null)
+        {
+            return "pickable";
+        }
+
+        if (prefab.GetComponent<TreeBase>() != null)
+        {
+            return "tree";
+        }
+
+        if (prefab.GetComponent<MineRock>() != null || prefab.GetComponent<MineRock5>() != null)
+        {
+            return "rock";
+        }
+
         if (prefab.GetComponent<Container>() != null)
         {
             return "container";
@@ -796,262 +1001,24 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses
         }
     }
 
-    private static string IntentName(NpcIntentKind kind) => kind switch
+    private static string ActionName(NpcActionKind kind) => kind switch
     {
-        NpcIntentKind.MoveTo => "moveTo",
-        NpcIntentKind.Wait => "wait",
-        NpcIntentKind.LookAt => "lookAt",
-        NpcIntentKind.Face => "face",
-        NpcIntentKind.Stop => "stop",
+        NpcActionKind.MoveTo => "moveTo",
+        NpcActionKind.Wait => "wait",
+        NpcActionKind.LookAt => "lookAt",
+        NpcActionKind.Face => "face",
+        NpcActionKind.Pick => "pick",
+        NpcActionKind.Stop => "stop",
         _ => "idle"
     };
 
-    private static string StatusName(NpcIntentStatus status) => status switch
+    private static string StatusName(NpcActionStatus status) => status switch
     {
-        NpcIntentStatus.Running => "running",
-        NpcIntentStatus.Arrived => "arrived",
-        NpcIntentStatus.Failed => "failed",
+        NpcActionStatus.Running => "running",
+        NpcActionStatus.Paused => "paused",
+        NpcActionStatus.Arrived => "arrived",
+        NpcActionStatus.Failed => "failed",
+        NpcActionStatus.Cancelled => "cancelled",
         _ => "idle"
     };
-
-    private static Vector3? TargetPosition(string handle)
-    {
-        if (string.IsNullOrWhiteSpace(handle) || !WorldManager.TryParseHandle(handle, out var id))
-        {
-            return null;
-        }
-
-        var zdo = ZDOMan.instance?.GetZDO(id);
-        return zdo?.GetPosition();
-    }
-
-    private static void SetYaw(WorldObject obj, double x, double z)
-    {
-        var dx = (float)(x - obj.Position.x);
-        var dz = (float)(z - obj.Position.z);
-        if (dx * dx + dz * dz <= 0.0001f)
-        {
-            return;
-        }
-
-        obj.Yaw = Mathf.Atan2(dx, dz) * Mathf.Rad2Deg;
-    }
-
-    private void TickMoveTo(WorldObject obj, float dt)
-    {
-        var target = new Vector3((float)_intent.X, (float)_intent.Y, (float)_intent.Z);
-        var distance = Horizontal(obj.Position, target);
-        if (distance <= ArriveDistance)
-        {
-            Arrive(obj);
-            return;
-        }
-
-        var now = Time.realtimeSinceStartup;
-        if (now >= _repathAt)
-        {
-            _repathAt = now + RepathSeconds;
-            if (!EnsurePath(obj, target))
-            {
-                Stop(obj);
-                return;
-            }
-        }
-
-        if (!Follow(obj, dt))
-        {
-            return;
-        }
-
-        var remaining = Horizontal(obj.Position, target);
-        if (remaining <= ArriveDistance)
-        {
-            Arrive(obj);
-            return;
-        }
-
-        if (remaining <= _bestDistance - 0.5f)
-        {
-            _bestDistance = remaining;
-            _progressAt = now;
-        }
-        else if (now - _progressAt >= StuckSeconds)
-        {
-            Fail(obj, "nav-stuck");
-        }
-    }
-
-    private void TickIdle(WorldObject obj, float dt)
-    {
-        var now = Time.realtimeSinceStartup;
-        if (!_wanderTarget.HasValue)
-        {
-            Stop(obj);
-            if (now < _wanderAt)
-            {
-                return;
-            }
-
-            var nav = WorldManager.Instance?.Navigation;
-            if (nav == null)
-            {
-                _wanderAt = now + 3f;
-                LogNavMissing();
-                return;
-            }
-
-            if (!nav.TryRandomPoint(obj.Home, WanderRadius, out var target))
-            {
-                _wanderAt = now + 3f;
-                return;
-            }
-
-            _wanderTarget = target;
-            _path.Clear();
-            _pathIndex = 0;
-            _repathAt = 0f;
-        }
-
-        if (now >= _repathAt)
-        {
-            _repathAt = now + RepathSeconds;
-            if (!EnsurePath(obj, _wanderTarget!.Value))
-            {
-                Stop(obj);
-                return;
-            }
-        }
-
-        if (!Follow(obj, dt))
-        {
-            return;
-        }
-
-        if (Horizontal(obj.Position, _wanderTarget!.Value) <= ArriveDistance)
-        {
-            _wanderTarget = null;
-            _wanderAt = now + 3f + (float)_random.NextDouble() * 5f;
-            Stop(obj);
-        }
-    }
-
-    private bool Follow(WorldObject obj, float dt)
-    {
-        while (_pathIndex < _path.Count &&
-               Horizontal(obj.Position, _path[_pathIndex]) <= WaypointDistance)
-        {
-            _pathIndex++;
-        }
-
-        if (_pathIndex >= _path.Count)
-        {
-            return true;
-        }
-
-        var speed = _intent.Kind == NpcIntentKind.MoveTo && _intent.Run ? RunSpeed : WalkSpeed;
-        MoveTowards(obj, _path[_pathIndex], speed, dt);
-        return true;
-    }
-
-    private bool EnsurePath(WorldObject obj, Vector3 target)
-    {
-        var nav = WorldManager.Instance?.Navigation;
-        if (nav == null)
-        {
-            LogNavMissing();
-            return false;
-        }
-
-        _path.Clear();
-        _pathIndex = 0;
-        if (nav.FindPath(obj.Position, target, _path, out var pending))
-        {
-            _navMissingLogged = false;
-            return _path.Count > 0;
-        }
-
-        if (pending)
-        {
-            return false;
-        }
-
-        if (Horizontal(obj.Position, target) <= ArriveDistance)
-        {
-            _path.Add(target);
-            return true;
-        }
-
-        Fail(obj, "nav-unavailable");
-        return false;
-    }
-
-    private void MoveTowards(WorldObject obj, Vector3 target, float speed, float dt)
-    {
-        var delta = target - obj.Position;
-        delta.y = 0f;
-        var distance = delta.magnitude;
-        if (distance <= 0.01f)
-        {
-            obj.Position.y = Mathf.MoveTowards(obj.Position.y, target.y, Mathf.Max(1f, speed) * dt);
-            return;
-        }
-
-        var step = Mathf.Min(speed * dt, distance);
-        var direction = delta / distance;
-        obj.Position += direction * step;
-        obj.Position.y = Mathf.MoveTowards(obj.Position.y, target.y, Mathf.Max(1f, speed) * dt);
-        obj.Yaw = Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg;
-        obj.Speed = speed;
-        obj.Moving = true;
-    }
-
-    private static float Horizontal(Vector3 left, Vector3 right)
-    {
-        var dx = left.x - right.x;
-        var dz = left.z - right.z;
-        return Mathf.Sqrt(dx * dx + dz * dz);
-    }
-
-    private void Reset(WorldObject obj)
-    {
-        obj.Generation++;
-        _lastGeneration = obj.Generation;
-        _path.Clear();
-        _pathIndex = 0;
-        _repathAt = 0f;
-        _bestDistance = float.MaxValue;
-        _progressAt = Time.realtimeSinceStartup;
-        _wanderTarget = null;
-    }
-
-    private void Arrive(WorldObject obj)
-    {
-        Stop(obj);
-        _status = NpcIntentStatus.Arrived;
-        _reason = null;
-    }
-
-    private void Fail(WorldObject obj, string reason)
-    {
-        Stop(obj);
-        _status = NpcIntentStatus.Failed;
-        _reason = reason;
-    }
-
-    private static void Stop(WorldObject obj)
-    {
-        obj.Speed = 0f;
-        obj.Moving = false;
-    }
-
-    private void LogNavMissing()
-    {
-        if (_navMissingLogged)
-        {
-            return;
-        }
-
-        _navMissingLogged = true;
-        Plugin.Logger.LogWarning("npc nav unavailable: terrain generator or zone system is not ready");
-    }
 }

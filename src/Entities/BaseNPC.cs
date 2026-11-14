@@ -1,4 +1,6 @@
 using System;
+using Jint;
+using Jint.Native;
 using UnityEngine;
 using ValheimJS.Scripting.Types;
 using ValheimJS.World;
@@ -7,8 +9,8 @@ namespace ValheimJS.Entities;
 
 /// <summary>
 /// A ZDO-backed scripted world object, exposed to scripts as <c>ValheimBaseNPC</c>. Game objects,
-/// ZDOs, simulation and durable state stay native; this facade is identity, pose, health,
-/// commands and string state.
+/// ZDOs, simulation and durable state stay native; this facade is identity, pose, health, actions
+/// and string state.
 /// </summary>
 [JsType("ValheimBaseNPC", Description = "A ZDO-backed scripted NPC.")]
 public sealed class BaseNPC
@@ -17,13 +19,15 @@ public sealed class BaseNPC
     [JsIgnore] private readonly ZDOID _id;
     [JsIgnore] private readonly string _kind;
     [JsIgnore] private readonly string _name;
+    [JsIgnore] private readonly Func<CommandResult, JsValue> _result;
 
-    internal BaseNPC(string plugin, ZDOID id, string kind, string name)
+    internal BaseNPC(string plugin, ZDOID id, string kind, string name, Func<CommandResult, JsValue> result)
     {
         _plugin = plugin;
         _id = id;
         _kind = kind;
         _name = name;
+        _result = result;
     }
 
     [JsIgnore] internal string Owner => _plugin;
@@ -48,25 +52,37 @@ public sealed class BaseNPC
 
     public bool IsAlive => NpcBehavior.IsAlive(_id, Health);
 
-    /// <summary>Sets the current intent. False when refused (no authority).</summary>
-    public bool MoveTo(double x, double y, double z, bool run) =>
-        WorldManager.Instance?.Command(_plugin, Id, "moveTo", x, y, z, run) == true;
+    /// <summary>Requests a native move action; returns action acceptance and reason.</summary>
+    [JsReturns("ActionResult")]
+    public JsValue MoveTo(double x, double y, double z, bool run) => Run("moveTo", x, y, z, run);
 
-    /// <summary>Clears movement; the NPC wanders near its home point.</summary>
-    public bool Idle() => WorldManager.Instance?.Command(_plugin, Id, "idle") == true;
+    /// <summary>Clears movement; the script decides what happens next.</summary>
+    [JsReturns("ActionResult")]
+    public JsValue Idle() => Run("idle");
 
-    /// <summary>Stops movement and wandering until the next intent.</summary>
-    public bool Stop() => WorldManager.Instance?.Command(_plugin, Id, "stop") == true;
+    /// <summary>Stops the current action.</summary>
+    [JsReturns("ActionResult")]
+    public JsValue Stop() => Run("stop");
 
-    /// <summary>Waits in place; the intent reports arrived when the timer elapses.</summary>
-    public bool Wait(double seconds) => WorldManager.Instance?.Command(_plugin, Id, "wait", seconds) == true;
+    /// <summary>Waits in place; the action reports arrived when the timer elapses.</summary>
+    [JsReturns("ActionResult")]
+    public JsValue Wait(double seconds) => Run("wait", seconds);
 
-    /// <summary>Turns toward a world point and reports the intent as arrived.</summary>
-    public bool LookAt(double x, double y, double z) =>
-        WorldManager.Instance?.Command(_plugin, Id, "lookAt", x, y, z) == true;
+    /// <summary>Turns toward a world point and reports the action as arrived.</summary>
+    [JsReturns("ActionResult")]
+    public JsValue LookAt(double x, double y, double z) => Run("lookAt", x, y, z);
 
     /// <summary>Turns toward another ZDO-backed entity; fails when it no longer exists.</summary>
-    public bool Face(string id) => WorldManager.Instance?.Command(_plugin, Id, "face", id) == true;
+    [JsReturns("ActionResult")]
+    public JsValue Face(string id) => Run("face", id);
+
+    /// <summary>Picks a pickable object into the inventory when in range.</summary>
+    [JsReturns("ActionResult")]
+    public JsValue Pick(string id) => Run("pick", id);
+
+    [JsIgnore]
+    private JsValue Run(string command, params object?[] args) =>
+        _result(WorldManager.Instance?.Command(_plugin, Id, command, args) ?? CommandResult.Fail("no-world"));
 
     [JsNullable]
     public string? State(string key) => WorldManager.Instance?.StateGet(_plugin, Id, key);

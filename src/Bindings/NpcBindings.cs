@@ -46,17 +46,19 @@ internal sealed class NpcBindings : JsBindings
         internal JsCallback? OnRehydrate;
         internal JsCallback? OnDespawn;
         internal JsCallback? OnSensed;
-        internal JsCallback? OnIntent;
-        internal string LastIntent = "idle";
-        internal string LastIntentKind = "";
+        internal JsCallback? OnAction;
+        internal string LastAction = "idle";
+        internal string LastActionKind = "";
         internal bool Muted;
         internal bool Hydrated;
+        internal bool PendingSpawn;
     }
 
     private readonly Dictionary<string, Dictionary<string, Blueprint>> _blueprints = new(StringComparer.Ordinal);
     private readonly HashSet<string> _debug = new(StringComparer.Ordinal);
     private JsTypeRegistry? _types;
     private JsNativeType? _npcType;
+    private JsNativeType? _inventoryType;
 
     public NpcBindings(JsBindingContext context) : base(context)
     {
@@ -65,6 +67,7 @@ internal sealed class NpcBindings : JsBindings
     public override void Install(JsTypeRegistry types)
     {
         _types = types;
+        _inventoryType = types.Register<NpcInventoryAccessor>();
         _npcType = types.Register<BaseNPC>(arguments =>
         {
             var handle = arguments.Length > 0 ? arguments[0].ToString() : string.Empty;
@@ -75,9 +78,144 @@ internal sealed class NpcBindings : JsBindings
 
             var entity = WorldManager.Instance.Resolve(types.CurrentPlugin, handle)
                 ?? throw new InvalidOperationException($"npc: unknown handle '{handle}'");
-            return new BaseNPC(types.CurrentPlugin, entity.Id, entity.Kind, entity.Name);
+            return new BaseNPC(types.CurrentPlugin, entity.Id, entity.Kind, entity.Name,
+                result => JsPayload.FromPlain(Engine, new Dictionary<string, object?>
+                {
+                    ["ok"] = result.Ok,
+                    ["reason"] = result.Reason
+                }));
         });
     }
+
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "Inventory",
+        Description = "Generic inventory accessor for one of this plugin's NPCs.")]
+    public JsValue Inventory(string plugin, JsValue entity)
+    {
+        var handle = HandleOf(entity);
+        if (handle == null)
+        {
+            throw new InvalidOperationException("npc.inventory: unknown entity");
+        }
+
+        return _inventoryType != null && _types != null
+            ? _types.Instance(_inventoryType, new NpcInventoryAccessor(Engine, new NpcInventoryProvider(plugin, handle)))
+            : JsValue.Null;
+    }
+
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "Inventory",
+        Description = "Generic inventory accessor for a world container.")]
+    public JsValue Container(string plugin, string handle)
+    {
+        if (string.IsNullOrWhiteSpace(handle) || !WorldManager.TryParseHandle(handle, out _))
+        {
+            throw new InvalidOperationException("npc.container: a ZDO handle is required");
+        }
+
+        return _inventoryType != null && _types != null
+            ? _types.Instance(_inventoryType, new NpcInventoryAccessor(Engine, new ContainerInventoryProvider(handle)))
+            : JsValue.Null;
+    }
+
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "NpcStats | null",
+        Description = "Live body stats for one of this plugin's NPCs.")]
+    public JsValue Stats(string plugin, JsValue entity)
+    {
+        var handle = HandleOf(entity);
+        var obj = handle != null ? WorldManager.Instance?.Resolve(plugin, handle) : null;
+        var stats = obj?.Stats;
+        if (stats == null && obj?.Character != null)
+        {
+            stats = obj.Character.GetComponent<VjsBodyStats>();
+        }
+
+        if (stats != null)
+        {
+            return JsPayload.FromPlain(Engine, stats.GetView());
+        }
+
+        var perception = handle != null ? PerceptionOf(plugin, handle) : null;
+        return perception?.Self != null ? JsPayload.FromPlain(Engine, perception.Self) : JsValue.Null;
+    }
+
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "NpcAction | null",
+        Description = "Current native action and its last outcome.")]
+    public JsValue Action(string plugin, JsValue entity)
+    {
+        var handle = HandleOf(entity);
+        var perception = handle != null ? PerceptionOf(plugin, handle) : null;
+        return perception?.Action != null ? JsPayload.FromPlain(Engine, perception.Action.ToPlain()) : JsValue.Null;
+    }
+
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "ActionResult",
+        Description = "Requests a native pick action against a pickable ZDO.")]
+    public JsValue Pick(string plugin, JsValue entity, string target)
+    {
+        var handle = HandleOf(entity);
+        if (handle == null)
+        {
+            return JsPayload.FromPlain(Engine, new Dictionary<string, object?>
+            {
+                ["ok"] = false,
+                ["reason"] = "unknown-handle"
+            });
+        }
+
+        var result = WorldManager.Instance?.Command(plugin, handle, "pick", target) ??
+                     CommandResult.Fail("no-world");
+        return JsPayload.FromPlain(Engine, new Dictionary<string, object?>
+        {
+            ["ok"] = result.Ok,
+            ["reason"] = result.Reason
+        });
+    }
+
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "unknown",
+        Description = "Reads one core-owned NPC board value; null when unset.")]
+    public JsValue BoardGet(string plugin, JsValue entity, string key)
+    {
+        var handle = HandleOf(entity);
+        return handle == null ? JsValue.Null : JsPayload.FromPlain(Engine, NpcBoard.Get(handle, key));
+    }
+
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "Record<string, unknown>",
+        Description = "Snapshot of every core-owned board value for one NPC.")]
+    public JsValue BoardSnapshot(string plugin, JsValue entity)
+    {
+        var handle = HandleOf(entity);
+        return handle == null
+            ? JsPayload.Object(Engine).Build()
+            : JsPayload.FromPlain(Engine, NpcBoard.Snapshot(handle));
+    }
+
+    [JsBinding(Scoped = true, Description = "Subscribes to one core-owned NPC board key (empty key = all); returns an id.")]
+    public double BoardOnChange(string plugin, JsValue entity, string key, JsCallback callback)
+    {
+        var handle = HandleOf(entity)
+                     ?? throw new InvalidOperationException("npc.boardOnChange: unknown entity");
+        var id = NpcBoard.Subscribe(plugin, handle, key, callback, entity);
+        foreach (var pair in NpcBoard.Snapshot(handle))
+        {
+            if (!string.IsNullOrWhiteSpace(key) &&
+                !string.Equals(pair.Key, key, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            try
+            {
+                callback.InvokeOn(entity, pair.Key, JsPayload.FromPlain(Engine, pair.Value));
+            }
+            catch (Exception exception)
+            {
+                LogWarn($"npc.boardOnChange replay failed: {exception.Message}");
+            }
+        }
+
+        return id;
+    }
+
+    [JsBinding(Scoped = true, Description = "Removes a core-owned NPC board subscription.")]
+    public bool BoardOff(string plugin, double id) => NpcBoard.Unsubscribe(plugin, (long)id);
 
     [JsBinding(Scoped = true, Description = "True when the world scene can host NPCs.")]
     public bool Available(string plugin) => WorldManager.Instance?.Available == true;
@@ -100,8 +238,9 @@ internal sealed class NpcBindings : JsBindings
     {
         var settings = options is ObjectInstance optionObject ? optionObject : null;
         var faction = OptionalString(settings, "faction");
+        var items = OptionalStrings(settings, "items");
         var sensors = Sensors(settings);
-        if (!NpcDefinition.TryCreate(kind, prefab, tickMs, faction, sensors, out var definition, out var error))
+        if (!NpcDefinition.TryCreate(kind, prefab, tickMs, faction, items, sensors, out var definition, out var error))
         {
             throw new InvalidOperationException(error);
         }
@@ -163,8 +302,7 @@ internal sealed class NpcBindings : JsBindings
             return JsValue.Null;
         }
 
-        instance.Hydrated = true;
-        Invoke(blueprint, instance, instance.OnSpawn, "onSpawn", View(plugin, handle));
+        instance.PendingSpawn = true;
         return instance.Object;
     }
 
@@ -294,6 +432,7 @@ internal sealed class NpcBindings : JsBindings
 
         _blueprints.Remove(plugin);
         _debug.Remove(plugin);
+        NpcBoard.Release(plugin);
         AiSenses.Clear(plugin);
     }
 
@@ -343,14 +482,17 @@ internal sealed class NpcBindings : JsBindings
 
             if (!known && !GameEnvironment.IsServer())
             {
-                Invoke(blueprint, instance, instance.OnSpawn, "onSpawn", View(blueprint.Plugin, handle));
+                instance.PendingSpawn = true;
             }
 
             if (!instance.Hydrated && !GameEnvironment.IsServer() &&
-                ZNetScene.instance?.FindInstance(ResolveId(handle)) != null)
+                BodyReady(blueprint.Plugin, handle))
             {
+                var spawned = instance.PendingSpawn;
+                instance.PendingSpawn = false;
                 instance.Hydrated = true;
-                Invoke(blueprint, instance, instance.OnRehydrate, "onRehydrate", View(blueprint.Plugin, handle));
+                Invoke(blueprint, instance, spawned ? instance.OnSpawn : instance.OnRehydrate,
+                    spawned ? "onSpawn" : "onRehydrate", View(blueprint.Plugin, handle));
             }
         }
 
@@ -369,6 +511,19 @@ internal sealed class NpcBindings : JsBindings
         }
     }
 
+    private static bool BodyReady(string plugin, string handle)
+    {
+        var obj = WorldManager.Instance?.Resolve(plugin, handle);
+        if (obj != null && obj.BodyReady)
+        {
+            return true;
+        }
+
+        var instance = ZNetScene.instance?.FindInstance(ResolveId(handle));
+        var stats = instance?.GetComponent<VjsBodyStats>();
+        return stats != null && stats.Ready;
+    }
+
     private void Tick(Blueprint blueprint)
     {
         if (!GameEnvironment.IsServer() || !blueprint.Tick.Due())
@@ -384,9 +539,14 @@ internal sealed class NpcBindings : JsBindings
 
         foreach (var instance in blueprint.Instances.Values.ToList())
         {
-            var perception = instance.Muted ? null : PerceptionOf(blueprint.Plugin, instance.Handle);
             var obj = manager.Resolve(blueprint.Plugin, instance.Handle);
-            if (perception == null || obj == null)
+            if (obj == null || !obj.BodyReady)
+            {
+                continue;
+            }
+
+            var perception = instance.Muted ? null : PerceptionOf(blueprint.Plugin, instance.Handle);
+            if (perception == null)
             {
                 continue;
             }
@@ -409,58 +569,61 @@ internal sealed class NpcBindings : JsBindings
                     JsPayload.FromPlain(Engine, entry.ToPlain(obj.Position.x, obj.Position.y, obj.Position.z, obj.Yaw, now)));
             }
 
-            ReportIntent(blueprint, instance, perception, obj.Yaw);
+            ReportAction(blueprint, instance, perception, obj.Yaw);
 
             var view = Payload(perception, obj.Yaw);
             if (!instance.Hydrated)
             {
                 instance.Hydrated = true;
+                var spawned = instance.PendingSpawn;
+                instance.PendingSpawn = false;
                 if (_debug.Contains(blueprint.Plugin))
                 {
-                    LogInfo($"[{blueprint.Plugin}] [npc] {blueprint.Kind} {instance.Handle} rehydrated");
+                    LogInfo($"[{blueprint.Plugin}] [npc] {blueprint.Kind} {instance.Handle} {(spawned ? "spawned" : "rehydrated")}");
                 }
-                Invoke(blueprint, instance, instance.OnRehydrate, "onRehydrate", view);
+                Invoke(blueprint, instance, spawned ? instance.OnSpawn : instance.OnRehydrate,
+                    spawned ? "onSpawn" : "onRehydrate", view);
             }
 
             Invoke(blueprint, instance, instance.OnTick, "onTick", view);
         }
     }
 
-    private void ReportIntent(Blueprint blueprint, Instance instance, NpcPerception perception, float yaw)
+    private void ReportAction(Blueprint blueprint, Instance instance, NpcPerception perception, float yaw)
     {
-        var intent = perception.Intent;
-        if (intent == null)
+        var action = perception.Action;
+        if (action == null)
         {
             return;
         }
 
-        var status = intent.Status;
+        var status = action.Status;
         if (_debug.Contains(blueprint.Plugin) &&
-            (intent.Kind != instance.LastIntentKind || status != instance.LastIntent))
+            (action.Kind != instance.LastActionKind || status != instance.LastAction))
         {
-            var target = intent.X.HasValue
-                ? $"{intent.X.Value:0.0},{intent.Y ?? 0d:0.0},{intent.Z ?? 0d:0.0}"
+            var target = action.X.HasValue
+                ? $"{action.X.Value:0.0},{action.Y ?? 0d:0.0},{action.Z ?? 0d:0.0}"
                 : "-";
             LogInfo(
-                $"[{blueprint.Plugin}] [npc] {blueprint.Kind} {instance.Handle} intent " +
-                $"{intent.Kind} {status} reason={intent.Reason ?? "-"} target={target} id={intent.TargetId ?? "-"}");
+                $"[{blueprint.Plugin}] [npc] {blueprint.Kind} {instance.Handle} action " +
+                $"{action.Kind} {status} reason={action.Reason ?? "-"} target={target} id={action.TargetId ?? "-"}");
         }
 
-        instance.LastIntentKind = intent.Kind;
-        if (status is "arrived" or "failed")
+        instance.LastActionKind = action.Kind;
+        if (status is "arrived" or "failed" or "cancelled")
         {
-            if (instance.LastIntent == status)
+            if (instance.LastAction == status)
             {
                 return;
             }
 
-            instance.LastIntent = status;
-            Invoke(blueprint, instance, instance.OnIntent, "onIntent",
-                Payload(perception, yaw), JsPayload.FromPlain(Engine, intent.ToPlain()));
+            instance.LastAction = status;
+            Invoke(blueprint, instance, instance.OnAction, "onAction",
+                Payload(perception, yaw), JsPayload.FromPlain(Engine, action.ToPlain()));
             return;
         }
 
-        instance.LastIntent = status;
+        instance.LastAction = status;
     }
 
     private Instance? CreateInstance(Blueprint blueprint, string handle)
@@ -491,7 +654,7 @@ internal sealed class NpcBindings : JsBindings
                 OnRehydrate = Hook(target, "onRehydrate", blueprint.Kind),
                 OnDespawn = Hook(target, "onDespawn", blueprint.Kind),
                 OnSensed = Hook(target, "onSensed", blueprint.Kind),
-                OnIntent = Hook(target, "onIntent", blueprint.Kind)
+                OnAction = Hook(target, "onAction", blueprint.Kind)
             };
         }
         catch (Exception exception)
@@ -680,6 +843,34 @@ internal sealed class NpcBindings : JsBindings
         }
 
         return value.IsString() ? value.AsString() : throw new ArgumentException($"npc: '{name}' must be a string");
+    }
+
+    private static IReadOnlyList<string>? OptionalStrings(ObjectInstance? options, string name)
+    {
+        var value = options?.Get(name) ?? JsValue.Undefined;
+        if (value.IsUndefined() || value.IsNull())
+        {
+            return null;
+        }
+
+        if (value is not JsArray array)
+        {
+            throw new ArgumentException($"npc: '{name}' must be an array of strings");
+        }
+
+        var list = new List<string>();
+        for (var index = 0u; index < array.Length; index++)
+        {
+            var item = array.Get(index);
+            if (!item.IsString())
+            {
+                throw new ArgumentException($"npc: '{name}' must be an array of strings");
+            }
+
+            list.Add(item.AsString());
+        }
+
+        return list;
     }
 
     private static double Number(ObjectInstance options, string name, double fallback)

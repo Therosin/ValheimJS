@@ -8,7 +8,6 @@ using UnityEngine;
 using ValheimJS.Core;
 using ValheimJS.Entities;
 using ValheimJS.Networking;
-using ValheimJS.World.Navigation;
 
 namespace ValheimJS.World;
 
@@ -22,14 +21,17 @@ internal sealed class WorldManager : IDisposable
     private readonly Core.Networking _network;
     private readonly NetworkScope _scope;
     private readonly NetworkChannel _channel;
-    private readonly string _navRoot;
     private readonly Dictionary<string, WorldObject> _objects = new(StringComparer.Ordinal);
     private readonly Dictionary<string, WorldKind> _kinds = new(StringComparer.Ordinal);
     private readonly Dictionary<string, WorldObject> _subscribed = new(StringComparer.Ordinal);
     private readonly Dictionary<long, HashSet<string>> _peerSets = new();
-    private NavGridNavigation? _navigation;
-    private long _navWorldUid;
+    private readonly Dictionary<long, float> _peerReady = new();
     private readonly List<(string Handle, float X, float Z)> _relevancyObjects = new();
+    private const float ReadyTtl = 10f;
+    private const float ReadyHeartbeat = 3f;
+    private float _nextReady;
+    private bool _readyInFlight;
+    private bool _readyAcked;
     private float _nextRehydrate;
     private float _nextRelevancy;
     private float _nextCleanup;
@@ -52,52 +54,21 @@ internal sealed class WorldManager : IDisposable
 
     internal static WorldManager? Instance { get; private set; }
 
-    internal WorldManager(Core.Networking networking, string navRoot)
+    internal WorldManager(Core.Networking networking)
     {
         _network = networking;
-        _navRoot = navRoot;
         _scope = networking.OpenScope();
         _channel = _scope.Channel(WorldKeys.Channel, "world");
         _channel.OnJson("relevance", OnRelevance);
         _channel.OnJson("entity", OnEntity);
         _channel.HandleJson("sync", HandleSync);
+        _channel.HandleJson("ready", HandleReady);
         Instance = this;
     }
 
     internal bool Available => ZDOMan.instance != null && ZNetScene.instance != null;
 
     internal bool Authority => GameEnvironment.IsServer();
-
-    internal NavGridNavigation? Navigation
-    {
-        get
-        {
-            var generator = WorldGenerator.instance;
-            var zoneSystem = ZoneSystem.instance;
-            if (generator == null || zoneSystem == null)
-            {
-                return null;
-            }
-
-            var worldUid = ZNet.instance != null ? ZNet.instance.GetWorldUID() : 0;
-            if (_navigation != null && _navWorldUid == worldUid)
-            {
-                return _navigation;
-            }
-
-            var volume = new NavVolume(
-                new WorldGeneratorTerrain(),
-                new ZdoObstacleSource(),
-                _navRoot,
-                worldUid,
-                zoneSystem.m_waterLevel);
-            _navigation = new NavGridNavigation(volume);
-            _navWorldUid = worldUid;
-            return _navigation;
-        }
-    }
-
-    internal NavVolume? NavVolume => Navigation?.Volume;
 
     internal void RegisterKind(WorldKind kind)
     {
@@ -168,29 +139,44 @@ internal sealed class WorldManager : IDisposable
         }
 
         kindInfo.Prepare?.Invoke();
-        var prefab = ZNetScene.instance?.GetPrefab(kindInfo.Prefab);
+        var scene = ZNetScene.instance;
+        var prefab = scene?.GetPrefab(kindInfo.Prefab);
         if (prefab == null)
         {
             Plugin.Logger.LogWarning($"world spawn refused: prefab '{kindInfo.Prefab}' is not registered");
             return null;
         }
 
-        var zdo = ZDOMan.instance?.CreateNewZDO(new Vector3(x, y, z), prefab.name.GetStableHashCode());
-        if (zdo == null)
+        var position = GroundPosition(new Vector3(x, y, z));
+        if (!scene!.IsAreaReady(position))
         {
-            Plugin.Logger.LogWarning($"world spawn refused: could not create a ZDO for '{prefab.name}'");
+            Plugin.Logger.LogWarning($"world spawn refused: area not ready at {position.x:0.0},{position.z:0.0}");
+            return null;
+        }
+
+        var instance = UnityEngine.Object.Instantiate(prefab, position, Quaternion.identity);
+        var view = instance.GetComponent<ZNetView>();
+        var zdo = view != null ? view.GetZDO() : null;
+        var character = instance.GetComponent<Character>();
+        var ai = instance.GetComponent<VjsNpcAI>();
+        var stats = instance.GetComponent<VjsBodyStats>();
+        if (view == null || zdo == null || character == null || ai == null)
+        {
+            UnityEngine.Object.Destroy(instance);
+            Plugin.Logger.LogWarning($"world spawn refused: '{kindInfo.Prefab}' did not produce a native body");
             return null;
         }
 
         zdo.Persistent = true;
+        character.m_name = name ?? kind;
         zdo.SetPrefab(prefab.name.GetStableHashCode());
         zdo.Set(WorldKeys.Sim, "server");
         zdo.Set(WorldKeys.Plugin, plugin);
         zdo.Set(WorldKeys.Kind, kind);
         zdo.Set(WorldKeys.Name, name ?? kind);
-        zdo.Set(WorldKeys.HomeX, x);
-        zdo.Set(WorldKeys.HomeY, y);
-        zdo.Set(WorldKeys.HomeZ, z);
+        zdo.Set(WorldKeys.HomeX, position.x);
+        zdo.Set(WorldKeys.HomeY, position.y);
+        zdo.Set(WorldKeys.HomeZ, position.z);
         zdo.Set(WorldKeys.Speed, 0f);
         zdo.Set(WorldKeys.Moving, false);
         zdo.Set(WorldKeys.Generation, 0);
@@ -204,8 +190,12 @@ internal sealed class WorldManager : IDisposable
             Kind = kind,
             Plugin = plugin,
             Name = name ?? kind,
-            Position = new Vector3(x, y, z),
-            Home = new Vector3(x, y, z),
+            Position = character.transform.position,
+            Home = position,
+            View = view,
+            Character = character,
+            AI = ai,
+            Stats = stats,
             KindInfo = kindInfo
         };
         obj.Behavior = kindInfo.Create(obj);
@@ -238,6 +228,7 @@ internal sealed class WorldManager : IDisposable
         }
 
         _objects.Remove(handle);
+        NpcBoard.RemoveHandle(handle);
         return true;
     }
 
@@ -262,15 +253,15 @@ internal sealed class WorldManager : IDisposable
         return string.Equals(obj.Plugin, plugin, StringComparison.Ordinal) ? obj : null;
     }
 
-    internal bool Command(string plugin, string handle, string command, params object?[] args)
+    internal CommandResult Command(string plugin, string handle, string command, params object?[] args)
     {
         if (!Authority)
         {
-            return false;
+            return CommandResult.Fail("not-authority");
         }
 
         var obj = Resolve(plugin, handle);
-        return obj != null && obj.Behavior.Command(obj, command, args);
+        return obj?.Behavior.Command(obj, command, args) ?? CommandResult.Fail("unknown-handle");
     }
 
     internal object? Snapshot(string plugin, string handle)
@@ -461,6 +452,7 @@ internal sealed class WorldManager : IDisposable
             return;
         }
 
+        SyncReference();
         var now = Time.realtimeSinceStartup;
         if (now >= _nextCleanup)
         {
@@ -474,13 +466,27 @@ internal sealed class WorldManager : IDisposable
             Rehydrate();
         }
 
-        Navigation?.BuildPendingZone();
-
         foreach (var obj in _objects.Values.ToList())
         {
             if (obj.Zdo == null)
             {
                 continue;
+            }
+
+            if (obj.Character == null)
+            {
+                obj.BodyBound = false;
+                Relink(obj);
+            }
+
+            if (!obj.BodyBound && obj.BodyReady)
+            {
+                obj.BodyBound = true;
+                obj.Behavior.Bind(obj);
+            }
+            else if (obj.BodyBound && !obj.BodyReady)
+            {
+                obj.BodyBound = false;
             }
 
             obj.TickAccumulator += deltaSeconds * 1000d;
@@ -509,10 +515,25 @@ internal sealed class WorldManager : IDisposable
         if (!_network.Available || _network.ServerPeer == 0 || !ClientReady())
         {
             _synced = false;
+            _readyInFlight = false;
+            _readyAcked = false;
+            _nextReady = 0f;
             return;
         }
 
         var now = Time.realtimeSinceStartup;
+        if (!_readyAcked && !_readyInFlight)
+        {
+            _readyInFlight = true;
+            _nextReady = now + ReadyHeartbeat;
+            _channel.RequestJson(_network.ServerPeer, "ready", "{}", OnReadyReply, 5000);
+        }
+        else if (_readyAcked && now >= _nextReady)
+        {
+            _nextReady = now + ReadyHeartbeat;
+            _channel.EmitJson(_network.ServerPeer, "ready", "{}");
+        }
+
         if (_syncInFlight || now < _nextSync)
         {
             return;
@@ -523,13 +544,46 @@ internal sealed class WorldManager : IDisposable
         _channel.RequestJson(_network.ServerPeer, "sync", "{}", OnSync, 5000);
     }
 
+    private void OnReadyReply(string? error, string? json)
+    {
+        _readyInFlight = false;
+        _readyAcked = string.IsNullOrEmpty(error);
+        if (!string.IsNullOrEmpty(error))
+        {
+            Plugin.Logger.LogWarning("world ready report failed: " + error);
+        }
+    }
+
+    private string? HandleReady(NetworkMessage message, string json)
+    {
+        if (!Authority) return null;
+        var peer = ZNet.instance?.GetPeer(message.Sender);
+        if (peer == null || peer.m_server) return null;
+        _peerReady[message.Sender] = Time.realtimeSinceStartup;
+        return "{}";
+    }
+
+    /// <summary>True when a connected client has reported that its own world is playable.</summary>
+    internal bool PeerReady(long uid)
+    {
+        if (!_peerReady.TryGetValue(uid, out var at)) return false;
+        if (Time.realtimeSinceStartup - at <= ReadyTtl) return true;
+        _peerReady.Remove(uid);
+        return false;
+    }
+
+    /// <summary>Server-side alias: is this player actually in-game (not merely connected)?</summary>
+    internal bool ClientReady(long uid) => PeerReady(uid);
+
     /// <summary>
     /// A connected peer is not enough: the client can still be on the loading screen while the
     /// server is already reachable. True once the local character exists and teleport/load
     /// transitions have settled. Dedicated servers have no local player and return false.
     /// </summary>
     internal static bool ClientReady() =>
-        ZNetScene.instance != null &&
+        GameEnvironment.WorldReady &&
+        ZoneSystem.instance != null &&
+        ZoneSystem.instance.IsActiveAreaLoaded() &&
         Player.m_localPlayer != null &&
         !Player.m_localPlayer.IsTeleporting();
 
@@ -760,6 +814,11 @@ internal sealed class WorldManager : IDisposable
         {
             _peerSets.Remove(stale);
         }
+
+        foreach (var stale in _peerReady.Keys.Where(uid => !active.Contains(uid)).ToList())
+        {
+            _peerReady.Remove(stale);
+        }
     }
 
     private static Vector3 PeerPosition(ZNetPeer peer)
@@ -783,6 +842,121 @@ internal sealed class WorldManager : IDisposable
     /// cannot be reversed into a <c>vjs_</c> name, so ownership is deliberately carried in the
     /// ZDO (`vjs.sim`, `vjs.plugin`, `vjs.kind`).
     /// </summary>
+    /// <summary>
+    /// Dedicated servers do not call Player.SetLocalPlayer, so ZNet never gets a reference
+    /// position and ZNetScene only loads the origin sector. Point the server's scene reference at
+    /// the player (body or ZDO) so native bodies are instantiated around connected clients. Called
+    /// from the server tick and from the ZNetScene hook that runs immediately before the
+    /// create/destroy pass — the hook is what makes the reference valid on the exact frame that
+    /// decides which ZDOs get bodies.
+    /// </summary>
+    internal void SyncReference()
+    {
+        if (!Authority)
+        {
+            return;
+        }
+
+        var net = ZNet.instance;
+        if (net == null || !TryReference(net, out var reference))
+        {
+            return;
+        }
+
+        net.SetReferencePosition(reference);
+    }
+
+    private static bool TryReference(ZNet net, out Vector3 reference)
+    {
+        // Peers carry the client's actual player position; on a dedicated server this is the
+        // only signal that exists before any body has been instantiated.
+        foreach (var peer in net.GetPeers())
+        {
+            if (peer == null || peer.m_server || !peer.IsReady())
+            {
+                continue;
+            }
+
+            var candidate = PeerPosition(peer);
+            if (Usable(candidate))
+            {
+                reference = candidate;
+                return true;
+            }
+        }
+
+        foreach (var character in Character.GetAllCharacters())
+        {
+            if (character == null || !character.IsPlayer() || character.IsDead())
+            {
+                continue;
+            }
+
+            var candidate = character.transform.position;
+            if (Usable(candidate))
+            {
+                reference = candidate;
+                return true;
+            }
+        }
+
+        // A player's ZDO is synced before its body is instantiated, so it is a fresh reference
+        // even while the scene is empty. Without this a dedicated server cannot bootstrap.
+        foreach (var zdo in net.GetAllCharacterZDOS())
+        {
+            if (zdo == null)
+            {
+                continue;
+            }
+
+            var candidate = zdo.GetPosition();
+            if (Usable(candidate))
+            {
+                reference = candidate;
+                return true;
+            }
+        }
+
+        reference = Vector3.zero;
+        return false;
+    }
+
+    /// <summary>Rejects the far-away sentinel vanilla uses for "no position".</summary>
+    private static bool Usable(Vector3 position) =>
+        Mathf.Abs(position.x) < 100000f && Mathf.Abs(position.z) < 100000f;
+
+    /// <summary>Lifts a spawn point to the local terrain surface without lowering it.</summary>
+    private static Vector3 GroundPosition(Vector3 position)
+    {
+        var ground = ZoneSystem.instance != null ? ZoneSystem.instance.GetGroundHeight(position) : position.y;
+        return new Vector3(position.x, Mathf.Max(position.y, ground + 0.05f), position.z);
+    }
+
+    /// <summary>Reattaches a body that ZNetScene re-instantiated, replaying the held intent once.</summary>
+    private static void Relink(WorldObject obj)
+    {
+        var scene = ZNetScene.instance;
+        if (scene == null || !TryParseHandle(obj.Handle, out var id))
+        {
+            return;
+        }
+
+        var instance = scene.FindInstance(id);
+        if (instance == null)
+        {
+            return;
+        }
+
+        obj.View = instance.GetComponent<ZNetView>();
+        obj.Character = instance.GetComponent<Character>();
+        obj.AI = instance.GetComponent<VjsNpcAI>();
+        obj.Stats = instance.GetComponent<VjsBodyStats>();
+        if (obj.Character != null)
+        {
+            obj.Position = obj.Character.transform.position;
+        }
+    }
+
     private void CleanupOrphanedObjects()
     {
         if (!_pluginsLoaded)
@@ -817,7 +991,9 @@ internal sealed class WorldManager : IDisposable
                 zdo.SetOwner(ZDOMan.GetSessionID());
             }
 
-            _objects.Remove(zdo.m_uid.ToString());
+            var cleanupHandle = zdo.m_uid.ToString();
+            _objects.Remove(cleanupHandle);
+            NpcBoard.RemoveHandle(cleanupHandle);
             manager.DestroyZDO(zdo);
             removed++;
         }
@@ -879,12 +1055,26 @@ internal sealed class WorldManager : IDisposable
                 }
 
                 var handle = zdo.m_uid.ToString();
-                if (_objects.ContainsKey(handle))
+                if (_objects.TryGetValue(handle, out var existing))
                 {
+                    if (existing.Character == null || existing.Character.gameObject == null)
+                    {
+                        Relink(existing);
+                    }
+
                     continue;
                 }
 
-                var position = zdo.GetPosition();
+                var instance = scene.FindInstance(zdo.m_uid);
+                var view = instance != null ? instance.GetComponent<ZNetView>() : null;
+                var character = instance != null ? instance.GetComponent<Character>() : null;
+                var ai = instance != null ? instance.GetComponent<VjsNpcAI>() : null;
+                var stats = instance != null ? instance.GetComponent<VjsBodyStats>() : null;
+                var position = character != null ? character.transform.position : zdo.GetPosition();
+                if (character != null)
+                {
+                    character.m_name = zdo.GetString(WorldKeys.Name, kind.Name);
+                }
                 var obj = new WorldObject
                 {
                     Id = zdo.m_uid,
@@ -897,6 +1087,10 @@ internal sealed class WorldManager : IDisposable
                         zdo.GetFloat(WorldKeys.HomeX, position.x),
                         zdo.GetFloat(WorldKeys.HomeY, position.y),
                         zdo.GetFloat(WorldKeys.HomeZ, position.z)),
+                    View = view,
+                    Character = character,
+                    AI = ai,
+                    Stats = stats,
                     Generation = zdo.GetInt(WorldKeys.Generation, 0),
                     KindInfo = kind
                 };
@@ -920,8 +1114,18 @@ internal sealed class WorldManager : IDisposable
             return;
         }
 
-        zdo.SetPosition(obj.Position);
-        zdo.SetRotation(Quaternion.Euler(0f, obj.Yaw, 0f));
+        if (obj.Character != null)
+        {
+            obj.Position = obj.Character.transform.position;
+            obj.Yaw = obj.Character.transform.eulerAngles.y;
+            obj.Speed = obj.Character.GetVelocity().magnitude;
+        }
+        else
+        {
+            zdo.SetPosition(obj.Position);
+            zdo.SetRotation(Quaternion.Euler(0f, obj.Yaw, 0f));
+        }
+
         zdo.Set(WorldKeys.Speed, obj.Speed);
         zdo.Set(WorldKeys.Moving, obj.Moving);
         obj.LastWrite = Time.realtimeSinceStartup;

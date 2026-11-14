@@ -408,11 +408,20 @@ public sealed class JsClassBuilder
             var converted = new object?[parameters.Length];
             for (var index = 0; index < parameters.Length; index++)
             {
+                var parameter = parameters[index];
                 var value = index < args.Length ? args[index] : JsValue.Undefined;
-                converted[index] = value.ToObject();
-                if (converted[index] is double number && parameters[index].ParameterType != typeof(double))
+                if (index >= args.Length && parameter.HasDefaultValue)
                 {
-                    converted[index] = System.Convert.ChangeType(number, parameters[index].ParameterType);
+                    converted[index] = parameter.DefaultValue;
+                    continue;
+                }
+
+                converted[index] = parameter.ParameterType == typeof(JsValue)
+                    ? value
+                    : value.ToObject();
+                if (converted[index] is double number && parameter.ParameterType != typeof(double))
+                {
+                    converted[index] = System.Convert.ChangeType(number, parameter.ParameterType);
                 }
             }
 

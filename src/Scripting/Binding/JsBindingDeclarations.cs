@@ -149,8 +149,35 @@ public static class JsBindingDeclarations
             }
         }
 
+        if (types != null)
+        {
+            foreach (var type in types)
+            {
+                foreach (var member in type.Members)
+                {
+                    CollectText(member.Type, names);
+                    foreach (var parameter in member.Parameters)
+                    {
+                        CollectText(parameter, names);
+                    }
+                }
+            }
+        }
+
         names.ExceptWith(declared);
         return names.ToList();
+    }
+
+    private static void CollectText(string text, ISet<string> names)
+    {
+        foreach (Match match in DeclaredTypePattern.Matches(text))
+        {
+            var name = match.Groups[1].Value;
+            if (!ReservedTypeNames.Contains(name))
+            {
+                names.Add(name);
+            }
+        }
     }
 
     private static void Collect(JsTypeRef type, ISet<string> names)
