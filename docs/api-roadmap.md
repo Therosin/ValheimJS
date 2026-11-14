@@ -14,7 +14,7 @@ are design sketches, not functions a plugin can call.
 | Area | Current support |
 |---|---|
 | Startup | Optional shared/server/client entries, one context per plugin, fixed process side and separate live authority |
-| Storage | Plugin filesystem, document collections, small string storage; persistent account identity and publisher-owned shared metadata |
+| Storage | Plugin filesystem, read-only shipped assets, document collections, small string storage; persistent account identity and publisher-owned shared metadata |
 | Policy | Native roles, grants and denials; JS access queries; default admin/staff/player roles |
 | Commands | Native registry, C#/JS command classes, aliases, leading options, async validation/execution, role/permission gates, static/contextual help |
 | Administration | Private `!manage:roles`, `!manage:permission` and `!manage:user` commands; Valheim admin recovery and delegated management permission |
