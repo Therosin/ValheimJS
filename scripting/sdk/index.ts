@@ -47,6 +47,7 @@ export type { Account } from "./api/types";
 export type { ChatCommandDefinition } from "./api/types";
 export type { SyncEntity } from "./api/types";
 export { fs, game, nav, players, world } from "./access";
+export { assets, importText, importYaml, importToml } from "./assets";
 export type {
     Handler,
     HostApiSurface,

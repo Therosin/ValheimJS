@@ -1,0 +1,6 @@
+id: look
+description: Turn toward the shared target.
+root:
+  action: look-at
+  args:
+    target: "@[target]"

@@ -1,0 +1,15 @@
+id: seek-home
+description: Find an empty bed or door, walk there and claim it.
+imports:
+  move: ./micro/move.yaml
+  wait: ./micro/wait.yaml
+  claim: ./micro/claim.yaml
+state:
+  waitSeconds: 2
+root:
+  type: sequence
+  children:
+    - action: select-shelter
+    - use: move
+    - use: claim
+    - use: wait

@@ -1,0 +1,7 @@
+id: move
+description: Walk to the shared destination and finish when the host intent settles.
+root:
+  action: move-to
+  args:
+    destination: "@[destination]"
+    run: "@[run]"

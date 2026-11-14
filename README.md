@@ -172,7 +172,8 @@ export default definePlugin(Greeter);
 | `AccountService` | `AccountBindings` | authoritative account queries and publisher-owned metadata |
 | `PermissionService` | `PermissionBindings` | authoritative role and permission queries |
 | `input` | `InputBindings` | keyboard bindings + phase callbacks (client) |
-| `fs` | `FileSystemBindings` | sandboxed files |
+| `fs` | `FileSystemBindings` | sandboxed data files |
+| `assets` | `AssetBindings` | read-only files shipped in the plugin folder |
 | `db` | `DatabaseBindings` | per-plugin document collections |
 | `signals` | `SignalBindings` | host-sampled conditions with enter/exit events |
 

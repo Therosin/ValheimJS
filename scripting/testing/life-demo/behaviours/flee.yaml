@@ -1,0 +1,13 @@
+id: flee
+description: Run away from the nearest threat and pause once clear.
+imports:
+  move: ./micro/move.yaml
+  wait: ./micro/wait.yaml
+state:
+  waitSeconds: 2
+root:
+  type: sequence
+  children:
+    - action: select-flee-point
+    - use: move
+    - use: wait

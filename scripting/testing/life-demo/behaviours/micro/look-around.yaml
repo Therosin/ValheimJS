@@ -1,0 +1,4 @@
+id: look-around
+description: Turn toward a nearby point without needing a target entry.
+root:
+  action: look-around

@@ -143,6 +143,14 @@ for (const name of targets) {
         );
     }
 
+    // Shipped read-only files (YAML behaviours, TOML/text assets) stay outside the JS bundle.
+    for (const folder of ["assets", "behaviours"]) {
+        const source = join(sourceDir, folder);
+        if (existsSync(source)) {
+            cpSync(source, join(outdir, folder), { recursive: true, force: true });
+        }
+    }
+
     console.log(`✓ ${name} → ${outdir} (${built.join(", ")})`);
 
     if (deployRoot) {

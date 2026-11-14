@@ -153,6 +153,28 @@ export interface FsApi {
 }
 
 /**
+ * Read-only access to files shipped with this plugin.
+ */
+export interface AssetsApi {
+    /**
+     * True when a shipped file or folder exists.
+     */
+    exists(path: string): boolean;
+    /**
+     * Entry names in a shipped folder, sorted; empty when missing.
+     */
+    list(path: string): string[];
+    /**
+     * File text, or null when missing.
+     */
+    read(path: string): string | null;
+    /**
+     * Absolute path of this plugin's folder.
+     */
+    root(): string;
+}
+
+/**
  * Per-plugin document collections.
  */
 export interface DbApi {
@@ -667,6 +689,7 @@ export interface ChatCommandsApi {
 export interface Api {
     game: GameApi;
     fs: FsApi;
+    assets: AssetsApi;
     db: DbApi;
     signals: SignalsApi;
     world: WorldApi;

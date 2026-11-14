@@ -1,0 +1,6 @@
+id: claim
+description: Claim the shared target as this NPC's home.
+root:
+  action: claim-home
+  args:
+    target: "@[target]"

@@ -33,6 +33,7 @@ client branch; session authority is checked live. See [Process branches](guides/
 | Script engine, branch components, dependency order, contexts and timers | `Scripting/` | Plugin descriptors and host API |
 | Native values, cadence, scoped registries and JS classes | `Scripting/Binding/` (`JsPayload`, `Ticker`, `ScopedBindings`, `JsCallback`), `Scripting/Types/` (`JsTypeRegistry`) | `ReturnKind.Native`, `[JsType]` classes, all bindings |
 | Atomic per-document persistence | `Storage/DocumentDatabase.cs` | Plugin document store and host service stores |
+| Read-only shipped plugin files and templates | `Bindings/AssetBindings.cs` | `assets` binding and `importText`/`importYaml`/`importToml` |
 
 Bindings adapt values and callbacks. The SDK shapes calls and types; it does not own subsystem
 registries. Native services do not depend on JS binding classes. Game-specific hooks, transport
@@ -108,7 +109,7 @@ the broader game-snapshot type, so that annotation alone does not guarantee the 
 
 `task check` covers typechecking, SDK unit tests, native compilation, generated-declaration drift,
 bundling, binding/process/network/command/account/management/world-handle/world-manager/signals/
-behaviour/ai/ui probes and example reloads. `--probe-world-manager` covers relevance hysteresis/diffs, A* paths
+behaviour/ai/ui/life/assets probes and example reloads. `--probe-world-manager` covers relevance hysteresis/diffs, A* paths
 (flat, blocked, stairs, water), nav-cache round-trips and draw/message DTOs. Role and help probes include actual JS registration through the native bindings,
 not only facade mocks. Live dedicated-server checks confirmed the heartbeat payload, the absence
 of client-only `ui`/`input`, query-only account/permission bindings and session-scoped spawn

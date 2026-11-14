@@ -1,0 +1,6 @@
+id: wait
+description: Wait for the shared waitSeconds value and finish when the host intent settles.
+root:
+  action: wait
+  args:
+    seconds: "@[waitSeconds]"

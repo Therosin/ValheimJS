@@ -11,7 +11,13 @@ manifest.ini    what it is, what it needs
 shared.js       common component (optional)
 server.js       dedicated-server component (optional)
 client.js       client component (optional)
+assets/         read-only text/templates copied with the plugin (optional)
+behaviours/     YAML behaviour trees copied with the plugin (optional)
 ```
+
+`assets/` and `behaviours/` are copied by `build.ts` and read at runtime through the read-only
+`assets` binding (`importText`, `importYaml`, `importToml`). They are not part of the JS bundle, so
+you can ship YAML trees and edit them without rebuilding the scripts.
 
 ## manifest.ini
 

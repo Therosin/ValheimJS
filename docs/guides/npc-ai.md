@@ -387,22 +387,29 @@ the brain from leaking after the entity is removed.
 
 ## Example: a villager with a life
 
-`scripting/testing/life-demo` is a complete utility-driven example. One villager is spawned near
-the first player (or at `home=x,y,z` from its config for a dedicated test world), then a central
-brain picks one simple behaviour at a time from needs and perception: `flee`, `rest`, `return`,
-`seekHome`, `socialize`, `inspect`, `forage`, `wander`.
+`scripting/testing/life-demo` is a complete utility-driven example with a deliberately split brain:
+
+- **Brain** (`lib/brain.ts`) owns needs, eligibility, utility scoring, interruption, memory and AI
+  instance lifecycle. It picks one activity at a time, then ticks the matching YAML tree with
+  `ai.instantiate`/`ai.tick`/`ai.release`.
+- **YAML behaviours** (`behaviours/*.yaml`) own *how* the activity runs. `wander`, `forage`,
+  `return-home`, `rest`, `seek-home`, `inspect`, `socialize` and `flee` compose the micro trees in
+  `behaviours/micro/` (`move`, `wait`, `look`, `look-around`, `face`, `claim`).
+- **Loader** (`lib/behaviours.ts`) reads the YAML from the plugin folder through `importYaml` and
+  compiles each activity once in setup; the YAML ships as files rather than source strings.
+
+The activity names are also the manual/LLM vocabulary: `brain.request(activity, target?)` cancels
+the current tree and runs one activity before normal selection resumes.
 
 - Needs (`energy`, `social`, `curiosity`) drift every tick; behaviours satisfy or spend them.
-- `seekHome` claims a visible empty `bed`/`door` as the persistent home.
-- `forage` walks 10–18 m from home, looks around and lowers curiosity; `return` scores higher once
-  the villager is far away, it is getting dark or energy is low.
+- `seek-home` claims a visible empty `bed`/`door` as the persistent home.
+- `forage` walks 10–18 m from home, looks around and lowers curiosity; `return-home` scores higher
+  once the villager is far away, it is getting dark or energy is low.
 - Recognition facts live in `npc.memory` (`home`, `shelter`, `visited`, `blocked`, `lastMet`), so a
   reload or restart resumes the same life.
-- `controller.request(activity, target?)` is the seam for manual control or an LLM planner: issue
-  one of the same activity names and the brain resumes normal selection afterwards.
 
-The brain and its tests are in `scripting/testing/life-demo/lib/controller.ts` and
-`scripting/test/life-demo.test.ts`; the plugin wrapper is `shared/main.ts`.
+Tests: `scripting/test/life-demo.test.ts` covers brain selection/lifecycle; `task probe:life`
+compiles the real YAML files and asserts each activity's composed action sequence.
 
 ## Authority, cadence and limits
 

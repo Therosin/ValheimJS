@@ -1,0 +1,17 @@
+id: rest
+description: Go home if needed, then sleep for the recovered wait duration.
+imports:
+  move: ./micro/move.yaml
+  wait: ./micro/wait.yaml
+state:
+  waitSeconds: 20
+root:
+  type: sequence
+  children:
+    - condition: at-home
+      false:
+        type: sequence
+        children:
+          - action: select-home
+          - use: move
+    - use: wait

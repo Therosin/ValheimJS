@@ -1,4 +1,5 @@
 import {
+    ai,
     authorityHandler,
     definePlugin,
     log,
@@ -8,9 +9,23 @@ import {
     type NpcPos,
     type NpcView
 } from "../../../sdk/index";
-import { VillagerController } from "../lib/controller";
+import { compileBehaviours } from "../lib/behaviours";
+import {
+    VillagerBrain,
+    type BehaviorOutcome,
+    type BehaviorRuntime,
+    type VillagerActivity
+} from "../lib/brain";
 
 const NAMES = ["Astrid", "Bjorn", "Freya", "Leif", "Runa", "Sigrid", "Torsten", "Ylva"];
+
+const runtime: BehaviorRuntime = {
+    instantiate: (treeId, options) => ai.instantiate(treeId, options),
+    tick: (instanceId, deltaTime) => ai.tick(instanceId, deltaTime).status as BehaviorOutcome | "cancelled",
+    release: instanceId => {
+        ai.release(instanceId);
+    }
+};
 
 /** `home=x,y,z` keeps the villager alive on a dedicated server with no players. */
 function configuredHome(config: (key: string) => string | null): NpcPos | null {
@@ -21,31 +36,36 @@ function configuredHome(config: (key: string) => string | null): NpcPos | null {
     return { x: parts[0], y: parts[1], z: parts[2] };
 }
 
-function makeVillager() {
+function makeVillager(trees: Record<VillagerActivity, string>) {
     const Base = npcBase();
     return class Villager extends Base {
-        private controller: VillagerController | null = null;
+        private brain: VillagerBrain | null = null;
         private lastSave = 0;
 
         onSpawn(view: NpcView) {
-            this.attach(view);
+            if (!this.brain) this.attach(view);
         }
 
         onRehydrate(view: NpcView) {
-            this.attach(view);
+            if (!this.brain) this.attach(view);
         }
 
         onTick(view: NpcView) {
-            if (!this.controller) this.attach(view);
-            const controller = this.controller;
-            if (!controller) return;
+            if (!this.brain) this.attach(view);
+            const brain = this.brain;
+            if (!brain) return;
 
-            controller.tick(view);
-            if (controller.isDirty && Date.now() - this.lastSave >= 5000) {
-                npc.setMemory(this, controller.snapshotMemory());
-                controller.clearDirty();
+            brain.tick(view);
+            if (brain.isDirty && Date.now() - this.lastSave >= 5000) {
+                npc.setMemory(this, brain.snapshotMemory());
+                brain.clearDirty();
                 this.lastSave = Date.now();
             }
+        }
+
+        onDespawn() {
+            this.brain?.dispose();
+            this.brain = null;
         }
 
         onIntent(_view: NpcView, intent: NpcIntent) {
@@ -55,19 +75,22 @@ function makeVillager() {
         }
 
         private attach(view: NpcView) {
-            const controller = new VillagerController({
+            this.brain?.dispose();
+            const brain = new VillagerBrain({
                 actor: this,
+                runtime,
+                behaviors: trees,
                 home: view.home,
                 memory: npc.memory(this),
                 log: message => log(`[${this.name}] ${message}`)
             });
-            this.controller = controller;
+            this.brain = brain;
             this.lastSave = Date.now();
-            npc.setMemory(this, controller.snapshotMemory());
-            const home = controller.homePosition;
+            npc.setMemory(this, brain.snapshotMemory());
+            const home = brain.homePosition;
             log(
                 `[${this.name}] started at ${Math.round(view.x)}, ${Math.round(view.z)}; ` +
-                    `home ${Math.round(home.x)}, ${Math.round(home.z)}${controller.isSheltered ? " (shelter)" : ""}`
+                    `home ${Math.round(home.x)}, ${Math.round(home.z)}${brain.isSheltered ? " (shelter)" : ""}`
             );
         }
     };
@@ -77,8 +100,8 @@ export default definePlugin({
     version: "1.0.0",
 
     setup(ctx) {
-        if (!("npc" in ctx.host.api)) return;
-        npc.register(makeVillager(), {
+        if (!("npc" in ctx.host.api) || !("assets" in ctx.host.api)) return;
+        npc.register(makeVillager(compileBehaviours()), {
             kind: "villager",
             prefab: "Dverger",
             tickMs: 500,
@@ -102,10 +125,17 @@ export default definePlugin({
 
     onServerTick: authorityHandler(ctx => {
         if (!npc.available()) return;
-        if (npc.handles("villager").length > 0) {
+        const existing = npc.handles("villager");
+        if (existing.length > 0) {
             ctx.state.spawned = true;
+            for (const duplicate of existing.slice(1)) npc.despawn(duplicate);
             return;
         }
+
+        // Let WorldManager's 10 s rehydrate pass adopt older NPCs before spawning a new one.
+        const spawnAt = typeof ctx.state.spawnAt === "number" ? ctx.state.spawnAt : 0;
+        if (spawnAt === 0) ctx.state.spawnAt = Date.now() + 12_000;
+        if (spawnAt === 0 || Date.now() < spawnAt) return;
 
         const home = configuredHome(key => ctx.host.config(key));
         let position: NpcPos | null = home;

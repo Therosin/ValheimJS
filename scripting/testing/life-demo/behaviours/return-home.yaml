@@ -1,0 +1,13 @@
+id: return-home
+description: Walk home and pause.
+imports:
+  move: ./micro/move.yaml
+  wait: ./micro/wait.yaml
+state:
+  waitSeconds: 1.5
+root:
+  type: sequence
+  children:
+    - action: select-home
+    - use: move
+    - use: wait

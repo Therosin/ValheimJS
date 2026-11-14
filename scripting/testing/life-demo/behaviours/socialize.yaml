@@ -1,0 +1,21 @@
+id: socialize
+description: Approach a player, face them, remember the meeting and pause.
+imports:
+  move: ./micro/move.yaml
+  wait: ./micro/wait.yaml
+  face: ./micro/face.yaml
+state:
+  waitSeconds: 3
+root:
+  type: sequence
+  children:
+    - action: select-target
+      args:
+        kind: player
+        maxDistance: 18
+    - use: move
+    - use: face
+    - action: remember-meeting
+      args:
+        target: "@[target]"
+    - use: wait

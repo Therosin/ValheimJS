@@ -70,4 +70,5 @@ bun run build.ts greeter --deploy "<server>/ValheimJS/plugins"
 - The API version is `1`. A plugin declaring another `apiVersion` is refused at load.
 - The game API is grouped: `game`, `world`, `players`, `npc`, `ai`, `ui`, `nav`, `draw`,
   `signals`, `net`, `sync`, `ChatCommands`, `AccountService`, `PermissionService`, `input`, `fs`,
-  `db`. Types are generated from the C# bindings, so your editor always matches the running host.
+  `assets`, `db`. Types are generated from the C# bindings, so your editor always matches the
+  running host.

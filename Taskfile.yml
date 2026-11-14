@@ -144,6 +144,8 @@ tasks:
       - task: probe:behaviour
       - task: probe:ai
       - task: probe:ui
+      - task: probe:life
+      - task: probe:assets
       - task: harness
 
   probe:management:
@@ -177,6 +179,16 @@ tasks:
     desc: Verify the ai binding over compiled behaviour trees
     deps: [build]
     cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-ai
+
+  probe:life:
+    desc: Verify the life-demo YAML behaviour library and its imports
+    deps: [build]
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-life
+
+  probe:assets:
+    desc: Verify read-only shipped plugin assets and path confinement
+    deps: [build]
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-assets
 
   probe:ui:
     desc: Verify the UI compiler, imports, components, slots and bindings

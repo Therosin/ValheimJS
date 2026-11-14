@@ -1,0 +1,6 @@
+id: face
+description: Face the shared target by id.
+root:
+  action: face
+  args:
+    target: "@[target]"

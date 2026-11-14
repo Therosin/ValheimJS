@@ -31,6 +31,7 @@
     <Compile Include="..\src\Networking\IRpcTransport.cs" LinkBase="Shared\Networking" />
     <Compile Include="..\src\Networking\NetworkJson.cs" LinkBase="Shared\Networking" />
     <Compile Include="..\src\Bindings\NetBindings.cs" LinkBase="Shared\Bindings" />
+    <Compile Include="..\src\Bindings\AssetBindings.cs" LinkBase="Shared\Bindings" />
     <Compile Include="..\src\Bindings\SyncBindings.cs" LinkBase="Shared\Bindings" />
     <Compile Include="..\src\Bindings\SignalBindings.cs" LinkBase="Shared\Bindings" />
     <Compile Include="..\src\Bindings\AiBindings.cs" LinkBase="Shared\Bindings" />

@@ -25,7 +25,8 @@ has the exact signatures.
 | [`signals`](#signals) | host-sampled observed conditions |
 | [`ai`](#ai) | YAML behaviour trees for scripted AI |
 | [`ui`](#ui) | client-side YAML panels with bound values and events |
-| [`fs`](#fs) | sandboxed files |
+| [`fs`](#fs) | sandboxed data files |
+| [`assets`](#assets) | read-only files shipped with the plugin |
 | [`db`](#db) | per-plugin document collections |
 
 End-to-end NPC examples live in [NPCs and AI](npc-ai.md).
@@ -591,6 +592,33 @@ fs.mkdir(path: string): void
 fs.delete(path: string): void             // file, or folder recursively
 fs.join(a: string, b: string): string
 ```
+
+## `assets`
+
+Read-only access to files shipped inside your plugin folder (next to `shared.js`). The `fs`
+sandbox still points at `ValheimJS/data/<plugin>/`; `assets` is for YAML, TOML and other templates
+that belong to the mod. Escaping the plugin folder throws.
+
+```ts
+assets.root(): string
+assets.exists(path: string): boolean
+assets.read(path: string): string | null  // null when missing
+assets.list(path: string): string[]
+```
+
+The SDK wraps the common cases synchronously:
+
+```ts
+import { importText, importYaml, importToml } from "../../../sdk/index";
+
+const tree = importYaml("behaviours/wander.yaml"); // text; pass to ai.compile
+const config = importToml("config/defaults.toml"); // text; parse in the plugin
+const notes = importText("notes.txt");
+```
+
+`importYaml`/`importToml` return raw text. ValheimJS parses behaviour YAML through `ai.compile`;
+it does not bundle a TOML parser, so parse TOML in the plugin or with a bundled library. `build.ts`
+copies `assets/` and `behaviours/` from the plugin source into the bundle output.
 
 ## `db`
 

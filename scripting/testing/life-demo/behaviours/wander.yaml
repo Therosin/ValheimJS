@@ -1,0 +1,18 @@
+id: wander
+description: Pick a nearby point and amble there.
+imports:
+  move: ./micro/move.yaml
+  wait: ./micro/wait.yaml
+state:
+  waitSeconds: 2
+root:
+  type: sequence
+  children:
+    - action: select-point
+      args:
+        around: home
+        min: 3
+        max: 8
+        run: false
+    - use: move
+    - use: wait

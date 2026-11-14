@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import type { NpcIntent, NpcPos, NpcSensed, NpcView } from "../sdk/api/types";
-import { VillagerController, type VillagerActor } from "../testing/life-demo/lib/controller";
+import {
+    VillagerBrain,
+    type BehaviorHandlers,
+    type BehaviorOutcome,
+    type BehaviorRuntime,
+    type VillagerActor,
+    type VillagerActivity
+} from "../testing/life-demo/lib/brain";
 
 class FakeActor implements VillagerActor {
     readonly calls: string[] = [];
@@ -30,6 +37,67 @@ class FakeActor implements VillagerActor {
         return true;
     }
 }
+
+class FakeRuntime implements BehaviorRuntime {
+    readonly started: string[] = [];
+    readonly released: string[] = [];
+    status: BehaviorOutcome | "cancelled" = "running";
+    handlers: BehaviorHandlers | null = null;
+    state: Record<string, unknown> = {};
+    private next = 0;
+
+    instantiate(treeId: string, options: BehaviorHandlers & { this?: unknown; state?: Record<string, unknown> }) {
+        this.started.push(treeId);
+        this.handlers = options;
+        this.state = options.state ?? {};
+        return `instance-${++this.next}`;
+    }
+
+    tick(): BehaviorOutcome | "cancelled" {
+        return this.status;
+    }
+
+    release(instanceId: string): void {
+        this.released.push(instanceId);
+    }
+
+    act(name: string, args: Record<string, unknown> = {}, view?: NpcView): BehaviorOutcome {
+        if (!this.handlers) throw new Error("no active behaviour");
+        const state = { ...this.state, ...(view ? { senses: view } : {}) };
+        const result = this.handlers.action(name, {
+            args,
+            state,
+            this: null,
+            deltaTime: 0.5,
+            interrupted: false
+        });
+        this.state = state;
+        return result;
+    }
+
+    condition(name: string, view?: NpcView): boolean {
+        if (!this.handlers) throw new Error("no active behaviour");
+        const state = { ...this.state, ...(view ? { senses: view } : {}) };
+        return this.handlers.condition(name, {
+            args: {},
+            state,
+            this: null,
+            deltaTime: 0.5,
+            interrupted: false
+        });
+    }
+}
+
+const behaviors: Record<VillagerActivity, string> = {
+    wander: "wander",
+    inspect: "inspect",
+    socialize: "socialize",
+    forage: "forage",
+    seekHome: "seekHome",
+    return: "return",
+    rest: "rest",
+    flee: "flee"
+};
 
 const idle: NpcIntent = { kind: "idle", status: "idle", reason: null, targetId: null, target: null };
 
@@ -85,9 +153,18 @@ function sensed(overrides: Partial<NpcSensed>): NpcSensed {
     };
 }
 
-function controller(actor: FakeActor, options: { home?: NpcPos; memory?: Record<string, unknown>; needs?: { energy?: number; social?: number; curiosity?: number } } = {}) {
-    return new VillagerController({
-        actor,
+function brain(
+    runtime: BehaviorRuntime,
+    options: {
+        memory?: Record<string, unknown>;
+        needs?: { energy?: number; social?: number; curiosity?: number };
+        home?: NpcPos;
+    } = {}
+) {
+    return new VillagerBrain({
+        actor: new FakeActor(),
+        runtime,
+        behaviors,
         home: options.home ?? { x: 0, y: 10, z: 0 },
         memory: options.memory,
         needs: { curiosity: 0.4, ...options.needs },
@@ -95,111 +172,76 @@ function controller(actor: FakeActor, options: { home?: NpcPos; memory?: Record<
     });
 }
 
-describe("villager controller", () => {
-    test("wanders around home when nothing needs attention", () => {
-        const actor = new FakeActor();
-        const brain = controller(actor);
-        expect(brain.tick(view(), 1000)).toBe("wander");
-        expect(actor.calls[0]).toStartWith("moveTo ");
-        expect(actor.calls[0]).toContain("run=false");
+describe("villager brain", () => {
+    test("starts the selected YAML activity", () => {
+        const runtime = new FakeRuntime();
+        const current = brain(runtime);
+        expect(current.tick(view(), 1000)).toBe("wander");
+        expect(runtime.started).toEqual(["wander"]);
     });
 
-    test("flees a visible enemy with run enabled", () => {
-        const actor = new FakeActor();
-        const brain = controller(actor);
+    test("flees a visible enemy", () => {
+        const runtime = new FakeRuntime();
+        const current = brain(runtime);
         const enemy = sensed({ id: "enemy", enemy: true, distance: 4, pos: { x: 4, y: 10, z: 0 } });
-        expect(brain.tick(view({ nearby: [enemy] }), 1000)).toBe("flee");
-        expect(actor.calls[0]).toContain("run=true");
+        current.tick(view({ nearby: [enemy] }), 1000);
+        expect(runtime.started).toEqual(["flee"]);
+        expect(runtime.act("select-flee-point", {}, view({ nearby: [enemy] }))).toBe("success");
+        expect(runtime.state.run).toBe(true);
     });
 
-    test("rests at home when night and tired, then recovers energy", () => {
-        const actor = new FakeActor();
-        const brain = controller(actor, { needs: { energy: 0.2 } });
+    test("rests at night and lets the activity set the wait duration", () => {
+        const runtime = new FakeRuntime();
+        const current = brain(runtime, { needs: { energy: 0.2 } });
         const night = view({ environment: { day: 1, isDay: false, biome: "Meadows", weather: null } });
-
-        brain.tick(night, 1000);
-        expect(brain.current).toBe("rest");
-        expect(actor.calls[0]).toStartWith("wait ");
-
-        night.intent = { ...idle, kind: "wait", status: "arrived" };
-        brain.tick(night, 2000);
-        expect(brain.needs.energy).toBeGreaterThan(0.2);
-        expect(brain.current).toBe("rest");
+        current.tick(night, 1000);
+        expect(runtime.started).toEqual(["rest"]);
+        expect(typeof runtime.state.waitSeconds).toBe("number");
+        expect(current.needs.energy).toBeGreaterThan(0);
     });
 
-    test("socializes with a nearby player and records the meeting", () => {
-        const actor = new FakeActor();
-        const brain = controller(actor, { needs: { social: 0.9, curiosity: 0.1 } });
+    test("socializes with a nearby player", () => {
+        const runtime = new FakeRuntime();
+        const current = brain(runtime, { needs: { social: 0.9, curiosity: 0.1 } });
         const player = sensed({ id: "player-1", name: "Astrid", isPlayer: true, distance: 6, pos: { x: 6, y: 10, z: 0 } });
-        const current = view({ nearby: [player] });
-
-        brain.tick(current, 1000);
-        expect(brain.current).toBe("socialize");
-        expect(actor.calls[0]).toContain("moveTo 6,10,0");
-
-        current.intent = { ...idle, kind: "moveTo", status: "arrived" };
-        brain.tick(current, 2000);
-        expect(actor.calls).toContain("face player-1");
-
-        current.intent = { ...idle, kind: "face", status: "arrived" };
-        brain.tick(current, 3000);
-        expect(actor.calls.some(call => call.startsWith("wait "))).toBe(true);
-
-        current.intent = { ...idle, kind: "wait", status: "arrived" };
-        brain.tick(current, 4000);
-        expect(brain.needs.social).toBeLessThan(0.9);
-        expect(brain.snapshotMemory().lastMet).toMatchObject({ id: "player-1", name: "Astrid" });
+        current.tick(view({ nearby: [player] }), 1000);
+        expect(runtime.started).toEqual(["socialize"]);
+        expect(runtime.act("select-target", { kind: "player", maxDistance: 18 }, view({ nearby: [player] }))).toBe("success");
+        expect((runtime.state.target as NpcSensed).id).toBe("player-1");
+        expect(runtime.act("remember-meeting")).toBe("success");
+        expect(current.snapshotMemory().lastMet).toMatchObject({ id: "player-1", name: "Astrid" });
     });
 
-    test("inspects an unknown object once, then remembers it", () => {
-        const actor = new FakeActor();
-        const brain = controller(actor, { needs: { social: 0.1, curiosity: 0.9 } });
+    test("inspects an unknown object and marks it visited", () => {
+        const runtime = new FakeRuntime();
+        const current = brain(runtime, { needs: { social: 0.1, curiosity: 0.9 } });
         const chest = sensed({ id: "chest-1", name: "Chest", kind: "container", isObject: true, distance: 4, pos: { x: 4, y: 10, z: 0 } });
-        const current = view({ objects: [chest] });
-
-        brain.tick(current, 1000);
-        expect(brain.current).toBe("inspect");
-
-        current.intent = { ...idle, kind: "moveTo", status: "arrived" };
-        brain.tick(current, 2000);
-        expect(actor.calls).toContain("lookAt 4,10,0");
-
-        current.intent = { ...idle, kind: "lookAt", status: "arrived" };
-        brain.tick(current, 3000);
-        expect(actor.calls.some(call => call.startsWith("wait "))).toBe(true);
-
-        current.intent = { ...idle, kind: "wait", status: "arrived" };
-        brain.tick(current, 4000);
-        expect(brain.snapshotMemory().visited).toContain("chest-1");
+        const currentView = view({ objects: [chest] });
+        current.tick(currentView, 1000);
+        expect(runtime.started).toEqual(["inspect"]);
+        expect(runtime.act("select-target", { kind: "object", maxDistance: 14 }, currentView)).toBe("success");
+        expect(runtime.act("mark-visited")).toBe("success");
+        expect(current.snapshotMemory().visited).toContain("chest-1");
     });
 
-    test("uses remembered home and accepts a manual request", () => {
-        const actor = new FakeActor();
-        const brain = controller(actor, { memory: { home: { x: 50, y: 12, z: -20 } }, needs: { energy: 0.9 } });
-        expect(brain.snapshotMemory().home).toEqual({ x: 50, y: 12, z: -20 });
+    test("foraging ends homesick and selects return", () => {
+        const runtime = new FakeRuntime();
+        const current = brain(runtime, { needs: { curiosity: 0.95, social: 0.9, energy: 0.9 } });
+        current.tick(view(), 1000);
+        expect(runtime.started).toEqual(["forage"]);
 
-        brain.request("rest", null, 1000);
-        brain.tick(view(), 1000);
-        expect(brain.current).toBe("rest");
+        runtime.status = "success";
+        current.tick(view({ x: 20 }), 2000);
+        runtime.status = "running";
+
+        const player = sensed({ id: "player-1", isPlayer: true, distance: 5, pos: { x: 25, y: 10, z: 0 } });
+        current.tick(view({ x: 20, nearby: [player] }), 3000);
+        expect(runtime.started.at(-1)).toBe("return");
     });
 
-    test("forages away from home when curious during the day", () => {
-        const actor = new FakeActor();
-        const brain = controller(actor, { needs: { curiosity: 0.95, energy: 0.9 } });
-        expect(brain.tick(view(), 1000)).toBe("forage");
-        expect(actor.calls[0]).toContain("run=true");
-    });
-
-    test("returns home when it has wandered far away", () => {
-        const actor = new FakeActor();
-        const brain = controller(actor, { needs: { curiosity: 0.4, energy: 0.9 } });
-        expect(brain.tick(view({ x: 40, z: 0 }), 1000)).toBe("return");
-        expect(actor.calls[0]).toContain("moveTo 0,10,0");
-    });
-
-    test("claims an empty bed as its home", () => {
-        const actor = new FakeActor();
-        const brain = controller(actor, { needs: { curiosity: 0.4, social: 0.1, energy: 0.9 } });
+    test("seeks an empty bed and claims it through the action primitives", () => {
+        const runtime = new FakeRuntime();
+        const current = brain(runtime, { needs: { social: 0.1, curiosity: 0.4, energy: 0.9 } });
         const bed = sensed({
             id: "bed-1",
             name: "Bed",
@@ -208,75 +250,40 @@ describe("villager controller", () => {
             distance: 9,
             pos: { x: 9, y: 11, z: 0 }
         });
-        const current = view({ objects: [bed] });
-
-        brain.tick(current, 1000);
-        expect(brain.current).toBe("seekHome");
-        expect(brain.isSheltered).toBe(false);
-
-        current.intent = { ...idle, kind: "moveTo", status: "arrived" };
-        brain.tick(current, 2000);
-        expect(brain.isSheltered).toBe(true);
-        expect(brain.homePosition).toEqual({ x: 9, y: 11, z: 0 });
-        expect(brain.snapshotMemory().shelter).toBe("bed-1");
-        expect(actor.calls).toContain("lookAt 9,11,0");
+        const currentView = view({ objects: [bed] });
+        current.tick(currentView, 1000);
+        expect(runtime.started).toEqual(["seekHome"]);
+        expect(runtime.act("select-shelter", {}, currentView)).toBe("success");
+        expect(runtime.act("claim-home")).toBe("success");
+        expect(current.isSheltered).toBe(true);
+        expect(current.homePosition).toEqual({ x: 9, y: 11, z: 0 });
+        expect(current.snapshotMemory().shelter).toBe("bed-1");
     });
 
-    test("a completed forage trip makes the brain head home", () => {
-        const actor = new FakeActor();
-        const brain = controller(actor, { needs: { curiosity: 0.95, social: 0.9, energy: 0.9 } });
-        const current = view();
+    test("blocks an unreachable inspect target after tree failure", () => {
+        const runtime = new FakeRuntime();
+        const current = brain(runtime, { needs: { social: 0.1, curiosity: 0.9 } });
+        const fish = sensed({ id: "fish-1", name: "Fish1", kind: "item", isObject: true, distance: 6, pos: { x: 6, y: 8, z: 0 } });
+        const currentView = view({ objects: [fish] });
+        current.tick(currentView, 1000);
+        runtime.act("select-target", { kind: "object", maxDistance: 14 }, currentView);
 
-        brain.tick(current, 1000);
-        expect(brain.current).toBe("forage");
+        runtime.status = "failure";
+        current.tick(currentView, 2000);
+        expect(current.snapshotMemory().blocked).toMatchObject({ "fish-1": 302000 });
 
-        current.intent = { ...idle, kind: "moveTo", status: "arrived" };
-        brain.tick(current, 2000);
-        current.intent = { ...idle, kind: "lookAt", status: "arrived" };
-        brain.tick(current, 3000);
-        current.intent = { ...idle, kind: "wait", status: "arrived" };
-        brain.tick(current, 4000);
-
-        const player = sensed({ id: "player-1", isPlayer: true, distance: 5, pos: { x: 25, y: 10, z: 0 } });
-        const far = view({ x: 20, z: 0, nearby: [player] });
-        expect(brain.tick(far, 5000)).toBe("return");
-        expect(actor.calls.at(-1)).toContain("moveTo 0,10,0");
+        runtime.status = "running";
+        current.tick(currentView, 3000);
+        expect(runtime.started.at(-1)).not.toBe("inspect");
     });
 
-    test("remembers an unreachable object instead of retrying it", () => {
-        const actor = new FakeActor();
-        const brain = controller(actor, { needs: { social: 0.1, curiosity: 0.9 } });
-        const fish = sensed({
-            id: "fish-1",
-            name: "Fish1",
-            kind: "item",
-            isObject: true,
-            distance: 6,
-            pos: { x: 6, y: 8, z: 0 }
-        });
-        const current = view({ objects: [fish] });
+    test("remembers home and accepts a manual request", () => {
+        const runtime = new FakeRuntime();
+        const current = brain(runtime, { memory: { home: { x: 50, y: 12, z: -20 } }, needs: { energy: 0.9 } });
+        expect(current.snapshotMemory().home).toEqual({ x: 50, y: 12, z: -20 });
 
-        brain.tick(current, 1000);
-        expect(brain.current).toBe("inspect");
-
-        current.intent = { ...idle, kind: "moveTo", status: "failed", reason: "nav-unavailable" };
-        brain.tick(current, 2000);
-        expect(brain.snapshotMemory().blocked).toMatchObject({ "fish-1": 302000 });
-
-        current.intent = idle;
-        brain.tick(current, 3000);
-        expect(brain.current).not.toBe("inspect");
-    });
-
-    test("abandons a failed intent and backs off", () => {
-        const actor = new FakeActor();
-        const brain = controller(actor);
-        const current = view();
-        brain.tick(current, 1000);
-
-        current.intent = { ...idle, kind: "moveTo", status: "failed", reason: "nav-stuck" };
-        brain.tick(current, 2000);
-        expect(brain.current).toBe("wander");
-        expect(actor.calls.filter(call => call.startsWith("moveTo ")).length).toBe(1);
+        current.request("rest", null, 1000);
+        current.tick(view(), 1000);
+        expect(runtime.started).toEqual(["rest"]);
     });
 });

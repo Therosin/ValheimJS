@@ -1,0 +1,21 @@
+id: inspect
+description: Choose an unknown object, walk to it, look at it and remember it.
+imports:
+  move: ./micro/move.yaml
+  wait: ./micro/wait.yaml
+  look: ./micro/look.yaml
+state:
+  waitSeconds: 2
+root:
+  type: sequence
+  children:
+    - action: select-target
+      args:
+        kind: object
+        maxDistance: 14
+    - use: move
+    - use: look
+    - action: mark-visited
+      args:
+        target: "@[target]"
+    - use: wait
