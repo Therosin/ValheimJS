@@ -6,8 +6,10 @@ using Jint.Native;
 using Jint.Native.Function;
 using Jint.Native.Object;
 using Jint.Runtime;
+using ValheimJS.AI;
 using ValheimJS.Core;
 using ValheimJS.Scripting.Binding;
+using ValheimJS.Scripting.Types;
 
 namespace ValheimJS.Bindings;
 
@@ -55,7 +57,15 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
     private readonly Dictionary<string, Dictionary<string, TreeEntry>> _trees = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _treeIds = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _brainIds = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Blackboard> _boards = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Dictionary<int, BoardSubscription>> _boardSubscriptions = new(StringComparer.Ordinal);
     private readonly HashSet<string> _debug = new(StringComparer.Ordinal);
+    private int _nextBoardSubscription;
+
+    private sealed class BoardSubscription
+    {
+        internal Action Remove = () => { };
+    }
 
     public AiBindings(JsBindingContext context) : base(context)
     {
@@ -71,6 +81,113 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
             ApplyTrace(plugin, brain);
         }
         return enabled;
+    }
+
+    [JsBinding("boardGet", Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "unknown",
+        Description = "Reads a value from this plugin's AI blackboard; channel selects an isolated blackboard channel.")]
+    public JsValue BoardGet(string plugin, string key, [JsNullable] string? channel) =>
+        Board(plugin, channel).TryGetRaw(key, out var value) ? ToJs(value) : JsValue.Null;
+
+    [JsBinding("boardSet", Scoped = true,
+        Description = "Sets a value on this plugin's AI blackboard; channel selects an isolated channel.")]
+    public void BoardSet(string plugin, string key, JsValue value, [JsNullable] string? channel) =>
+        Board(plugin, channel).Set(key, FromJs(value));
+
+    [JsBinding("boardHas", Scoped = true, Description = "True when the blackboard scope contains the key.")]
+    public bool BoardHas(string plugin, string key, [JsNullable] string? channel) =>
+        Board(plugin, channel).Contains(key);
+
+    [JsBinding("boardSnapshot", Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "Record<string, unknown>",
+        Description = "Copies all state from this plugin's blackboard scope.")]
+    public JsValue BoardSnapshot(string plugin, [JsNullable] string? channel) =>
+        ToJsMap(Board(plugin, channel).Snapshot());
+
+    [JsBinding("boardEmit", Scoped = true,
+        Description = "Emits a named signal on this plugin's blackboard; listeners receive the payload.")]
+    public void BoardEmit(string plugin, string name, JsValue data, [JsNullable] string? channel) =>
+        Board(plugin, channel).Emit(name, FromJs(data));
+
+    [JsBinding("boardOnChange", Scoped = true,
+        Description = "Subscribes to blackboard state changes; empty key means every key. Returns a subscription id.")]
+    public int BoardOnChange(string plugin, string key, JsCallback callback, [JsNullable] string? channel)
+    {
+        var scope = Board(plugin, channel);
+        var subscription = new BoardSubscription();
+        Action<BlackboardChange> handler = change =>
+        {
+            if (key.Length > 0 && !string.Equals(change.Key, key, StringComparison.Ordinal)) return;
+            InvokeBoard(plugin, callback, "change", change.Key, change.NewValue, change.OldValue, scope.ChannelName);
+        };
+
+        scope.Changed += handler;
+        subscription.Remove = () => scope.Changed -= handler;
+        return RegisterBoardSubscription(plugin, subscription);
+    }
+
+    [JsBinding("boardOnSignal", Scoped = true,
+        Description = "Subscribes to blackboard signals; empty name means every signal. Returns a subscription id.")]
+    public int BoardOnSignal(string plugin, string name, JsCallback callback, [JsNullable] string? channel)
+    {
+        var scope = Board(plugin, channel);
+        var subscription = new BoardSubscription();
+        Action<BlackboardSignal> handler = signal =>
+        {
+            if (name.Length > 0 && !string.Equals(signal.Name, name, StringComparison.Ordinal)) return;
+            InvokeBoard(plugin, callback, "signal", signal.Name, signal.Data, scope.ChannelName);
+        };
+
+        scope.Signaled += handler;
+        subscription.Remove = () => scope.Signaled -= handler;
+        return RegisterBoardSubscription(plugin, subscription);
+    }
+
+    [JsBinding("boardOff", Scoped = true, Description = "Cancels a blackboard change/signal subscription.")]
+    public bool BoardOff(string plugin, int subscription)
+    {
+        if (!_boardSubscriptions.TryGetValue(plugin, out var subscriptions) ||
+            !subscriptions.Remove(subscription, out var entry))
+        {
+            return false;
+        }
+
+        entry.Remove();
+        return true;
+    }
+
+    private BlackboardScope Board(string plugin, string? channel)
+    {
+        if (!_boards.TryGetValue(plugin, out var board))
+        {
+            board = new Blackboard();
+            _boards[plugin] = board;
+        }
+
+        return string.IsNullOrWhiteSpace(channel) ? board : board.Channels.Get(channel);
+    }
+
+    private int RegisterBoardSubscription(string plugin, BoardSubscription subscription)
+    {
+        if (!_boardSubscriptions.TryGetValue(plugin, out var subscriptions))
+        {
+            subscriptions = new Dictionary<int, BoardSubscription>();
+            _boardSubscriptions[plugin] = subscriptions;
+        }
+
+        var id = ++_nextBoardSubscription;
+        subscriptions[id] = subscription;
+        return id;
+    }
+
+    private void InvokeBoard(string plugin, JsCallback callback, string kind, params object?[] values)
+    {
+        try
+        {
+            callback.Invoke(values.Select(ToJs).ToArray());
+        }
+        catch (Exception exception)
+        {
+            LogWarn($"[{plugin}] ai.board {kind} callback failed: {exception.Message}");
+        }
     }
 
     [JsBinding(Scoped = true, Description = "Compiles YAML into a tree id. Imports come from options.imports keyed by alias.")]
@@ -294,6 +411,15 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
         _treeIds.Remove(plugin);
         _brainIds.Remove(plugin);
         _debug.Remove(plugin);
+        if (_boardSubscriptions.Remove(plugin, out var subscriptions))
+        {
+            foreach (var subscription in subscriptions.Values)
+            {
+                subscription.Remove();
+            }
+        }
+
+        _boards.Remove(plugin);
         AiSenses.Clear(plugin);
     }
 
@@ -307,6 +433,13 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
         _trees.Clear();
         _treeIds.Clear();
         _brainIds.Clear();
+        foreach (var subscriptions in _boardSubscriptions.Values)
+        {
+            foreach (var subscription in subscriptions.Values) subscription.Remove();
+        }
+
+        _boardSubscriptions.Clear();
+        _boards.Clear();
         AiSenses.Clear();
         base.Dispose();
     }

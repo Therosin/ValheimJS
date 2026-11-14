@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using ValheimJS.Utils;
 
-namespace ValheimJS.Core;
+namespace ValheimJS.AI;
 
 /// <summary>Outcome of one node or one instance tick.</summary>
 public enum BehaviourStatus

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using ValheimJS.Bindings;
+using ValheimJS.AI;
 using ValheimJS.Core;
 using ValheimJS.Entities;
 using ValheimJS.Scripting;
@@ -124,6 +125,28 @@ internal static class AiProbe
                         setExtra: function (_ctx, value) { api.set(ctx.state.id, "extra", value); return api.state(ctx.state.id); },
                         cancel: function () { api.cancel(ctx.state.id); return api.status(ctx.state.id); },
                         reset: function () { api.reset(ctx.state.id, true); return api.status(ctx.state.id); },
+                        boardSet: function (_ctx, value) {
+                            api.boardSet("probe-key", value, null);
+                            return api.boardGet("probe-key", null);
+                        },
+                        boardChange: function () {
+                            var seen = [];
+                            var id = api.boardOnChange("", function (key, value, oldValue, channel) {
+                                seen.push(key + ":" + value + ":" + oldValue + ":" + channel);
+                            }, null);
+                            api.boardSet("watched", 3, null);
+                            api.boardOff(id);
+                            return seen;
+                        },
+                        boardSignal: function () {
+                            var seen = [];
+                            var id = api.boardOnSignal("", function (name, data, channel) {
+                                seen.push(name + ":" + data + ":" + channel);
+                            }, null);
+                            api.boardEmit("ping", 7, null);
+                            api.boardOff(id);
+                            return seen;
+                        },
                         execs: function () { return ctx.state.execs; },
                         childTick: function () { return api.tick(ctx.state.childId, 0.1); },
                         sensesTick: function () { return api.tick(ctx.state.senseId, 0.1); },
@@ -244,6 +267,13 @@ internal static class AiProbe
 
                 var unloaded = host.DispatchTo("probe", "unload", "{}") ?? "null";
                 Assert(unloaded.Contains("\"removed\":true") && unloaded.Contains("does not exist"), "unload: " + unloaded);
+
+                var boardValue = host.DispatchTo("probe", "boardSet", "42") ?? "null";
+                Assert(boardValue == "42", "board set/get: " + boardValue);
+                var boardChange = host.DispatchTo("probe", "boardChange", "{}") ?? "null";
+                Assert(boardChange.Contains("watched:3:null"), "board change: " + boardChange);
+                var boardSignal = host.DispatchTo("probe", "boardSignal", "{}") ?? "null";
+                Assert(boardSignal.Contains("ping:7:null"), "board signal: " + boardSignal);
 
                 host.Reload();
                 Assert(!host.HasErrors, "reload errors: " + string.Join(" | ", host.Errors));

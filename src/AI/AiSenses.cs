@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace ValheimJS.Core;
+namespace ValheimJS.AI;
 
 /// <summary>
 /// Plugin-scoped perception views published by the NPC pump and consumed by AI instances. The

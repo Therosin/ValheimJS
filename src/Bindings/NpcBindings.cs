@@ -5,6 +5,7 @@ using Jint;
 using Jint.Native;
 using Jint.Native.Function;
 using Jint.Native.Object;
+using ValheimJS.AI;
 using ValheimJS.Core;
 using ValheimJS.Entities;
 using ValheimJS.Scripting.Binding;

@@ -27,6 +27,7 @@ if (args.Contains("--probe-behaviour")) return BehaviourProbe.Run();
 if (args.Contains("--probe-ai")) return AiProbe.Run();
 if (args.Contains("--probe-ui")) return UiProbe.Run();
 if (args.Contains("--probe-life")) return LifeDemoProbe.Run();
+if (args.Contains("--probe-blackboard")) return BlackboardProbe.Run();
 if (args.Contains("--probe-assets")) return AssetProbe.Run();
 
 // Headless smoke test for the JS host: loads bundles from a directory, pumps timers,

@@ -17,9 +17,10 @@
     <Compile Include="..\src\Utils\ConditionObserver.cs" LinkBase="Shared\Utils" />
     <Compile Include="..\src\Utils\Yaml.cs" LinkBase="Shared\Utils" />
     <Compile Include="..\src\Utils\Toml.cs" LinkBase="Shared\Utils" />
-    <Compile Include="..\src\Core\BehaviourTree.cs" LinkBase="Shared\Core" />
+    <Compile Include="..\src\AI\BehaviourTree.cs" LinkBase="Shared\AI" />
+    <Compile Include="..\src\AI\ReactiveBlackboard.cs" LinkBase="Shared\AI" />
     <Compile Include="..\src\Entities\NpcModels.cs" LinkBase="Shared\Entities" />
-    <Compile Include="..\src\Core\AiSenses.cs" LinkBase="Shared\Core" />
+    <Compile Include="..\src\AI\AiSenses.cs" LinkBase="Shared\AI" />
     <Compile Include="..\src\Core\Ui\UiCompiler.cs" LinkBase="Shared\Core\Ui" />
     <Compile Include="..\src\Core\Networking.cs" LinkBase="Shared\Core" />
     <Compile Include="..\src\Core\NetworkSync.cs" LinkBase="Shared\Core" />

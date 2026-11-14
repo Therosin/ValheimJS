@@ -345,6 +345,25 @@ instantiate per entity; instances keep independent state.
 `ai.debug(true)` enables a host trace for this plugin. It logs the tree filename, node entry/exit,
 actions, conditions and imported `use` trees at the plugin's log destination. Off by default.
 
+### Reactive blackboard
+
+Each plugin gets its own `Blackboard`; named channels isolate independent state and subscribers.
+
+```ts
+ai.board.get<T>(key, channel?): T | null
+ai.board.set(key, value, channel?): void
+ai.board.has(key, channel?): boolean
+ai.board.snapshot<T>(channel?): T
+ai.board.emit(name, data?, channel?): void
+ai.board.onChange(key, handler, channel?): number   // empty key = all keys
+ai.board.onSignal(name, handler, channel?): number  // empty name = all signals
+ai.board.off(subscription): boolean
+```
+
+`onChange` handlers receive `(key, value, oldValue, channel)`; `onSignal` handlers receive
+`(name, data, channel)`. Subscriptions are plugin-scoped and dropped on unload. Middleware and
+pre-commit interceptors are implemented in the C# `Blackboard` but are not exposed to JS yet.
+
 ```ts
 const tree = ai.compile(yaml);
 const entity = npc.handles("wanderer")[0];

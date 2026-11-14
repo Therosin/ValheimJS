@@ -31,6 +31,7 @@ client branch; session authority is checked live. See [Process branches](guides/
 | World-space line/mesh drawing and server replication | `Debugging/WorldDraw.cs`, `Bindings/DrawBindings.cs` | `draw` binding and SDK `draw` |
 | Private command submission/replies over `valheimjs:commands` | `Networking/CommandService.cs`, `Hooks/CommandInputHook.cs` | `!` input and private `Commands` lines |
 | Script engine, branch components, dependency order, contexts and timers | `Scripting/` | Plugin descriptors and host API |
+| YAML behaviour engine, perception bridge and reactive blackboard | `AI/BehaviourTree.cs`, `AI/AiSenses.cs`, `AI/ReactiveBlackboard.cs` | `ai` binding and SDK `ai` facade |
 | Native values, cadence, scoped registries and JS classes | `Scripting/Binding/` (`JsPayload`, `Ticker`, `ScopedBindings`, `JsCallback`), `Scripting/Types/` (`JsTypeRegistry`) | `ReturnKind.Native`, `[JsType]` classes, all bindings |
 | Atomic per-document persistence | `Storage/DocumentDatabase.cs` | Plugin document store and host service stores |
 | Read-only shipped plugin files and templates | `Bindings/AssetBindings.cs` | `assets` binding and `importText`/`importYaml`/`importToml` |

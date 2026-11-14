@@ -475,6 +475,38 @@ export interface DrawApi {
  */
 export interface AiApi {
     /**
+     * Emits a named signal on this plugin's blackboard; listeners receive the payload.
+     */
+    boardEmit(name: string, data: unknown, channel: string | null): void;
+    /**
+     * Reads a value from this plugin's AI blackboard; channel selects an isolated blackboard channel.
+     */
+    boardGet(key: string, channel: string | null): unknown;
+    /**
+     * True when the blackboard scope contains the key.
+     */
+    boardHas(key: string, channel: string | null): boolean;
+    /**
+     * Cancels a blackboard change/signal subscription.
+     */
+    boardOff(subscription: number): boolean;
+    /**
+     * Subscribes to blackboard state changes; empty key means every key. Returns a subscription id.
+     */
+    boardOnChange(key: string, callback: (...args: unknown[]) => unknown, channel: string | null): number;
+    /**
+     * Subscribes to blackboard signals; empty name means every signal. Returns a subscription id.
+     */
+    boardOnSignal(name: string, callback: (...args: unknown[]) => unknown, channel: string | null): number;
+    /**
+     * Sets a value on this plugin's AI blackboard; channel selects an isolated channel.
+     */
+    boardSet(key: string, value: unknown, channel: string | null): void;
+    /**
+     * Copies all state from this plugin's blackboard scope.
+     */
+    boardSnapshot(channel: string | null): Record<string, unknown>;
+    /**
      * Stops the instance and runs active execAfter hooks as interrupted.
      */
     cancel(instanceId: string): void;
