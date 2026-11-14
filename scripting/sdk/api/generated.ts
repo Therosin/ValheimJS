@@ -53,6 +53,10 @@ export declare class ValheimPlayer {
  */
 export interface GameApi {
     /**
+     * True when a local client world is playable: ZNetScene is ready, the local player exists and is not teleporting. False on a dedicated server.
+     */
+    clientReady(): boolean;
+    /**
      * Current world day, or 0 before the world loads.
      */
     day(): number;

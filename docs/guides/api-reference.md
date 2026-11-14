@@ -43,6 +43,7 @@ game.dedicated(): boolean          // server-process branch
 game.isServer(): boolean           // confirmed live authority; false before session
 game.isClient(): boolean           // client-process branch, including player hosts
 game.sessionReady(): boolean      // ZNet exists; not world/player readiness
+game.clientReady(): boolean       // local player exists, not teleporting; false on dedicated
 game.singlePlayer(): boolean
 game.peers(): number
 game.instance(): string            // stable per process start

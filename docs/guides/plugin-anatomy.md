@@ -124,6 +124,8 @@ Rules that matter:
   responder error fails its request, and a command error fails that invocation.
 - **The heartbeat is not an authority gate.** Despite its name, `onServerTick` also fires on a
   connected client. Use `authorityHandler` or check `game().isServer()` before authoritative work.
+  On clients and player hosts the heartbeat now waits for `WorldManager.ClientReady()` (local
+  player exists and is not teleporting), so it no longer fires under the loading screen.
 
 ## `ctx`
 

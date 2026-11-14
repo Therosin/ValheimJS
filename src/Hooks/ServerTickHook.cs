@@ -2,6 +2,7 @@ using System;
 using HarmonyLib;
 using UnityEngine;
 using ValheimJS.Core;
+using ValheimJS.World;
 
 namespace ValheimJS.Hooks;
 
@@ -23,6 +24,13 @@ internal static class ServerTickHook
         {
             var now = Time.realtimeSinceStartup;
             if (now < _next)
+            {
+                return;
+            }
+
+            // A reachable ZNet is not a playable world. On a client or player host, wait for the
+            // local character to finish loading so hooks do not fire under the loading screen.
+            if (!GameEnvironment.Dedicated && !WorldManager.ClientReady())
             {
                 return;
             }

@@ -25,7 +25,7 @@ should offer. Not modder-facing — see `guides/` for that.
 |---|---|---|
 | `onChat` | `Chat.RPC_ChatMessage` **prefix** | observes routed chat arriving on this process before the game's async permission checks; private `!` commands use a separate channel |
 | `onPlayerJoin` / `onPlayerLeave` | `ZNet.SendPlayerList` postfix + peer diff | the handshake (`RPC_PeerInfo`) returns early on bad password/full/version mismatch; diffing the published list only reports peers that actually made it |
-| `onServerTick` | `ZNet.Update` postfix, ~1 Hz | shared patch on dedicated and client processes; use live authority checks before mutations |
+| `onServerTick` | `ZNet.Update` postfix, ~1 Hz | shared patch on dedicated and client processes; on clients/player hosts it waits for the local player to finish loading; use live authority checks before mutations |
 | `onPlayerSpawned` / `onPlayerDespawned` | heartbeat poll over spawned character lookups | character readiness is distinct from peer connection |
 | `onDamage` | `Character.Damage` postfix | read-only observation on the process receiving the call; this hook does not veto damage |
 | UI input | `Player.TakeInput` / `PlayerController.TakeInput` postfix | blocks game input while a plugin modal is open or a panel text field is focused |

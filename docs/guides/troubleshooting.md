@@ -60,7 +60,8 @@ check exists so released types cannot disagree with the runtime.
 ## My values are null or zero
 
 Before the world finishes loading, `game.worldName()`, `game.day()` and friends read as
-`null` / `0` / `"unknown"`. `setup` runs before that. Read them inside `onServerTick` or a timer.
+`null` / `0` / `"unknown"`. `setup` runs before that. Read them inside `onServerTick` or a timer;
+on clients and player hosts the heartbeat waits for the local player to finish loading.
 
 ## `world.spawn` returns null
 
