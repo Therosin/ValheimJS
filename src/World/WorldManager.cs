@@ -469,7 +469,7 @@ internal sealed class WorldManager : IDisposable
 
     private void ClientTick()
     {
-        if (!_network.Available || _network.ServerPeer == 0)
+        if (!_network.Available || _network.ServerPeer == 0 || !ClientWorldReady())
         {
             _synced = false;
             return;
@@ -485,6 +485,16 @@ internal sealed class WorldManager : IDisposable
         _nextSync = now + (_synced ? 30f : 5f);
         _channel.RequestJson(_network.ServerPeer, "sync", "{}", OnSync, 5000);
     }
+
+    /// <summary>
+    /// A connected peer is not enough: the client can still be on the loading screen while the
+    /// server is already reachable. Sync only after the local character exists and teleport/load
+    /// transitions have settled.
+    /// </summary>
+    private static bool ClientWorldReady() =>
+        ZNetScene.instance != null &&
+        Player.m_localPlayer != null &&
+        !Player.m_localPlayer.IsTeleporting();
 
     private void OnSync(string? error, string? json)
     {
