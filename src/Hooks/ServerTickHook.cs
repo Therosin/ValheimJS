@@ -28,9 +28,13 @@ internal static class ServerTickHook
                 return;
             }
 
-            // A reachable ZNet is not a playable world. On a client or player host, wait for the
-            // local character to finish loading so hooks do not fire under the loading screen.
-            if (!GameEnvironment.Dedicated && !WorldManager.ClientReady())
+            // A reachable ZNet is not a playable world. Dedicated servers need the scene/ZDO
+            // world; clients and hosts need a spawned local character outside loading screens.
+            if (GameEnvironment.Dedicated)
+            {
+                if (!GameEnvironment.WorldReady) return;
+            }
+            else if (!WorldManager.ClientReady())
             {
                 return;
             }

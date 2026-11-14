@@ -20,6 +20,7 @@ public sealed class JsBindingContext : IDisposable
     private readonly Core.ChatCommands? _commands;
     private readonly Services.AccountService? _accounts;
     private readonly Services.PermissionService? _permissions;
+    private readonly Func<bool>? _worldReady;
     private Scripting.Types.JsTypeRegistry? _types;
     private Jint.Engine? _engine;
 
@@ -35,7 +36,8 @@ public sealed class JsBindingContext : IDisposable
         Network? networking = null,
         Core.ChatCommands? commands = null,
         Services.AccountService? accounts = null,
-        Services.PermissionService? permissions = null)
+        Services.PermissionService? permissions = null,
+        Func<bool>? worldReady = null)
     {
         if (!Enum.IsDefined(typeof(ProcessSide), side)) throw new ArgumentOutOfRangeException(nameof(side));
         ProcessSide = side;
@@ -50,6 +52,7 @@ public sealed class JsBindingContext : IDisposable
         _commands = commands;
         _accounts = accounts;
         _permissions = permissions;
+        _worldReady = worldReady;
     }
 
     /// <summary><c>server</c> on a dedicated process, <c>client</c> otherwise.</summary>
@@ -63,6 +66,9 @@ public sealed class JsBindingContext : IDisposable
     public Core.ChatCommands ChatCommands => _commands ?? throw new InvalidOperationException("Command registry was not supplied by the host.");
     public Services.AccountService Accounts => _accounts ?? throw new InvalidOperationException("AccountService was not supplied by the host.");
     public Services.PermissionService Permissions => _permissions ?? throw new InvalidOperationException("PermissionService was not supplied by the host.");
+
+    /// <summary>Host-supplied world readiness; probes without a game default to true.</summary>
+    public bool WorldReady => _worldReady?.Invoke() ?? true;
 
     /// <summary>
     /// Native facade classes exposed to scripts. Attached by the runtime once the engine exists;

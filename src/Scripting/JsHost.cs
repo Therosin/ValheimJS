@@ -41,6 +41,7 @@ public sealed class JsHost
     private readonly Core.ChatCommands? _commands;
     private readonly Services.AccountService? _accounts;
     private readonly Services.PermissionService? _permissions;
+    private readonly Func<bool>? _worldReady;
     private readonly Dictionary<string, JsPlugin> _plugins = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _errors = new();
     private int _pumpErrors;
@@ -58,7 +59,8 @@ public sealed class JsHost
         Network? networking = null,
         Core.ChatCommands? commands = null,
         Services.AccountService? accounts = null,
-        Services.PermissionService? permissions = null)
+        Services.PermissionService? permissions = null,
+        Func<bool>? worldReady = null)
     {
         if (!Enum.IsDefined(typeof(ProcessSide), side)) throw new ArgumentOutOfRangeException(nameof(side));
         _processSide = side;
@@ -68,6 +70,7 @@ public sealed class JsHost
         _commands = commands;
         _accounts = accounts;
         _permissions = permissions;
+        _worldReady = worldReady;
         _options = options ?? new JsRuntimeOptions();
         _root = root;
         _pluginsDir = Path.Combine(root, "plugins");
@@ -334,7 +337,8 @@ public sealed class JsHost
         _networking,
         _commands,
         _accounts,
-        _permissions);
+        _permissions,
+        _worldReady);
 
     private PluginServices ServicesFor(PluginManifest manifest, string directory)
     {

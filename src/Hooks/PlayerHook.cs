@@ -20,6 +20,7 @@ internal static class PlayerWatcher
 {
     private static readonly Dictionary<long, string> Known = new();
     private static readonly Dictionary<long, string> Spawned = new();
+    private static readonly Dictionary<long, string> Ready = new();
 
     internal static void Poll()
     {
@@ -62,6 +63,32 @@ internal static class PlayerWatcher
         {
             Known[uid] = name;
         }
+
+        if (!GameEnvironment.IsServer()) return;
+        var readyNow = new Dictionary<long, string>();
+        foreach (var (uid, name) in current)
+        {
+            if (World.WorldManager.Instance?.PeerReady(uid) != true) continue;
+            readyNow[uid] = name;
+            if (!Ready.ContainsKey(uid))
+            {
+                ValheimBridge.RaisePlayerReady(uid, name);
+            }
+        }
+
+        foreach (var (uid, name) in Ready)
+        {
+            if (!readyNow.ContainsKey(uid))
+            {
+                ValheimBridge.RaisePlayerUnready(uid, name);
+            }
+        }
+
+        Ready.Clear();
+        foreach (var (uid, name) in readyNow)
+        {
+            Ready[uid] = name;
+        }
     }
 
     /// <summary>
@@ -103,6 +130,7 @@ internal static class PlayerWatcher
     {
         Known.Clear();
         Spawned.Clear();
+        Ready.Clear();
     }
 
     internal static IReadOnlyList<(long Uid, string Name)> Snapshot() =>

@@ -1,6 +1,7 @@
 using System.Globalization;
 using UnityEngine;
 using ValheimJS.Core;
+using ValheimJS.World;
 using ValheimJS.Scripting.Types;
 
 namespace ValheimJS.Entities;
@@ -49,6 +50,15 @@ public sealed class Player
 
     /// <summary>True only on the process that owns this player's local player object.</summary>
     public bool IsLocal => _isLocal;
+
+    /// <summary>
+    /// True once this player's own client has reported that its world is playable. On a client
+    /// the local player reports its configured <c>ClientReady</c> state; on the authority the
+    /// value comes from the client-ready heartbeat.
+    /// </summary>
+    public bool Ready => _isLocal
+        ? WorldManager.ClientReady()
+        : WorldManager.Instance?.PeerReady(_uid) == true;
 
     public double X => Zdo?.GetPosition().x ?? 0d;
 

@@ -36,6 +36,16 @@ public static class ValheimBridge
         Emit?.Invoke("onPlayerDespawned", $"{{\"uid\":{uid},\"name\":{Quote(name)}}}");
     }
 
+    public static void RaisePlayerReady(long uid, string name)
+    {
+        Emit?.Invoke("onPlayerReady", $"{{\"uid\":{uid},\"name\":{Quote(name)}}}");
+    }
+
+    public static void RaisePlayerUnready(long uid, string name)
+    {
+        Emit?.Invoke("onPlayerUnready", $"{{\"uid\":{uid},\"name\":{Quote(name)}}}");
+    }
+
     public static void RaisePlayerLeave(long uid, string name)
     {
         Emit?.Invoke("onPlayerLeave", $"{{\"uid\":{uid},\"name\":{Quote(name)}}}");

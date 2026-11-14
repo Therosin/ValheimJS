@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using ValheimJS.Core;
+using ValheimJS.World;
 using ValheimJS.Scripting.Binding;
 
 namespace ValheimJS.Bindings;
@@ -33,6 +34,22 @@ internal sealed class GameBindings : JsBindings
     [JsBinding(Description = "True when ZNet exists; does not imply a completed connection or loaded world.")]
     public bool SessionReady() => GameEnvironment.SessionReady;
 
+    [JsBinding(Description = "True when ZNet reports Connected; the scene may still be loading.")]
+    public bool Connected() => GameEnvironment.Connected;
+
+    [JsBinding(Description = "True when the scene, ZDO world and connection are usable.")]
+    public bool WorldReady() => GameEnvironment.WorldReady;
+
+    [JsBinding(Description = "True for a client with a spawned local character outside teleport transitions.")]
+    public bool PlayerReady() => GameEnvironment.PlayerReady;
+
+    [JsBinding(Returns = "\"process\" | \"scene\" | \"session\" | \"world\" | \"ready\"",
+        Description = "Coarse lifecycle phase; gate optional work on this rather than guessing.")]
+    public string Phase() => GameEnvironment.Phase;
+
+    [JsBinding(Description = "True for a client with a spawned local character outside loading/teleport transitions.")]
+    public bool ClientReady() => !IsDedicated && WorldManager.ClientReady();
+
     [JsBinding(Description = "True for a client process, including a player hosting a world; does not imply a local player exists.")]
     public bool IsClient() => !IsDedicated;
 
@@ -56,6 +73,9 @@ internal sealed class GameBindings : JsBindings
 
     [JsBinding(Description = "\"day\", \"night\", or \"unknown\" before the world loads.")]
     public string TimeOfDay() => GameEnvironment.TimeOfDay;
+
+    [JsBinding(Description = "True when a connected client has reported its world is playable.")]
+    public bool PeerReady(long uid) => WorldManager.Instance?.PeerReady(uid) == true;
 
     [JsBinding(ReturnKind = JsReturnKind.Native, Returns = "GameSnapshot",
         Description = "One object with name, peers, day, dayFraction and timeOfDay.")]

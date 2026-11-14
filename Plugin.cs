@@ -119,7 +119,7 @@ public class Plugin : BaseUnityPlugin
         _helpCommands = _commands.OpenScope();
         _helpCommands.Register("host", new Commands.HelpCommand(_commands));
         CommandTransport = new global::ValheimJS.Networking.CommandService(_network, _commands, Accounts, Permissions);
-        _world = new World.WorldManager(_network, Path.Combine(_pluginRoot.Value, "nav"));
+        _world = new World.WorldManager(_network);
         _host = new JsHost(
             _pluginRoot.Value,
             GameEnvironment.Side,
@@ -129,7 +129,9 @@ public class Plugin : BaseUnityPlugin
                 MaxStatements = _maxStatements.Value,
                 TimeoutMs = _timeoutMs.Value,
                 LimitRecursion = _limitRecursion.Value
-            }, networking: _network, commands: _commands, accounts: Accounts, permissions: Permissions);
+            }, networking: _network, commands: _commands, accounts: Accounts, permissions: Permissions,
+            worldReady: () => GameEnvironment.WorldReady &&
+                         (GameEnvironment.Dedicated || GameEnvironment.PlayerReady));
         ValheimBridge.Emit = _host.Emit;
         ValheimBridge.WorldSnapshot = BuildWorldSnapshot;
     }

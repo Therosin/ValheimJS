@@ -20,6 +20,31 @@ public static class GameEnvironment
     }
     public static bool Dedicated => Side == ProcessSide.Server;
     public static bool SessionReady => ZNet.instance != null;
+    /// <summary>ZNet is connected; still not proof that the world scene is usable.</summary>
+    public static bool Connected => ZNet.instance != null &&
+                                      ZNet.GetConnectionStatus() == ZNet.ConnectionStatus.Connected;
+    /// <summary>Scene, ZDO world and connection are all usable. Do not gate setup on this.</summary>
+    public static bool WorldReady =>
+        Connected &&
+        ZNetScene.instance != null &&
+        ZDOMan.instance != null &&
+        ZoneSystem.instance != null &&
+        !string.IsNullOrEmpty(ZNet.instance.GetWorldName());
+    /// <summary>Client process with a spawned local character and no teleport transition.</summary>
+    public static bool PlayerReady =>
+        !Dedicated &&
+        Player.m_localPlayer != null &&
+        !Player.m_localPlayer.IsTeleporting();
+    /// <summary>Coarse lifecycle phase for scripts and diagnostics.</summary>
+    public static string Phase
+    {
+        get
+        {
+            if (WorldReady) return PlayerReady || Dedicated ? "ready" : "world";
+            if (Connected) return "session";
+            return ZNetScene.instance != null ? "scene" : "process";
+        }
+    }
     public static void ServerOnly(Action action) { if (Dedicated) action(); }
     public static void ClientOnly(Action action) { if (!Dedicated) action(); }
     public static void AuthorityOnly(Action action) { if (IsServer()) action(); }

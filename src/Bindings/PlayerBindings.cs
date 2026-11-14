@@ -46,6 +46,9 @@ internal sealed class PlayerBindings : JsBindings
         return JsPayload.Array(Engine, values);
     }
 
+    [JsBinding(Description = "True once the player's client reports its world is actually playable.")]
+    public bool Ready(string id) => ValheimJS.Entities.PlayerDirectory.Get(id)?.Ready == true;
+
     private JsValue ToScript(ValheimJS.Entities.Player? player)
     {
         if (player == null || _playerType == null)
