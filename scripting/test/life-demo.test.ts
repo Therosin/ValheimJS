@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import type { NpcIntent, NpcPos, NpcSensed, NpcView } from "../sdk/api/types";
+import type {
+    ActionResult,
+    InventoryItem,
+    NpcAction,
+    NpcPos,
+    NpcSensed,
+    NpcStats,
+    NpcView
+} from "../sdk/api/types";
+import type { Inventory } from "../sdk/api/generated";
 import {
     VillagerBrain,
     type BehaviorHandlers,
@@ -10,32 +19,98 @@ import {
     type VillagerBoard
 } from "../testing/life-demo/lib/brain";
 
+const ok: ActionResult = { ok: true, reason: null };
+const fail: ActionResult = { ok: false, reason: "test" };
+
+const emptyStats: NpcStats = {
+    health: 100,
+    maxHealth: 100,
+    healthRatio: 1,
+    stamina: 100,
+    maxStamina: 100,
+    staminaRatio: 1,
+    eitr: 0,
+    maxEitr: 0,
+    eitrRatio: 0,
+    food: [],
+    statusEffects: [],
+    hungry: true
+};
+
+function emptyInventory(): Inventory {
+    const itemResult = { ok: false, reason: "no-item" };
+    return {
+        available: true,
+        kind: "body",
+        writable: true,
+        weight: 0,
+        capacity: 32,
+        freeSlots: 32,
+        items: [] as InventoryItem[],
+        equipment: {
+            right: null,
+            left: null,
+            helmet: null,
+            chest: null,
+            legs: null,
+            shoulder: null,
+            utility: null,
+            trinket: null
+        },
+        has: () => false,
+        count: () => 0,
+        add: () => itemResult,
+        remove: () => itemResult,
+        use: () => itemResult,
+        consume: () => itemResult,
+        equip: () => itemResult,
+        unequip: () => itemResult,
+        drop: () => itemResult,
+        canUse: () => false,
+        canConsume: () => false,
+        canEquip: () => false
+    } as unknown as Inventory;
+}
+
 class FakeActor implements VillagerActor {
     readonly calls: string[] = [];
 
-    moveTo(x: number, y: number, z: number, run: boolean): boolean {
+    moveTo(x: number, y: number, z: number, run: boolean): ActionResult {
         this.calls.push(`moveTo ${x},${y},${z} run=${run}`);
-        return true;
+        return ok;
     }
 
-    wait(seconds: number): boolean {
+    wait(seconds: number): ActionResult {
         this.calls.push(`wait ${seconds}`);
-        return true;
+        return ok;
     }
 
-    lookAt(x: number, y: number, z: number): boolean {
+    lookAt(x: number, y: number, z: number): ActionResult {
         this.calls.push(`lookAt ${x},${y},${z}`);
-        return true;
+        return ok;
     }
 
-    face(id: string): boolean {
+    face(id: string): ActionResult {
         this.calls.push(`face ${id}`);
-        return true;
+        return ok;
     }
 
-    idle(): boolean {
+    idle(): ActionResult {
         this.calls.push("idle");
-        return true;
+        return ok;
+    }
+
+    pick(id: string): ActionResult {
+        this.calls.push(`pick ${id}`);
+        return ok;
+    }
+
+    getStats(): NpcStats {
+        return emptyStats;
+    }
+
+    getInventory(): Inventory {
+        return emptyInventory();
     }
 }
 
@@ -110,10 +185,18 @@ const behaviors: Record<VillagerActivity, string> = {
     seekHome: "seekHome",
     return: "return",
     rest: "rest",
-    flee: "flee"
+    flee: "flee",
+    eat: "eat"
 };
 
-const idle: NpcIntent = { kind: "idle", status: "idle", reason: null, targetId: null, target: null };
+const idle: NpcAction = {
+    kind: "idle",
+    status: "idle",
+    reason: null,
+    targetId: null,
+    target: null,
+    progress: null
+};
 
 function view(overrides: Partial<NpcView> = {}): NpcView {
     return {
@@ -129,7 +212,9 @@ function view(overrides: Partial<NpcView> = {}): NpcView {
         isTamed: false,
         level: 1,
         home: { x: 0, y: 10, z: 0 },
-        intent: idle,
+        ready: true,
+        self: emptyStats,
+        action: idle,
         environment: { day: 1, isDay: true, biome: "Meadows", weather: null },
         nearby: [],
         remembered: [],
@@ -151,6 +236,8 @@ function sensed(overrides: Partial<NpcSensed>): NpcSensed {
         bearing: 0,
         visible: true,
         inRange: true,
+        ready: true,
+        food: false,
         enemy: false,
         isPlayer: false,
         isNpc: false,

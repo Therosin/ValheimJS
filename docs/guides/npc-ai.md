@@ -5,9 +5,11 @@ description: Scripted NPCs, the perception store, intents, durable memory and YA
 
 # NPCs and AI
 
-ValheimJS simulates NPCs on the server even with no players nearby. The host owns movement,
-navigation, ZDO writes and perception; your plugin decides what the NPC knows and what it tries
-to do next.
+The host owns movement, navigation and ZDO writes. Native bodies are instantiated by
+`ZNetScene` only inside Valheim's active scene area around the server's reference position
+(a connected player), so an NPC outside that area keeps its ZDO and intent but has no body until
+a player comes near. The authority re-syncs the reference before every scene create/destroy pass
+and replays the stored intent when the body is re-instantiated.
 
 The pieces fit together in one loop:
 
@@ -45,7 +47,7 @@ export default definePlugin({
     setup() {
         npc.register(makeWanderer(), {
             kind: "wanderer",
-            prefab: "Dverger",
+            body: "human",
             tickMs: 500,
             faction: "Players"
         });
@@ -70,6 +72,10 @@ export default definePlugin({
 `kind` is the plugin-facing name (`^[a-z0-9_-]{1,32}$`). The prefab is cloned once as
 `vjs_npc_<kind>`; `faction` sets the clone's `Character.Faction` (`"Players"` makes a companion
 fight the same enemies players do). `tickMs` is clamped to 100..5000 and defaults to 500.
+`items` is a list of native item prefab names placed in the body inventory once, on first spawn
+(for example `items: ["Club", "Raspberry"]`); the first weapon found is equipped. A body that is
+attacked by a non-player reacts natively: it equips the best available weapon and swings while
+the attacker stays close, so scripts do not need a tick to survive the first hit.
 
 ## 2. What an NPC perceives
 
@@ -83,7 +89,7 @@ interface NpcSensed {
     pos: { x: number; y: number; z: number };   // last known world position
     rel: { x: number; y: number; z: number };   // relative to the NPC
     distance: number; bearing: number;          // bearing is signed from the NPC facing
-    visible: boolean; inRange: boolean; enemy: boolean;
+    visible: boolean; inRange: boolean; ready: boolean; enemy: boolean;
     isPlayer: boolean; isNpc: boolean; isTamed: boolean; isDead: boolean;
     level: number; isObject: boolean;
     health: number; maxHealth: number;
@@ -100,11 +106,34 @@ interface NpcView {
     health: number; maxHealth: number; isAlive: boolean;
     faction: string; isTamed: boolean; level: number;
     home: { x: number; y: number; z: number };
-    intent: NpcIntent | null;
+    self: NpcStats | null;       // live body stats; null while the body is culled
+    action: NpcAction | null;    // current native action
     environment: { day: number; isDay: boolean; biome: string; weather: string | null } | null;
     nearby: NpcSensed[];      // current characters
     remembered: NpcSensed[];  // lost contacts, last-known positions
-    objects: NpcSensed[];     // containers, doors, beds, stations, items...
+    objects: NpcSensed[];     // pickables, containers, doors, beds, stations, items...
+}
+```
+
+`NpcStats` and `NpcAction` mirror the native body:
+
+```ts
+interface NpcStats {
+    health: number; maxHealth: number; healthRatio: number;
+    stamina: number; maxStamina: number; staminaRatio: number;
+    eitr: number; maxEitr: number; eitrRatio: number;
+    food: FoodSlot[];
+    statusEffects: StatusEffect[];
+    hungry: boolean;             // no active food slot
+}
+
+interface NpcAction {
+    kind: "idle" | "stop" | "moveTo" | "wait" | "lookAt" | "face" | "pick" | string;
+    status: "idle" | "running" | "paused" | "arrived" | "failed" | "cancelled";
+    reason: string | null;
+    target: { x: number; y: number; z: number } | null;
+    targetId: string | null;
+    progress: number | null;
 }
 ```
 
@@ -113,7 +142,7 @@ Tune the scan per kind:
 ```ts
 npc.register(makeWanderer(), {
     kind: "wanderer",
-    prefab: "Dverger",
+    body: "Dverger",
     tickMs: 500,
     perception: {
         radius: 24,          // character scan radius
@@ -133,8 +162,9 @@ npc.register(makeWanderer(), {
 ```
 
 `enemy` uses the game's faction matrix (`BaseAI.IsEnemy`), including tamed and group overrides.
-World objects are the same record shape with `isObject: true` and `kind` set to `container`,
-`door`, `bed`, `smelter`, `station`, `item` or `portal`.
+World objects are the same record shape with `isObject: true` and `kind` set to `pickable`,
+`tree`, `rock`, `container`, `door`, `bed`, `smelter`, `station`, `item` or `portal`. `ready`
+is meaningful for pickables and defaults to true for other classes.
 
 ## 3. Query the store
 
@@ -157,33 +187,75 @@ not in the transient store.
 
 ## 4. Drive the NPC
 
-Intents are asynchronous. `moveTo`, `wait`, `lookAt` and `face` return immediately and report
-progress through `view.intent`:
+Native actions are asynchronous. `moveTo`, `wait`, `lookAt`, `face` and `pick` return an
+`ActionResult` (`{ ok, reason, count? }`) and report progress through `view.action`:
 
 ```ts
-interface NpcIntent {
-    kind: "idle" | "stop" | "moveTo" | "wait" | "lookAt" | "face";
-    status: "idle" | "running" | "arrived" | "failed";
+interface ActionResult {
+    ok: boolean;
     reason: string | null;
-    target: { x: number; y: number; z: number } | null;
-    targetId: string | null;
+    count?: number;
 }
 ```
 
 ```ts
 onSpawn() {
-    this.moveTo(120, 8, -40, false);   // status becomes "running"
+    const result = this.moveTo(120, 8, -40, false);
+    if (!result.ok) log(`move refused: ${result.reason}`);
 }
 onTick(view: NpcView) {
-    if (view.intent?.status === "arrived") this.idle();
+    if (view.action?.status === "arrived") this.idle();
 }
-onIntent(view: NpcView, intent: NpcIntent) {
-    if (intent.status === "failed") log(`failed: ${intent.reason}`);
+onAction(view: NpcView, action: NpcAction) {
+    if (action.status === "failed" || action.status === "cancelled") {
+        log(`${action.kind} ${action.status}: ${action.reason}`);
+    }
 }
 ```
 
-`onIntent` fires once per settled intent. `onSensed` fires once for each entity or object newly
-added to the store.
+`onAction` fires once per settled action. `onSensed` fires once for each entity or object newly
+added to the store. A body cull pauses the action (`status: "paused"`, `reason: "body-lost"`);
+it resumes or fails cleanly when the body is re-instantiated.
+
+### Body, inventory and world interaction
+
+One accessor type backs NPC inventories and world containers:
+
+```ts
+const inventory = npc.inventory(this);       // owned body inventory
+const chest = npc.container(chestId);        // world container
+
+inventory.has("CookedMeat");                 // query
+inventory.count("Wood");
+inventory.items;                             // snapshots with slot/prefab/type/food/...
+inventory.canConsume(item);                  // mirrors vanilla CanEat
+
+inventory.use(item);                         // food/mead → consume; gear → equip
+inventory.equip(item);
+inventory.unequip(item);
+inventory.drop(item, 1);
+
+npc.stats(this);                             // live NpcStats
+npc.pick(this, berryId);                     // native pick + auto-pickup
+```
+
+The same accessor reports `available`, `kind`, `writable`, `weight`, `capacity`, `freeSlots`,
+`items`, `equipment`, and `has/count/add/remove/use/consume/equip/unequip/drop`. Container
+writes are reserved until ownership/access is defined; the capability flags tell a script what
+the provider supports.
+
+### Core blackboard
+
+`npc.boardGet`, `npc.boardSnapshot`, `npc.boardOnChange` and `npc.boardOff` expose the
+core-owned per-NPC board. Core publishes `action`, `self` and `hungry` when they change; plugin
+boards (`ai.board.local(...)`) remain separate. Subscribe from a plugin to mirror core state or
+react without polling:
+
+```ts
+const off = npc.boardOnChange(this, "", (key, value) => {
+    if (key === "action") log(`action changed: ${JSON.stringify(value)}`);
+});
+```
 
 ## 5. Memory: what the NPC owns and remembers
 
@@ -357,7 +429,7 @@ export default definePlugin({
         const tree = ai.compile(HUNTER_TREE, { source: "hunter.yaml" });
         npc.register(makeHunter(tree, tickMs / 1000), {
             kind: "hunter",
-            prefab: "Dverger",
+            body: "human",
             tickMs,
             faction: "Players",
             perception: {

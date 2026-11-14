@@ -1,4 +1,13 @@
-import type { NpcPos, NpcSensed, NpcView } from "../../../sdk/api/types";
+import type {
+    ActionResult,
+    InventoryItem,
+    NpcAction,
+    NpcPos,
+    NpcSensed,
+    NpcStats,
+    NpcView
+} from "../../../sdk/api/types";
+import type { Inventory } from "../../../sdk/api/generated";
 
 /** Activity names are also the AI tree keys and the manual/LLM request vocabulary. */
 export type VillagerActivity =
@@ -9,15 +18,19 @@ export type VillagerActivity =
     | "seekHome"
     | "return"
     | "rest"
-    | "flee";
+    | "flee"
+    | "eat";
 
 /** The NPC surface the YAML actions ultimately drive. */
 export interface VillagerActor {
-    moveTo(x: number, y: number, z: number, run: boolean): boolean;
-    wait(seconds: number): boolean;
-    lookAt(x: number, y: number, z: number): boolean;
-    face(id: string): boolean;
-    idle(): boolean;
+    moveTo(x: number, y: number, z: number, run: boolean): ActionResult;
+    wait(seconds: number): ActionResult;
+    lookAt(x: number, y: number, z: number): ActionResult;
+    face(id: string): ActionResult;
+    idle(): ActionResult;
+    pick(id: string): ActionResult;
+    getStats(): NpcStats;
+    getInventory(): Inventory;
 }
 
 export interface VillagerNeeds {
@@ -93,7 +106,8 @@ const COOLDOWN_SECONDS: Record<VillagerActivity, readonly [number, number]> = {
     seekHome: [8, 15],
     return: [1, 3],
     rest: [3, 8],
-    flee: [10, 20]
+    flee: [10, 20],
+    eat: [30, 60]
 };
 
 /**
@@ -122,7 +136,8 @@ export class VillagerBrain {
         seekHome: 0,
         return: 0,
         rest: 0,
-        flee: 0
+        flee: 0,
+        eat: 0
     };
 
     private activity: VillagerActivity = "wander";
@@ -312,6 +327,18 @@ export class VillagerBrain {
                 entry.distance <= 14
         );
         const decisions: Array<{ activity: VillagerActivity; score: number; target?: NpcSensed }> = [];
+        const stats = this.actor.getStats();
+        const inventory = this.actor.getInventory();
+        const hasFood = inventory.items.some(
+            item => item.type === "food" && inventory.canConsume(item)
+        );
+        const foodSource = nearest(
+            view.objects,
+            entry => entry.kind === "pickable" && entry.ready && entry.food && entry.distance <= 24
+        );
+        if (stats.food.length === 0 && (hasFood || foodSource)) {
+            decisions.push({ activity: "eat", score: 900, target: foodSource ?? undefined });
+        }
 
         if (this.needs.energy < 0.25) decisions.push({ activity: "rest", score: 800 });
         else if (night && this.needs.energy < 0.9) {
@@ -433,7 +460,7 @@ export class VillagerBrain {
 
     private updateNeeds(view: NpcView, elapsed: number): void {
         if (elapsed <= 0) return;
-        const moving = view.intent?.kind === "moveTo" && view.intent.status === "running";
+        const moving = view.action?.kind === "moveTo" && view.action.status === "running";
         const resting = this.activity === "rest" && this.instance !== null;
         const playerNearby = view.nearby.some(entry => entry.isPlayer && !entry.isDead && entry.distance <= 12);
 
@@ -468,6 +495,23 @@ export class VillagerBrain {
     }
 
     private condition(name: string, ctx: BehaviorActionContext): boolean {
+        if (name === "hungry") {
+            return this.actor.getStats().food.length === 0;
+        }
+
+        if (name === "has-food") {
+            const inventory = this.actor.getInventory();
+            return inventory.items.some(item => item.type === "food" && inventory.canConsume(item));
+        }
+
+        if (name === "has-food-source") {
+            const view = ctx.state.senses as NpcView | undefined;
+            return (
+                !!view &&
+                view.objects.some(entry => entry.kind === "pickable" && entry.ready && entry.food && entry.distance <= 24)
+            );
+        }
+
         if (name !== "at-home") return false;
         const view = ctx.state.senses as NpcView | undefined;
         if (!view) return false;
@@ -499,6 +543,50 @@ export class VillagerBrain {
 
         if (name === "select-target") {
             return this.selectTarget(ctx, state, view);
+        }
+
+        if (name === "select-food") {
+            const inventory = this.actor.getInventory();
+            const food = inventory.items.find(item => item.type === "food" && inventory.canConsume(item));
+            if (food) {
+                state.food = food;
+                state.target = null;
+                return "success";
+            }
+
+            if (!view) return "failure";
+            const source = nearest(
+                view.objects,
+                entry => entry.kind === "pickable" && entry.ready && entry.food && entry.distance <= 24
+            );
+            if (!source) return "failure";
+            this.activeTarget = source;
+            this.activeDestination = source.pos;
+            state.target = source;
+            state.destination = source.pos;
+            state.moveIssued = false;
+            return "success";
+        }
+
+        if (name === "pick-food") {
+            const target = state.target as NpcSensed | undefined;
+            if (!view || !target) return "failure";
+            const action = view.action;
+            if (action?.kind === "pick") {
+                if (action.status === "arrived") return "success";
+                if (action.status === "failed" || action.status === "cancelled") return "failure";
+                return "running";
+            }
+
+            const result = this.actor.pick(target.id);
+            return result.ok ? "running" : "failure";
+        }
+
+        if (name === "eat") {
+            const inventory = this.actor.getInventory();
+            const food = chooseFood(inventory, this.actor.getStats());
+            if (!food) return "failure";
+            return inventory.use(food).ok ? "success" : "failure";
         }
 
         if (name === "select-shelter") {
@@ -537,19 +625,19 @@ export class VillagerBrain {
         if (name === "look-at") {
             const target = state.target as NpcSensed | undefined;
             if (!target) return "failure";
-            return this.actor.lookAt(target.pos.x, target.pos.y, target.pos.z) ? "success" : "failure";
+            return this.actor.lookAt(target.pos.x, target.pos.y, target.pos.z).ok ? "success" : "failure";
         }
 
         if (name === "look-around") {
             if (!view) return "failure";
             const point = this.pointAround(view, view.y, 2, 5);
-            return this.actor.lookAt(point.x, point.y, point.z) ? "success" : "failure";
+            return this.actor.lookAt(point.x, point.y, point.z).ok ? "success" : "failure";
         }
 
         if (name === "face") {
             const target = state.target as NpcSensed | undefined;
             if (!target) return "failure";
-            return this.actor.face(target.id) ? "success" : "failure";
+            return this.actor.face(target.id).ok ? "success" : "failure";
         }
 
         if (name === "claim-home") {
@@ -615,10 +703,10 @@ export class VillagerBrain {
     private moveAction(state: Record<string, unknown>, view: NpcView | undefined): BehaviorOutcome {
         if (!view) return "failure";
         if (state.moveIssued === true) {
-            const intent = view.intent;
-            if (intent?.kind === "moveTo") {
-                if (intent.status === "arrived") return "success";
-                if (intent.status === "failed") return "failure";
+            const action = view.action;
+            if (action?.kind === "moveTo") {
+                if (action.status === "arrived") return "success";
+                if (action.status === "failed" || action.status === "cancelled") return "failure";
                 return "running";
             }
             return "running";
@@ -626,7 +714,7 @@ export class VillagerBrain {
 
         const destination = state.destination as NpcPos | undefined;
         if (!isPosition(destination)) return "failure";
-        if (!this.actor.moveTo(destination.x, destination.y, destination.z, state.run === true)) return "failure";
+        if (!this.actor.moveTo(destination.x, destination.y, destination.z, state.run === true).ok) return "failure";
         state.moveIssued = true;
         return "running";
     }
@@ -634,17 +722,17 @@ export class VillagerBrain {
     private waitAction(ctx: BehaviorActionContext, state: Record<string, unknown>, view: NpcView | undefined): BehaviorOutcome {
         if (!view) return "failure";
         if (state.waitIssued === true) {
-            const intent = view.intent;
-            if (intent?.kind === "wait") {
-                if (intent.status === "arrived") return "success";
-                if (intent.status === "failed") return "failure";
+            const action = view.action;
+            if (action?.kind === "wait") {
+                if (action.status === "arrived") return "success";
+                if (action.status === "failed" || action.status === "cancelled") return "failure";
                 return "running";
             }
             return "running";
         }
 
         const seconds = numberOr(ctx.args.seconds, numberOr(state.waitSeconds, 2));
-        if (!this.actor.wait(seconds)) return "failure";
+        if (!this.actor.wait(seconds).ok) return "failure";
         state.waitIssued = true;
         return "running";
     }
@@ -665,6 +753,23 @@ export class VillagerBrain {
         const length = Math.hypot(dx, dz) || 1;
         return { x: view.x + (dx / length) * 10, y: view.y, z: view.z + (dz / length) * 10 };
     }
+}
+
+function chooseFood(inventory: Inventory, stats: NpcStats): InventoryItem | null {
+    const needHealth = 1 - stats.healthRatio;
+    const needStamina = 1 - stats.staminaRatio;
+    let best: { item: InventoryItem; score: number } | null = null;
+    for (const item of inventory.items) {
+        if (item.type !== "food" || !item.food || !inventory.canConsume(item)) continue;
+        const minutes = Math.max(1, item.food.burnTime) / 60;
+        const score =
+            (item.food.health / minutes) * needHealth +
+            (item.food.stamina / minutes) * needStamina +
+            item.food.regen * 6 * needHealth;
+        if (!best || score > best.score) best = { item, score };
+    }
+
+    return best?.item ?? null;
 }
 
 function nearest(entries: NpcSensed[], predicate: (entry: NpcSensed) => boolean): NpcSensed | null {

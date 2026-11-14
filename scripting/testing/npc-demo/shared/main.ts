@@ -27,7 +27,7 @@ function makeWanderer() {
 class Demo extends JsPlugin {
     setup() {
         if (!("npc" in this.ctx.host.api)) return;
-        npc.register(makeWanderer(), { kind: "wanderer", prefab: "Dverger", tickMs: 500 });
+        npc.register(makeWanderer(), { kind: "wanderer", body: "Dverger", tickMs: 500 });
     }
 
     onServerTick() {

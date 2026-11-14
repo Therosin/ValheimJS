@@ -1,0 +1,22 @@
+id: eat
+description: Eat from the inventory, or find a pickable food source first.
+imports:
+  move: ./micro/move.yaml
+  wait: ./micro/wait.yaml
+state:
+  waitSeconds: 1
+root:
+  type: selector
+  children:
+    - type: sequence
+      children:
+        - condition: has-food
+        - action: eat
+        - use: wait
+    - type: sequence
+      children:
+        - action: select-food
+        - use: move
+        - action: pick-food
+        - action: eat
+        - use: wait

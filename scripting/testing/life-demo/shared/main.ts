@@ -7,10 +7,12 @@ import {
     npcBase,
     type BoardMembership,
     type BoardScope,
-    type NpcIntent,
+    type NpcAction,
     type NpcPos,
+    type NpcStats,
     type NpcView
 } from "../../../sdk/index";
+import type { Inventory } from "../../../sdk/api/generated";
 import { compileBehaviours } from "../lib/behaviours";
 import {
     VillagerBrain,
@@ -48,6 +50,46 @@ function makeVillager(trees: Record<VillagerActivity, string>) {
         private boardLinks: Array<() => void> = [];
         private memberId: string | null = null;
 
+        getStats(): NpcStats {
+            const stats = npc.stats(this);
+            if (stats) return stats;
+            return {
+                health: this.health,
+                maxHealth: this.maxHealth,
+                healthRatio: this.maxHealth > 0 ? this.health / this.maxHealth : 0,
+                stamina: 0,
+                maxStamina: 100,
+                staminaRatio: 0,
+                eitr: 0,
+                maxEitr: 0,
+                eitrRatio: 0,
+                food: [],
+                statusEffects: [],
+                hungry: false
+            };
+        }
+
+        getInventory(): Inventory {
+            return npc.inventory(this);
+        }
+
+        onAction(_view: NpcView, action: NpcAction) {
+            if (action.status !== "failed" && action.status !== "cancelled") return;
+            const target = action.target
+                ? `${Math.round(action.target.x)},${Math.round(action.target.z)}`
+                : "-";
+            log(
+                `[${this.name}] ${action.kind} ${action.status}: ${action.reason ?? "unknown"} ` +
+                    `target=${target} id=${action.targetId ?? "-"}`
+            );
+        }
+
+        onDespawn() {
+            this.brain?.dispose();
+            this.brain = null;
+            this.closeBoard();
+        }
+
         onSpawn(view: NpcView) {
             if (!this.brain) this.attach(view);
         }
@@ -69,23 +111,6 @@ function makeVillager(trees: Record<VillagerActivity, string>) {
             }
         }
 
-        onDespawn() {
-            this.brain?.dispose();
-            this.brain = null;
-            this.closeBoard();
-        }
-
-        onIntent(_view: NpcView, intent: NpcIntent) {
-            if (intent.status !== "failed") return;
-            const target = intent.target
-                ? `${Math.round(intent.target.x)},${Math.round(intent.target.z)}`
-                : "-";
-            log(
-                `[${this.name}] ${intent.kind} failed: ${intent.reason ?? "unknown"} ` +
-                    `target=${target} id=${intent.targetId ?? "-"}`
-            );
-        }
-
         private attach(view: NpcView) {
             this.brain?.dispose();
             this.closeBoard();
@@ -101,9 +126,11 @@ function makeVillager(trees: Record<VillagerActivity, string>) {
                 if ("sourceId" in data && data.sourceId === view.id) return;
                 local.emit("heard:threat", data);
             });
+            const offCore = npc.boardOnChange(this, "", (key, value) => local.set(key, value));
             this.boardLinks = [
                 () => offThreat.dispose(),
-                () => offHeard.dispose()
+                () => offHeard.dispose(),
+                () => npc.boardOff(offCore)
             ];
             this.board = local;
             this.membership = village;
@@ -159,9 +186,10 @@ export default definePlugin({
         }
         npc.register(makeVillager(compileBehaviours()), {
             kind: "villager",
-            prefab: "Dverger",
+            body: "human",
             tickMs: 500,
             faction: "Players",
+            items: ["Club", "Raspberry", "Raspberry"],
             perception: {
                 radius: 24,
                 max: 12,

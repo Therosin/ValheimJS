@@ -120,7 +120,9 @@ export interface NpcView {
     isTamed: boolean;
     level: number;
     home: NpcPos;
-    intent: NpcIntent | null;
+    ready: boolean;
+    self: NpcStats | null;
+    action: NpcAction | null;
     environment: NpcEnvironment | null;
     nearby: NpcSensed[];
     remembered: NpcSensed[];
@@ -133,12 +135,81 @@ export interface NpcPos {
     z: number;
 }
 
-export interface NpcIntent {
-    kind: "idle" | "stop" | "moveTo" | "wait" | "lookAt" | "face" | string;
-    status: "idle" | "running" | "arrived" | "failed";
+export type NpcActionStatus = "idle" | "running" | "paused" | "arrived" | "failed" | "cancelled";
+
+export interface NpcAction {
+    kind: "idle" | "stop" | "moveTo" | "wait" | "lookAt" | "face" | "pick" | string;
+    status: NpcActionStatus;
     reason: string | null;
     targetId: string | null;
     target: NpcPos | null;
+    /** 0..1 for ongoing native work, null when not applicable. */
+    progress: number | null;
+}
+
+export interface ActionResult {
+    ok: boolean;
+    reason: string | null;
+    /** Number of items affected, when relevant. */
+    count?: number;
+}
+
+export interface FoodSlot {
+    prefab: number;
+    name: string;
+    remaining: number;
+    total: number;
+    health: number;
+    stamina: number;
+    eitr: number;
+    regen: number;
+}
+
+export interface StatusEffect {
+    name: string;
+    remaining: number;
+    duration: number;
+}
+
+export interface NpcStats {
+    health: number;
+    maxHealth: number;
+    healthRatio: number;
+    stamina: number;
+    maxStamina: number;
+    staminaRatio: number;
+    eitr: number;
+    maxEitr: number;
+    eitrRatio: number;
+    food: FoodSlot[];
+    statusEffects: StatusEffect[];
+    /** No active food slot; an engine fact, not a hunger policy. */
+    hungry: boolean;
+}
+
+export interface InventoryItem {
+    slot: { x: number; y: number };
+    prefab: string;
+    name: string;
+    stack: number;
+    quality: number;
+    durability: number;
+    maxDurability: number;
+    weight: number;
+    type: "food" | "mead" | "weapon" | "tool" | "armor" | "ammo" | "material" | "misc";
+    equipped: boolean;
+    food: { health: number; stamina: number; eitr: number; burnTime: number; regen: number } | null;
+}
+
+export interface NpcEquipment {
+    right: InventoryItem | null;
+    left: InventoryItem | null;
+    helmet: InventoryItem | null;
+    chest: InventoryItem | null;
+    legs: InventoryItem | null;
+    shoulder: InventoryItem | null;
+    utility: InventoryItem | null;
+    trinket: InventoryItem | null;
 }
 
 export interface NpcEnvironment {
@@ -162,6 +233,10 @@ export interface NpcSensed {
     bearing: number;
     visible: boolean;
     inRange: boolean;
+    /** Pickables: currently harvestable. Other objects default to true. */
+    ready: boolean;
+    /** Pickables: the yielded item is food. */
+    food: boolean;
     enemy: boolean;
     isPlayer: boolean;
     isNpc: boolean;

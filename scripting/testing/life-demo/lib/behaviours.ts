@@ -20,7 +20,8 @@ const ACTIVITY_FILES: Record<VillagerActivity, string> = {
     seekHome: "seek-home.yaml",
     return: "return-home.yaml",
     rest: "rest.yaml",
-    flee: "flee.yaml"
+    flee: "flee.yaml",
+    eat: "eat.yaml"
 };
 
 export function compileBehaviours(): Record<VillagerActivity, string> {

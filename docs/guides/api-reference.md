@@ -13,7 +13,6 @@ has the exact signatures.
 | [`game`](#game) | process side, world identity, live snapshot |
 | [`world`](#world) | object counts, spawning, per-object data |
 | [`players`](#players) | local player, lookups and the online roster |
-| [`nav`](#nav) | navigation volume stats and debug overlay |
 | [`draw`](#draw) | world-space debug/gameplay primitives |
 | [`net`](#net) | routed RPC channels |
 | [`sync`](#sync) | explicit transient binary frames |
@@ -217,7 +216,7 @@ export default definePlugin({
     setup() {
         npc.register(makeWanderer(), {
             kind: "wanderer",
-            prefab: "Dverger",
+            body: "human",
             tickMs: 500,
             faction: "Players",
             perception: {
@@ -474,19 +473,6 @@ Client-only declarative panels. One YAML document has a root `panel` and optiona
 `components`; imports supply other documents by alias. `get`/`set` resolve `{ bind: "key" }`
 values and `onEvent` receives scoped node paths and event names. See [Declarative UI](ui.md) for
 the full syntax, panel kinds and limits.
-
-## `nav`
-
-```ts
-nav.enable(enabled: boolean): void   // copy the debug overlay plugin to see it in-world
-nav.zones(): number                  // loaded navigation zones
-nav.cells(): number                  // loaded navigation cells
-```
-
-The volume is lazily built around simulated objects and around the local player when the overlay
-is enabled; walkable cells are sparse green crosses, stairs yellow crosses/vertical ticks and
-blocked cells red crosses, all depth-tested against world geometry. The optional `scripting/testing-optional/nav-debug` plugin (built with `task dev:nav`) enables it
-on clients; it is not part of the default test bundle.
 
 ## `draw`
 

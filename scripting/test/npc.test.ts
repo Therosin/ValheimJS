@@ -58,7 +58,7 @@ describe("npc facade", () => {
         class Wanderer {}
         npc.register(Wanderer as never, {
             kind: "wanderer",
-            prefab: "Dverger",
+            body: "Dverger",
             tickMs: 750,
             faction: "Players",
             perception: { radius: 24, viewAngle: 90, objectRadius: 12 }

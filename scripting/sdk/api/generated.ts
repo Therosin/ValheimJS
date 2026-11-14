@@ -3,7 +3,34 @@
 // Do not edit by hand; run `task declarations:check` to verify drift.
 // </auto-generated>
 
-import type { Account, AiTickResult, ChatCommandDefinition, GameSnapshot, KeyState, NpcSensed, NpcView, PeerInfo, SyncEntity, WorldCharacter, WorldContainer } from "./types";
+import type { Account, ActionResult, AiTickResult, ChatCommandDefinition, GameSnapshot, InventoryItem, KeyState, NpcAction, NpcEquipment, NpcSensed, NpcStats, NpcView, PeerInfo, SyncEntity, WorldCharacter, WorldContainer } from "./types";
+
+/**
+ * A native inventory or container with query and mutation verbs.
+ */
+export declare class Inventory {
+    private constructor();
+    readonly available: boolean;
+    readonly kind: string;
+    readonly writable: boolean;
+    readonly weight: number;
+    readonly capacity: number;
+    readonly freeSlots: number;
+    readonly items: InventoryItem[];
+    readonly equipment: NpcEquipment;
+    has(selector: unknown, count?: number): boolean;
+    count(selector: unknown): number;
+    add(prefab: string, count?: number, quality?: number): ActionResult;
+    remove(selector: unknown, count?: number): ActionResult;
+    use(selector: unknown): ActionResult;
+    consume(selector: unknown): ActionResult;
+    equip(selector: unknown): ActionResult;
+    unequip(selector: unknown): ActionResult;
+    drop(selector: unknown, count?: number): ActionResult;
+    canUse(selector: unknown): boolean;
+    canConsume(selector: unknown): boolean;
+    canEquip(selector: unknown): boolean;
+}
 
 /**
  * A ZDO-backed scripted NPC.
@@ -19,12 +46,13 @@ export declare class ValheimBaseNPC {
     readonly health: number;
     readonly maxHealth: number;
     readonly isAlive: boolean;
-    moveTo(x: number, y: number, z: number, run: boolean): boolean;
-    idle(): boolean;
-    stop(): boolean;
-    wait(seconds: number): boolean;
-    lookAt(x: number, y: number, z: number): boolean;
-    face(id: string): boolean;
+    moveTo(x: number, y: number, z: number, run: boolean): ActionResult;
+    idle(): ActionResult;
+    stop(): ActionResult;
+    wait(seconds: number): ActionResult;
+    lookAt(x: number, y: number, z: number): ActionResult;
+    face(id: string): ActionResult;
+    pick(id: string): ActionResult;
     state(key: string): string | null;
     setState(key: string, value: string): boolean;
     removeState(key: string): boolean;
@@ -40,6 +68,7 @@ export declare class ValheimPlayer {
     readonly platformId: string | null;
     readonly name: string;
     readonly isLocal: boolean;
+    readonly ready: boolean;
     readonly x: number;
     readonly y: number;
     readonly z: number;
@@ -52,6 +81,14 @@ export declare class ValheimPlayer {
  * Which process this is and what world it is running.
  */
 export interface GameApi {
+    /**
+     * True for a client with a spawned local character outside loading/teleport transitions.
+     */
+    clientReady(): boolean;
+    /**
+     * True when ZNet reports Connected; the scene may still be loading.
+     */
+    connected(): boolean;
     /**
      * Current world day, or 0 before the world loads.
      */
@@ -81,9 +118,21 @@ export interface GameApi {
      */
     peerList(): PeerInfo[];
     /**
+     * True when a connected client has reported its world is playable.
+     */
+    peerReady(uid: number): boolean;
+    /**
      * Connected peers, including the server peer.
      */
     peers(): number;
+    /**
+     * Coarse lifecycle phase; gate optional work on this rather than guessing.
+     */
+    phase(): "process" | "scene" | "session" | "world" | "ready";
+    /**
+     * True for a client with a spawned local character outside teleport transitions.
+     */
+    playerReady(): boolean;
     /**
      * True when ZNet exists; does not imply a completed connection or loaded world.
      */
@@ -108,6 +157,10 @@ export interface GameApi {
      * World name, or null before the world loads.
      */
     worldName(): string | null;
+    /**
+     * True when the scene, ZDO world and connection are usable.
+     */
+    worldReady(): boolean;
 }
 
 /**
@@ -378,12 +431,20 @@ export interface PlayersApi {
      * @availability server authority only
      */
     online(): ValheimPlayer[];
+    /**
+     * True once the player's client reports its world is actually playable.
+     */
+    ready(id: string): boolean;
 }
 
 /**
  * Scripted NPC entities: spawn, perception, intents and durable state.
  */
 export interface NpcApi {
+    /**
+     * Current native action and its last outcome.
+     */
+    action(entity: unknown): NpcAction | null;
     /**
      * True when the world scene can host NPCs.
      */
@@ -392,6 +453,26 @@ export interface NpcApi {
      * Base constructor for plugin NPC subclasses.
      */
     base(): new (handle: string) => ValheimBaseNPC;
+    /**
+     * Reads one core-owned NPC board value; null when unset.
+     */
+    boardGet(entity: unknown, key: string): unknown;
+    /**
+     * Removes a core-owned NPC board subscription.
+     */
+    boardOff(id: number): boolean;
+    /**
+     * Subscribes to one core-owned NPC board key (empty key = all); returns an id.
+     */
+    boardOnChange(entity: unknown, key: string, callback: (...args: unknown[]) => unknown): number;
+    /**
+     * Snapshot of every core-owned board value for one NPC.
+     */
+    boardSnapshot(entity: unknown): Record<string, unknown>;
+    /**
+     * Generic inventory accessor for a world container.
+     */
+    container(handle: string): Inventory;
     /**
      * Enables host-side NPC tracing: lifecycle, perception and settled intents.
      */
@@ -405,6 +486,10 @@ export interface NpcApi {
      */
     handles(kind: string): ValheimBaseNPC[];
     /**
+     * Generic inventory accessor for one of this plugin's NPCs.
+     */
+    inventory(entity: unknown): Inventory;
+    /**
      * Persistent plugin-owned memory object for one NPC (survives restarts).
      */
     memory(entity: unknown): Record<string, unknown>;
@@ -412,6 +497,10 @@ export interface NpcApi {
      * Perception for one NPC (same object onTick receives).
      */
     perception(entity: unknown): NpcView | null;
+    /**
+     * Requests a native pick action against a pickable ZDO.
+     */
+    pick(entity: unknown, target: string): ActionResult;
     /**
      * Registers an NPC kind and its plugin subclass constructor.
      */
@@ -428,24 +517,10 @@ export interface NpcApi {
      * Spawns one NPC on the world authority; returns the entity or null.
      */
     spawn(kind: string, x: number, y: number, z: number, name: string | null): ValheimBaseNPC | null;
-}
-
-/**
- * Inspect the navigation volume and toggle its debug overlay.
- */
-export interface NavApi {
     /**
-     * Number of navigation cells loaded.
+     * Live body stats for one of this plugin's NPCs.
      */
-    cells(): number;
-    /**
-     * Toggles the navigation debug overlay.
-     */
-    enable(enabled: boolean): void;
-    /**
-     * Number of navigation zones loaded or cached.
-     */
-    zones(): number;
+    stats(entity: unknown): NpcStats | null;
 }
 
 /**
@@ -626,7 +701,7 @@ export interface AccountServiceApi {
  */
 export interface NetApi {
     /**
-     * True when the routed RPC bus is available.
+     * True when the routed RPC bus and world are ready for traffic.
      */
     available(): boolean;
     /**
@@ -759,7 +834,6 @@ export interface Api {
     world: WorldApi;
     players: PlayersApi;
     npc: NpcApi;
-    nav: NavApi;
     draw: DrawApi;
     ai: AiApi;
     /** Availability: client only. */

@@ -8,6 +8,7 @@
  */
 
 import type { PluginContext } from "./runtime";
+import type { ChatPayload, DamagePayload, PlayerPayload, ServerTickPayload } from "./hooks";
 
 export type { Api, ValheimBaseNPC, ValheimPlayer } from "./api/generated";
 export type { GameSnapshot, KeyState, RpcMeta, ServerTickSnapshot } from "./api/types";
@@ -26,8 +27,12 @@ export { signals, type Signals, type SignalsOptions } from "./signals";
 export {
     npc,
     npcBase,
+    type ActionResult,
+    type FoodSlot,
+    type InventoryItem,
+    type NpcAction,
     type NpcEnvironment,
-    type NpcIntent,
+    type NpcEquipment,
     type NpcObject,
     type NpcPerceptionOptions,
     type NpcPos,
@@ -35,7 +40,9 @@ export {
     type NpcSenseFilter,
     type NpcSensed,
     type NpcSpawnOptions,
-    type NpcView
+    type NpcStats,
+    type NpcView,
+    type StatusEffect
 } from "./npc";
 export { ai, type AiActionOutcome, type AiContext, type AiInstantiateOptions, type AiLoadOptions, type AiStatus, type AiTickResult, type BlackboardChangeHandler, type BlackboardSignalHandler, type BoardMiddlewareHandler, type BoardOperationContext, BoardMembership, BoardScope, BoardSubscription } from "./ai";
 export { ui, type UiDefineOptions, type UiOpenOptions } from "./ui";
@@ -46,7 +53,7 @@ export { AccountService, PermissionService } from "./accounts";
 export type { Account } from "./api/types";
 export type { ChatCommandDefinition } from "./api/types";
 export type { SyncEntity } from "./api/types";
-export { fs, game, nav, players, world } from "./access";
+export { fs, game, players, world } from "./access";
 export { assets, importText, importYaml, importToml } from "./assets";
 export type {
     Handler,
@@ -62,13 +69,15 @@ export { authorityOnly, authorityHandler, clientOnly, clientHandler, context, er
 export interface PluginHooks {
     onLoad?(ctx: PluginContext): void;
     onUnload?(ctx: PluginContext): void;
-    onServerTick?(ctx: PluginContext, world: import("./hooks").ServerTickPayload): void;
-    onChat?(ctx: PluginContext, payload: import("./hooks").ChatPayload): void;
-    onPlayerJoin?(ctx: PluginContext, payload: import("./hooks").PlayerPayload): void;
-    onPlayerLeave?(ctx: PluginContext, payload: import("./hooks").PlayerPayload): void;
-    onPlayerSpawned?(ctx: PluginContext, payload: import("./hooks").PlayerPayload): void;
-    onPlayerDespawned?(ctx: PluginContext, payload: import("./hooks").PlayerPayload): void;
-    onDamage?(ctx: PluginContext, payload: import("./hooks").DamagePayload): void;
+    onServerTick?(ctx: PluginContext, world: ServerTickPayload): void;
+    onChat?(ctx: PluginContext, payload: ChatPayload): void;
+    onPlayerJoin?(ctx: PluginContext, payload: PlayerPayload): void;
+    onPlayerLeave?(ctx: PluginContext, payload: PlayerPayload): void;
+    onPlayerSpawned?(ctx: PluginContext, payload: PlayerPayload): void;
+    onPlayerDespawned?(ctx: PluginContext, payload: PlayerPayload): void;
+    onPlayerReady?(ctx: PluginContext, payload: PlayerPayload): void;
+    onPlayerUnready?(ctx: PluginContext, payload: PlayerPayload): void;
+    onDamage?(ctx: PluginContext, payload: DamagePayload): void;
 }
 
 /**

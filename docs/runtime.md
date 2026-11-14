@@ -24,10 +24,9 @@ client branch; session authority is checked live. See [Process branches](guides/
 | Player identity/state resolution (uid ↔ peer ↔ ZDO) | `Entities/PlayerDirectory.cs`, `Entities/Player.cs` | `players` binding and `ValheimPlayer` |
 | World simulation registry, lifecycle, ZDO writes and ownership retention | `World/WorldManager.cs`, `World/WorldOwnership.cs` | `npc` binding; future world kinds |
 | Relevance subscriptions and control messages | `World/WorldRelevancy.cs`, `World/WorldMessages.cs`, `World/WorldManager.cs` | Clients receive relevance diffs on `valheimjs:world` |
-| NPC behavior, prefab recipe and client presentation | `World/Npc/NpcBehavior.cs`, `World/Npc/NpcPrefabs.cs`, `World/Npc/NpcPresenter.cs` | `npc` binding and `ValheimBaseNPC` |
+| Native NPC body, BaseAI movement and state adapter | `World/Npc/NpcPrefabs.cs`, `World/Npc/VjsNpcAI.cs`, `World/Npc/NpcBehavior.cs` | `npc` binding and `ValheimBaseNPC` |
 | Declarative YAML panels and flat host UI | `Core/Ui/UiCompiler.cs`, `Bindings/UiBindings.cs`, `UI/`, `Core/ValheimJsHost.cs` | `ui` binding and SDK `ui` facade |
 | Perception store, durable memory and YAML AI bridge | `Entities/NpcModels.cs`, `World/Npc/NpcBehavior.cs`, `Core/AiSenses.cs`, `Bindings/AiBindings.cs` | `npc.sensed`/`npc.memory`; `ai` with `ctx.state.senses` |
-| Lazy navigation volume, pathfinder, cache and debug overlay | `World/Navigation/` | `nav` binding; `nav-debug` example |
 | World-space line/mesh drawing and server replication | `Debugging/WorldDraw.cs`, `Bindings/DrawBindings.cs` | `draw` binding and SDK `draw` |
 | Private command submission/replies over `valheimjs:commands` | `Networking/CommandService.cs`, `Hooks/CommandInputHook.cs` | `!` input and private `Commands` lines |
 | Script engine, branch components, dependency order, contexts and timers | `Scripting/` | Plugin descriptors and host API |
@@ -110,8 +109,7 @@ the broader game-snapshot type, so that annotation alone does not guarantee the 
 
 `task check` covers typechecking, SDK unit tests, native compilation, generated-declaration drift,
 bundling, binding/process/network/command/account/management/world-handle/world-manager/signals/
-behaviour/ai/ui/life/assets probes and example reloads. `--probe-world-manager` covers relevance hysteresis/diffs, A* paths
-(flat, blocked, stairs, water), nav-cache round-trips and draw/message DTOs. Role and help probes include actual JS registration through the native bindings,
+behaviour/ai/ui/life/assets probes and example reloads. `--probe-world-manager` covers relevance hysteresis/diffs and world message DTOs. Role and help probes include actual JS registration through the native bindings,
 not only facade mocks. Live dedicated-server checks confirmed the heartbeat payload, the absence
 of client-only `ui`/`input`, query-only account/permission bindings and session-scoped spawn
 handles.

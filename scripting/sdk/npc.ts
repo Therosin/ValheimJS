@@ -1,34 +1,48 @@
 import { context } from "./runtime";
-import type { ValheimBaseNPC } from "./api/generated";
+import type { Inventory, ValheimBaseNPC } from "./api/generated";
 import type {
-    NpcIntent,
+    ActionResult,
+    FoodSlot,
+    InventoryItem,
+    NpcAction,
+    NpcEquipment,
     NpcObject,
     NpcPerceptionOptions,
     NpcSenseFilter,
     NpcSensed,
-    NpcView
+    NpcStats,
+    NpcView,
+    StatusEffect
 } from "./api/types";
 
 export type {
+    ActionResult,
+    FoodSlot,
+    InventoryItem,
+    NpcAction,
     NpcEnvironment,
-    NpcIntent,
+    NpcEquipment,
     NpcObject,
     NpcPerceptionOptions,
     NpcPos,
     NpcSenseFilter,
     NpcSensed,
-    NpcView
+    NpcStats,
+    NpcView,
+    StatusEffect
 } from "./api/types";
 
 export interface NpcRegistration {
     /** Lowercase kind, `^[a-z0-9_-]{1,32}$`; also the prefab suffix. */
     kind: string;
-    /** Existing vanilla prefab cloned on registration (for example `Dverger`). */
-    prefab: string;
+    /** Body source: `"human"` (default) upgrades a Player clone to Humanoid; another prefab clones that Character. */
+    body?: string;
     /** Host tick interval; default 500 ms, clamped to 100..5000. */
     tickMs?: number;
     /** Applied to the cloned prefab's Character faction, for example "Players" for companions. */
     faction?: string;
+    /** Prefab names placed in the NPC inventory on first spawn; the first weapon found is equipped. */
+    items?: string[];
     /** Per-kind perception tuning; defaults preserve the classic 20 m/8-entity scan. */
     perception?: NpcPerceptionOptions;
 }
@@ -67,7 +81,7 @@ export const npc = {
     register(ctor: new (handle: string) => ValheimBaseNPC, options: NpcRegistration): void {
         context().host.api.npc.register(
             options.kind,
-            options.prefab,
+            options.body ?? "human",
             options.tickMs ?? 500,
             ctor as unknown as (...args: unknown[]) => unknown,
             options
@@ -85,6 +99,46 @@ export const npc = {
     },
     perception(entity: ValheimBaseNPC): NpcView | null {
         return context().host.api.npc.perception(entity);
+    },
+    /** Generic inventory accessor for one of this plugin's NPCs. */
+    inventory(entity: ValheimBaseNPC): Inventory {
+        return context().host.api.npc.inventory(entity);
+    },
+    /** Generic inventory accessor for a world container by ZDO handle. */
+    container(handle: string): Inventory {
+        return context().host.api.npc.container(handle);
+    },
+    /** Live body stats: health, stamina, food, status. */
+    stats(entity: ValheimBaseNPC): NpcStats | null {
+        return context().host.api.npc.stats(entity);
+    },
+    /** Current native action and its last outcome. */
+    action(entity: ValheimBaseNPC): NpcAction | null {
+        return context().host.api.npc.action(entity);
+    },
+    /** Requests a native pick action against a pickable ZDO. */
+    pick(entity: ValheimBaseNPC, target: string): ActionResult {
+        return context().host.api.npc.pick(entity, target);
+    },
+    /** Reads one core-owned per-NPC board value. */
+    boardGet(entity: ValheimBaseNPC, key: string): unknown {
+        return context().host.api.npc.boardGet(entity, key);
+    },
+    /** Snapshot of the core-owned per-NPC board. */
+    boardSnapshot(entity: ValheimBaseNPC): Record<string, unknown> {
+        return context().host.api.npc.boardSnapshot(entity) as Record<string, unknown>;
+    },
+    /** Subscribes to core NPC board changes; empty key observes all keys. */
+    boardOnChange(
+        entity: ValheimBaseNPC,
+        key: string,
+        handler: (key: string, value: unknown) => void
+    ): number {
+        return context().host.api.npc.boardOnChange(entity, key, handler as (...args: unknown[]) => unknown);
+    },
+    /** Removes a core NPC board subscription. */
+    boardOff(id: number): boolean {
+        return context().host.api.npc.boardOff(id);
     },
     /**
      * Queries the perception store. Entities stay recognized after leaving range; pass
