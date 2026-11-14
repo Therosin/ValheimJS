@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
@@ -22,7 +22,6 @@ internal static class NpcPrefabs
 
     private static GameObject? _container;
     private static ZNetScene? _scene;
-    private static readonly HashSet<string> Applied = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, IReadOnlyList<string>> StartingItems = new(StringComparer.Ordinal);
 
     internal static string PrefabName(string kind) => "vjs_npc_" + kind;
@@ -45,7 +44,6 @@ internal static class NpcPrefabs
         if (!ReferenceEquals(_scene, scene))
         {
             _scene = scene;
-            Applied.Clear();
             StartingItems.Clear();
             if (_container != null)
             {
@@ -119,6 +117,7 @@ internal static class NpcPrefabs
         ai.m_avoidFire = true;
         ai.m_avoidWater = true;
         ai.m_avoidLava = true;
+        ai.AutoEngage = definition.AutoEngage;
 
         clone.SetActive(true);
         if (NamedPrefabsField?.GetValue(scene) is not Dictionary<int, GameObject> named)
@@ -130,7 +129,6 @@ internal static class NpcPrefabs
 
         scene.m_prefabs.Add(clone);
         named[clone.name.GetStableHashCode()] = clone;
-        Applied.Add(definition.Kind);
     }
 
     private static void ConvertHuman(GameObject clone)

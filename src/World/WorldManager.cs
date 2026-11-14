@@ -77,6 +77,17 @@ internal sealed class WorldManager : IDisposable
             throw new ArgumentException("world kind: name is required");
         }
 
+        if (string.IsNullOrEmpty(kind.Plugin))
+        {
+            throw new ArgumentException($"world kind '{kind.Name}': plugin is required");
+        }
+
+        if (_kinds.TryGetValue(kind.Name, out var existing))
+        {
+            throw new ArgumentException(
+                $"world kind '{kind.Name}' is already registered by '{existing.Plugin}'");
+        }
+
         _kinds[kind.Name] = kind;
         try
         {
@@ -132,9 +143,10 @@ internal sealed class WorldManager : IDisposable
             return null;
         }
 
-        if (!_kinds.TryGetValue(kind, out var kindInfo))
+        if (!_kinds.TryGetValue(kind, out var kindInfo) ||
+            !string.Equals(kindInfo.Plugin, plugin, StringComparison.Ordinal))
         {
-            Plugin.Logger.LogWarning($"world spawn refused: unknown kind '{kind}'");
+            Plugin.Logger.LogWarning($"world spawn refused: unknown kind '{kind}' for plugin '{plugin}'");
             return null;
         }
 
@@ -228,7 +240,7 @@ internal sealed class WorldManager : IDisposable
         }
 
         _objects.Remove(handle);
-        NpcBoard.RemoveHandle(handle);
+        NpcBoards.Remove(handle);
         return true;
     }
 
@@ -379,6 +391,15 @@ internal sealed class WorldManager : IDisposable
         return obj?.Behavior is INpcSenses senses ? senses.TakeNewSenses() : Array.Empty<NpcSensedEntity>();
     }
 
+    /// <summary>Drains settled action outcomes for one NPC, exactly once.</summary>
+    internal IReadOnlyList<NpcActionView> TakeActionSettlements(string plugin, string handle)
+    {
+        var obj = Resolve(plugin, handle);
+        return obj?.Behavior is INpcActions actions
+            ? actions.TakeActionSettlements()
+            : Array.Empty<NpcActionView>();
+    }
+
     internal string? MemoryGet(string plugin, string handle)
     {
         if (Resolve(plugin, handle) == null)
@@ -437,6 +458,7 @@ internal sealed class WorldManager : IDisposable
         _objects.Clear();
         _subscribed.Clear();
         _kinds.Clear();
+        NpcBoards.Clear();
         _peerSets.Clear();
         _scope.Dispose();
         if (ReferenceEquals(Instance, this))
@@ -993,7 +1015,7 @@ internal sealed class WorldManager : IDisposable
 
             var cleanupHandle = zdo.m_uid.ToString();
             _objects.Remove(cleanupHandle);
-            NpcBoard.RemoveHandle(cleanupHandle);
+            NpcBoards.Remove(cleanupHandle);
             manager.DestroyZDO(zdo);
             removed++;
         }

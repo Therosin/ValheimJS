@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using UnityEngine;
+using ValheimJS.Core;
 using ValheimJS.Entities;
 
 namespace ValheimJS.World;
@@ -46,7 +47,6 @@ internal sealed class VjsBodyStats : MonoBehaviour
     private readonly FoodSlot[] _food = new FoodSlot[MaxFoodSlots];
     private float _baseMaxHealth = 10f;
     private float _stamina = BaseStamina;
-    private float _regenTimer;
     private float _regenDelay;
     private float _saveAt;
     private float _healthRegenTimer;
@@ -73,55 +73,74 @@ internal sealed class VjsBodyStats : MonoBehaviour
         }
     }
 
+    /// <summary>Bodies simulate stats on the world authority only; clients read the ZDO snapshot.</summary>
+    private bool Authority => GameEnvironment.IsServer();
+
     private void Awake()
     {
-        _nview = GetComponent<ZNetView>();
-        _zdo = _nview?.GetZDO();
-        _humanoid = GetComponent<Humanoid>();
-        _character = GetComponent<Character>();
-        _seman = _character?.GetSEMan();
-        _zanim = GetComponent<ZSyncAnimation>();
+        EnsureRefs();
         if (_character != null)
         {
             _baseMaxHealth = Mathf.Max(1f, _character.GetMaxHealthBase());
         }
     }
 
+    private void EnsureRefs()
+    {
+        if (_nview == null) _nview = GetComponent<ZNetView>();
+        if (_zdo == null && _nview != null) _zdo = _nview.GetZDO();
+        if (_humanoid == null) _humanoid = GetComponent<Humanoid>();
+        if (_character == null) _character = GetComponent<Character>();
+        if (_seman == null && _character != null) _seman = _character.GetSEMan();
+        if (_zanim == null) _zanim = GetComponent<ZSyncAnimation>();
+    }
+
     private void Start()
     {
+        EnsureRefs();
         Load();
-        RecalculateMaxima();
-        if (_nview != null && _nview.IsOwner() && _humanoid != null && _zdo != null)
+        if (Authority)
         {
-            var initialized = _zdo.GetBool(WorldKeys.InventoryInitialized, false);
-            var hasSaved = _zdo.GetString(WorldKeys.Inventory, out var saved) && !string.IsNullOrEmpty(saved);
-            VjsInventory.Restore(_humanoid, _zdo);
-            if (!initialized)
-            {
-                if (!hasSaved)
-                {
-                    var inventory = _humanoid.GetInventory();
-                    foreach (var item in NpcPrefabs.StartingItemsFor(gameObject.name))
-                    {
-                        if (inventory != null && VjsInventory.Add(inventory, item, 1, 1) == 0)
-                        {
-                            PluginLogger.Warn($"npc body: starting item '{item}' was not found");
-                        }
-                    }
-                }
-
-                _zdo.Set(WorldKeys.InventoryInitialized, true);
-                VjsInventory.Save(_humanoid, _zdo);
-            }
-
-            if (!HasEquippedWeapon(_humanoid))
-            {
-                VjsInventory.EquipFirstWeapon(_humanoid);
-                VjsInventory.Save(_humanoid, _zdo);
-            }
+            RecalculateMaxima();
+            InitializeInventory();
         }
 
         Ready = true;
+    }
+
+    private void InitializeInventory()
+    {
+        if (_humanoid == null || _zdo == null)
+        {
+            return;
+        }
+
+        var initialized = _zdo.GetBool(WorldKeys.InventoryInitialized, false);
+        var hasSaved = _zdo.GetString(WorldKeys.Inventory, out var saved) && !string.IsNullOrEmpty(saved);
+        VjsInventory.Restore(_humanoid, _zdo);
+        if (!initialized)
+        {
+            if (!hasSaved)
+            {
+                var inventory = _humanoid.GetInventory();
+                foreach (var item in NpcPrefabs.StartingItemsFor(gameObject.name))
+                {
+                    if (inventory != null && VjsInventory.Add(inventory, item, 1, 1) == 0)
+                    {
+                        PluginLogger.Warn($"npc body: starting item '{item}' was not found");
+                    }
+                }
+            }
+
+            _zdo.Set(WorldKeys.InventoryInitialized, true);
+            VjsInventory.Save(_humanoid, _zdo);
+        }
+
+        if (!HasEquippedWeapon(_humanoid))
+        {
+            VjsInventory.EquipFirstWeapon(_humanoid);
+            VjsInventory.Save(_humanoid, _zdo);
+        }
     }
 
     private static bool HasEquippedWeapon(Humanoid humanoid) =>
@@ -130,7 +149,8 @@ internal sealed class VjsBodyStats : MonoBehaviour
 
     private void Update()
     {
-        if (!_loaded || _nview == null || !_nview.IsOwner() || _character == null || _humanoid == null)
+        EnsureRefs();
+        if (!_loaded || !Authority || _character == null || _humanoid == null)
         {
             return;
         }
@@ -151,7 +171,7 @@ internal sealed class VjsBodyStats : MonoBehaviour
     private void OnDestroy()
     {
         Ready = false;
-        if (_nview == null || _zdo == null || !_nview.IsOwner())
+        if (!Authority || _zdo == null)
         {
             return;
         }
@@ -244,9 +264,9 @@ internal sealed class VjsBodyStats : MonoBehaviour
     internal bool TryConsume(ItemDrop.ItemData item, out string? reason)
     {
         reason = null;
-        if (_nview == null || !_nview.IsOwner() || _humanoid == null)
+        if (!Authority || _humanoid == null)
         {
-            reason = "not-owner";
+            reason = "not-authority";
             return false;
         }
 
@@ -319,6 +339,7 @@ internal sealed class VjsBodyStats : MonoBehaviour
 
     private void UpdateFood(float dt)
     {
+        var expired = false;
         for (var index = 0; index < MaxFoodSlots; index++)
         {
             var slot = _food[index];
@@ -327,10 +348,16 @@ internal sealed class VjsBodyStats : MonoBehaviour
             if (slot.Remaining <= 0f)
             {
                 slot = default;
+                expired = true;
                 _dirty = true;
             }
 
             _food[index] = slot;
+        }
+
+        if (expired)
+        {
+            RecalculateMaxima();
         }
 
         _healthRegenTimer += dt;

@@ -43,6 +43,11 @@ export interface NpcRegistration {
     faction?: string;
     /** Prefab names placed in the NPC inventory on first spawn; the first weapon found is equipped. */
     items?: string[];
+    /**
+     * Opt-in native auto-combat: when damaged by a non-player (or by a player while tamed), the
+     * body fights back until the threat is gone. Default false: the script's intent wins.
+     */
+    autoEngage?: boolean;
     /** Per-kind perception tuning; defaults preserve the classic 20 m/8-entity scan. */
     perception?: NpcPerceptionOptions;
 }

@@ -26,10 +26,11 @@ internal static class WorldKeys
     internal const string ActionRun = "vjs.action.run";
     internal const string ActionTarget = "vjs.action.target";
     internal const string ActionSeconds = "vjs.action.seconds";
+    internal const string ActionStartDistance = "vjs.action.start";
+    internal const string ActionWaitUntil = "vjs.action.until";
     internal const string Stats = "vjs.stats";
     internal const string Food = "vjs.food";
     internal const string Inventory = "vjs.inv";
-    internal const string Equipment = "vjs.equip";
     internal const string InventoryInitialized = "vjs.inv.init";
     internal const string Death = "vjs.death";
     internal const string Generation = "vjs.gen";

@@ -6,33 +6,6 @@
 import type { Account, ActionResult, AiTickResult, ChatCommandDefinition, GameSnapshot, InventoryItem, KeyState, NpcAction, NpcEquipment, NpcSensed, NpcStats, NpcView, PeerInfo, SyncEntity, WorldCharacter, WorldContainer } from "./types";
 
 /**
- * A native inventory or container with query and mutation verbs.
- */
-export declare class Inventory {
-    private constructor();
-    readonly available: boolean;
-    readonly kind: string;
-    readonly writable: boolean;
-    readonly weight: number;
-    readonly capacity: number;
-    readonly freeSlots: number;
-    readonly items: InventoryItem[];
-    readonly equipment: NpcEquipment;
-    has(selector: unknown, count?: number): boolean;
-    count(selector: unknown): number;
-    add(prefab: string, count?: number, quality?: number): ActionResult;
-    remove(selector: unknown, count?: number): ActionResult;
-    use(selector: unknown): ActionResult;
-    consume(selector: unknown): ActionResult;
-    equip(selector: unknown): ActionResult;
-    unequip(selector: unknown): ActionResult;
-    drop(selector: unknown, count?: number): ActionResult;
-    canUse(selector: unknown): boolean;
-    canConsume(selector: unknown): boolean;
-    canEquip(selector: unknown): boolean;
-}
-
-/**
  * A ZDO-backed scripted NPC.
  */
 export declare class ValheimBaseNPC {
@@ -75,6 +48,34 @@ export declare class ValheimPlayer {
     readonly health: number;
     readonly maxHealth: number;
     readonly isAlive: boolean;
+}
+
+/**
+ * A native inventory or container with query and mutation verbs.
+ */
+export declare class Inventory {
+    private constructor();
+    readonly available: boolean;
+    readonly kind: string;
+    readonly writable: boolean;
+    readonly equipmentSupported: boolean;
+    readonly weight: number;
+    readonly capacity: number;
+    readonly freeSlots: number;
+    readonly items: InventoryItem[];
+    readonly equipment: NpcEquipment | null;
+    has(selector: unknown, count?: number): boolean;
+    count(selector: unknown): number;
+    add(prefab: string, count?: number, quality?: number): ActionResult;
+    remove(selector: unknown, count?: number): ActionResult;
+    use(selector: unknown): ActionResult;
+    consume(selector: unknown): ActionResult;
+    equip(selector: unknown): ActionResult;
+    unequip(selector: unknown): ActionResult;
+    drop(selector: unknown, count?: number): ActionResult;
+    canUse(selector: unknown): boolean;
+    canConsume(selector: unknown): boolean;
+    canEquip(selector: unknown): boolean;
 }
 
 /**

@@ -20,6 +20,8 @@
     <Compile Include="..\src\AI\BehaviourTree.cs" LinkBase="Shared\AI" />
     <Compile Include="..\src\AI\ReactiveBlackboard.cs" LinkBase="Shared\AI" />
     <Compile Include="..\src\Entities\NpcModels.cs" LinkBase="Shared\Entities" />
+    <Compile Include="..\src\Entities\NpcActionState.cs" LinkBase="Shared\Entities" />
+    <Compile Include="..\src\Entities\NpcInventoryPayload.cs" LinkBase="Shared\Entities" />
     <Compile Include="..\src\AI\AiSenses.cs" LinkBase="Shared\AI" />
     <Compile Include="..\src\Core\Ui\UiCompiler.cs" LinkBase="Shared\Core\Ui" />
     <Compile Include="..\src\Core\Networking.cs" LinkBase="Shared\Core" />

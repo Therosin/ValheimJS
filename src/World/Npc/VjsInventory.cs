@@ -4,13 +4,14 @@ using System.Globalization;
 using System.Reflection;
 using System.Text;
 using UnityEngine;
+using ValheimJS.Core;
+using ValheimJS.Entities;
 
 namespace ValheimJS.World;
 
 /// <summary>
-/// Native inventory/equipment helpers shared by every inventory accessor (NPC body, player body,
-/// world container). Persistence is deliberately provider-agnostic: it serializes the native
-/// <see cref="Inventory"/> so the same code can back future player-owned inventories.
+/// Native inventory/equipment helpers shared by the NPC body and world-container accessors.
+/// Persistence serializes the native <see cref="Inventory"/> plus the body's equipment fields.
 /// </summary>
 internal static class VjsInventory
 {
@@ -201,12 +202,38 @@ internal static class VjsInventory
         var prefab = scene?.GetPrefab(prefabName);
         var drop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
         if (drop == null || count <= 0) return 0;
-        var data = drop.m_itemData.Clone();
-        data.m_dropPrefab = prefab;
-        data.m_stack = Mathf.Clamp(count, 1, Mathf.Max(1, data.m_shared.m_maxStackSize));
-        if (quality > 0) data.m_quality = Mathf.Clamp(quality, 1, Mathf.Max(1, data.m_shared.m_maxQuality));
-        if (data.m_shared.m_maxDurability > 0f) data.m_durability = data.m_shared.m_maxDurability;
-        return inventory.AddItem(data) ? data.m_stack : 0;
+        var maxStack = Mathf.Max(1, drop.m_itemData.m_shared.m_maxStackSize);
+        var hash = prefab!.name.GetStableHashCode();
+        var remaining = count;
+        var added = 0;
+        while (remaining > 0)
+        {
+            var data = drop.m_itemData.Clone();
+            data.m_dropPrefab = prefab;
+            data.m_stack = Mathf.Min(remaining, maxStack);
+            if (quality > 0) data.m_quality = Mathf.Clamp(quality, 1, Mathf.Max(1, data.m_shared.m_maxQuality));
+            if (data.m_shared.m_maxDurability > 0f) data.m_durability = data.m_shared.m_maxDurability;
+
+            var before = CountHash(inventory, hash);
+            if (!inventory.AddItem(data)) break;
+            var gained = CountHash(inventory, hash) - before;
+            if (gained <= 0) break;
+            added += gained;
+            remaining -= gained;
+        }
+
+        return added;
+    }
+
+    private static int CountHash(Inventory inventory, int hash)
+    {
+        var total = 0;
+        foreach (var item in inventory.GetAllItems())
+        {
+            if (PrefabHash(item) == hash) total += item.m_stack;
+        }
+
+        return total;
     }
 
     internal static int Remove(Inventory inventory, ItemDrop.ItemData item, int count)
@@ -274,95 +301,119 @@ internal static class VjsInventory
     {
         var inventory = humanoid.GetInventory();
         if (inventory == null) return;
-        var items = new StringBuilder();
+        var payload = new NpcInventoryPayload();
         foreach (var item in inventory.GetAllItems())
         {
-            if (items.Length > 0) items.Append(';');
-            items.Append(PrefabHash(item).ToString(CultureInfo.InvariantCulture)).Append(',')
-                .Append(item.m_stack.ToString(CultureInfo.InvariantCulture)).Append(',')
-                .Append(item.m_quality.ToString(CultureInfo.InvariantCulture)).Append(',')
-                .Append(item.m_durability.ToString("R", CultureInfo.InvariantCulture)).Append(',')
-                .Append(item.m_gridPos.x.ToString(CultureInfo.InvariantCulture)).Append(',')
-                .Append(item.m_gridPos.y.ToString(CultureInfo.InvariantCulture));
+            payload.Items.Add(new NpcItemRecord
+            {
+                PrefabHash = PrefabHash(item),
+                Stack = item.m_stack,
+                Quality = item.m_quality,
+                Durability = item.m_durability,
+                X = item.m_gridPos.x,
+                Y = item.m_gridPos.y
+            });
         }
 
-        zdo.Set(WorldKeys.Inventory, items.ToString());
-
-        var equipment = new StringBuilder();
         foreach (var entry in EquipmentFields)
         {
             if (entry.Field?.GetValue(humanoid) is not ItemDrop.ItemData item) continue;
-            if (equipment.Length > 0) equipment.Append(';');
-            equipment.Append(entry.Name).Append('=')
-                .Append(PrefabHash(item).ToString(CultureInfo.InvariantCulture)).Append('@')
-                .Append(item.m_gridPos.x.ToString(CultureInfo.InvariantCulture)).Append('@')
-                .Append(item.m_gridPos.y.ToString(CultureInfo.InvariantCulture));
+            payload.Equipment.Add(new NpcEquipmentRecord
+            {
+                Slot = entry.Name,
+                PrefabHash = PrefabHash(item),
+                X = item.m_gridPos.x,
+                Y = item.m_gridPos.y
+            });
         }
 
-        zdo.Set(WorldKeys.Equipment, equipment.ToString());
+        zdo.Set(WorldKeys.Inventory, payload.Encode());
     }
 
+    /// <summary>
+    /// Restores a persisted inventory. The payload is validated before the live inventory is
+    /// cleared, missing prefabs are reported, failed slot placement falls back to any free slot,
+    /// and equipment is re-equipped from the item that was actually added.
+    /// </summary>
     internal static void Restore(Humanoid humanoid, ZDO zdo)
     {
         var inventory = humanoid.GetInventory();
         var scene = ZNetScene.instance;
         if (inventory == null || scene == null) return;
+        if (!zdo.GetString(WorldKeys.Inventory, out var saved) || string.IsNullOrEmpty(saved))
+        {
+            return;
+        }
+
+        if (!NpcInventoryPayload.TryDecode(saved, out var payload, out var error))
+        {
+            PluginLogger.Warn($"npc inventory: restore skipped: {error}");
+            return;
+        }
+
+        if (payload.Skipped > 0)
+        {
+            PluginLogger.Warn($"npc inventory: ignored {payload.Skipped} malformed record(s)");
+        }
+
         foreach (var existing in new List<ItemDrop.ItemData>(inventory.GetAllItems()))
         {
             inventory.RemoveItem(existing);
         }
 
-        if (zdo.GetString(WorldKeys.Inventory, out var saved) && !string.IsNullOrEmpty(saved))
+        var added = new Dictionary<(int Hash, int X, int Y), ItemDrop.ItemData>();
+        foreach (var record in payload.Items)
         {
-            foreach (var entry in saved.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
+            var prefab = scene.GetPrefab(record.PrefabHash);
+            var drop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
+            if (drop == null)
             {
-                var parts = entry.Split(',');
-                if (parts.Length < 6) continue;
-                if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var hash) ||
-                    !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var stack) ||
-                    !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var quality) ||
-                    !float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out var durability) ||
-                    !int.TryParse(parts[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out var slotX) ||
-                    !int.TryParse(parts[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out var slotY))
-                {
-                    continue;
-                }
-
-                var prefab = scene.GetPrefab(hash);
-                var drop = prefab != null ? prefab.GetComponent<ItemDrop>() : null;
-                if (drop == null) continue;
-                var data = drop.m_itemData.Clone();
-                data.m_dropPrefab = prefab;
-                data.m_stack = Mathf.Max(1, stack);
-                data.m_quality = Mathf.Max(1, quality);
-                data.m_durability = durability;
-                data.m_gridPos = new Vector2i(slotX, slotY);
-                inventory.AddItem(data, data.m_gridPos);
-            }
-        }
-
-        if (!zdo.GetString(WorldKeys.Equipment, out var equipped) || string.IsNullOrEmpty(equipped)) return;
-        foreach (var entry in equipped.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries))
-        {
-            var equals = entry.IndexOf('=');
-            if (equals <= 0) continue;
-            var slot = entry.Substring(0, equals);
-            var parts = entry.Substring(equals + 1).Split('@');
-            if (parts.Length < 3) continue;
-            if (!int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out var hash) ||
-                !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var slotX) ||
-                !int.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var slotY))
-            {
+                PluginLogger.Warn($"npc inventory: prefab {record.PrefabHash} is missing; dropping its stack");
                 continue;
             }
 
-            foreach (var item in inventory.GetAllItems())
+            var data = drop.m_itemData.Clone();
+            data.m_dropPrefab = prefab;
+            data.m_stack = Mathf.Max(1, record.Stack);
+            data.m_quality = Mathf.Max(1, record.Quality);
+            data.m_durability = record.Durability;
+
+            if (data.m_stack > 1)
             {
-                if (PrefabHash(item) == hash && item.m_gridPos.x == slotX && item.m_gridPos.y == slotY)
+                // Stackable items do not preserve their slot; merge into the first free stack.
+                data.m_stack = Mathf.Min(data.m_stack, Mathf.Max(1, data.m_shared.m_maxStackSize));
+                if (!inventory.AddItem(data))
                 {
-                    humanoid.EquipItem(item);
-                    break;
+                    PluginLogger.Warn($"npc inventory: no room for {record.Stack}x prefab {record.PrefabHash}");
+                    continue;
                 }
+            }
+            else
+            {
+                var inBounds = record.X >= 0 && record.Y >= 0 &&
+                               record.X < inventory.GetWidth() && record.Y < inventory.GetHeight();
+                data.m_gridPos = new Vector2i(record.X, record.Y);
+                if ((!inBounds || !inventory.AddItem(data, data.m_gridPos)) && !inventory.AddItem(data))
+                {
+                    PluginLogger.Warn($"npc inventory: no room for prefab {record.PrefabHash}");
+                    continue;
+                }
+            }
+
+            added[(record.PrefabHash, record.X, record.Y)] = data;
+        }
+
+        foreach (var record in payload.Equipment)
+        {
+            if (!added.TryGetValue((record.PrefabHash, record.X, record.Y), out var item))
+            {
+                PluginLogger.Warn($"npc inventory: equipped '{record.Slot}' item was not restored");
+                continue;
+            }
+
+            if (!humanoid.EquipItem(item))
+            {
+                PluginLogger.Warn($"npc inventory: could not re-equip '{record.Slot}'");
             }
         }
     }

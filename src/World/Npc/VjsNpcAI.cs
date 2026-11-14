@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using UnityEngine;
 using ValheimJS.Core;
 using ValheimJS.Entities;
@@ -6,15 +6,22 @@ using ValheimJS.Entities;
 namespace ValheimJS.World;
 
 /// <summary>
-/// Native body controller. JS/YAML sets a destination or facing target; Valheim's BaseAI and
-/// Pathfinding own the actual route, movement, physics and animation. This class only supplies
-/// the tiny intent layer and the failure facts the host exposes back to scripts.
+/// Native body controller. Scripts set a destination or facing target; Valheim's BaseAI and
+/// Pathfinding own the actual route, movement, physics and animation. This class supplies only
+/// the intent layer, optional auto-engagement and the failure facts the host exposes back.
 /// </summary>
+/// <remarks>
+/// Every explicit intent (go, look, face, clear) cancels auto-combat, so scripts always win.
+/// While auto-combat is engaged the intent reports <see cref="NpcActionStatus.Paused"/> with
+/// reason <c>combat</c> instead of being overwritten.
+/// </remarks>
 internal sealed class VjsNpcAI : BaseAI
 {
     private const float ProgressSeconds = 5f;
     private const float ArriveSlop = 0.35f;
     private const float ReachCheckSeconds = 0.75f;
+    private const float MoveTimeoutSeconds = 60f;
+    private const float DirectFallbackDistance = 3f;
 
     private Vector3 _target;
     private float _stopDistance;
@@ -26,30 +33,67 @@ internal sealed class VjsNpcAI : BaseAI
     private string? _reason;
     private float _progressAt;
     private float _reachCheckAt;
+    private float _deadline;
+    private bool _hasPath = true;
     private bool _jumped;
     private Character? _threat;
     private float _threatAt;
     private bool _engaged;
+    private bool _nameApplied;
+
+    /// <summary>Opt-in: the body fights only when its kind asks for it.</summary>
+    internal bool AutoEngage { get; set; }
+
+    internal NpcActionStatus Status =>
+        _engaged && IntentActive ? NpcActionStatus.Paused : _status;
+
+    internal string? Reason => _engaged && IntentActive ? "combat" : _reason;
+
+    internal bool IsMoving => _moving && !_engaged;
+
+    internal bool Engaged => _engaged;
+
+    internal string? ThreatId =>
+        _threat != null ? _threat.GetZDOID().ToString() : null;
+
+    private bool IntentActive => _moving || _lookOnly;
 
     protected override void Awake()
     {
         base.Awake();
-        var zdo = GetComponent<ZNetView>()?.GetZDO();
-        if (zdo != null && !string.IsNullOrWhiteSpace(zdo.GetString(WorldKeys.Name, "")))
+        ApplyName();
+    }
+
+    private void ApplyName()
+    {
+        if (_nameApplied || m_character == null)
         {
-            m_character.m_name = zdo.GetString(WorldKeys.Name, m_character.m_name);
+            return;
+        }
+
+        var zdo = GetComponent<ZNetView>()?.GetZDO();
+        if (zdo == null)
+        {
+            return;
+        }
+
+        _nameApplied = true;
+        var name = zdo.GetString(WorldKeys.Name, "");
+        if (!string.IsNullOrWhiteSpace(name))
+        {
+            m_character.m_name = name;
         }
     }
 
     protected override void OnDamaged(float damage, Character attacker)
     {
         base.OnDamaged(damage, attacker);
-        if (m_character == null || attacker == null || attacker.IsDead())
+        if (!AutoEngage || m_character == null || attacker == null || attacker.IsDead())
         {
             return;
         }
 
-        // CompanionAI's reference rule: an untamed body does not turn on the player who hit it.
+        // An untamed body never turns on the player who hit it.
         if (attacker.IsPlayer() && !m_character.IsTamed())
         {
             return;
@@ -61,14 +105,10 @@ internal sealed class VjsNpcAI : BaseAI
         SetAlerted(true);
     }
 
-    internal NpcActionStatus Status => _status;
-
-    internal string? Reason => _reason;
-
-    internal bool IsMoving => _moving;
-
+    /// <summary>Starts a navigation intent and cancels auto-combat.</summary>
     internal bool GoTo(Vector3 target, float stopDistance, bool run)
     {
+        Disengage();
         _target = target;
         _stopDistance = Mathf.Max(0.05f, stopDistance);
         _run = run;
@@ -77,12 +117,15 @@ internal sealed class VjsNpcAI : BaseAI
         _faceId = null;
         _progressAt = Time.time;
         _reachCheckAt = 0f;
+        _deadline = Time.time + MoveTimeoutSeconds;
+        _hasPath = true;
         _jumped = false;
         _status = NpcActionStatus.Running;
         _reason = null;
         return true;
     }
 
+    /// <summary>Stops movement without cancelling auto-combat.</summary>
     internal void StopCommand()
     {
         _moving = false;
@@ -93,8 +136,16 @@ internal sealed class VjsNpcAI : BaseAI
         StopMoving();
     }
 
+    /// <summary>Cancels auto-combat and stops the current intent.</summary>
+    internal void ClearIntent()
+    {
+        Disengage();
+        StopCommand();
+    }
+
     internal void LookAtPoint(Vector3 point)
     {
+        Disengage();
         _moving = false;
         _lookOnly = false;
         _faceId = null;
@@ -106,6 +157,7 @@ internal sealed class VjsNpcAI : BaseAI
 
     internal void Face(string handle)
     {
+        Disengage();
         _moving = false;
         _lookOnly = true;
         _faceId = handle;
@@ -117,13 +169,13 @@ internal sealed class VjsNpcAI : BaseAI
     public override bool UpdateAI(float dt)
     {
         // Clients only mirror the body from the ZDO. If a client temporarily wins ZDO ownership
-        // (ZDOMan.ReleaseZDOS hands nearby objects to peers), its controller must not fight the
-        // server by stopping or repathing the body.
+        // its controller must not fight the server by stopping or repathing the body.
         if (!GameEnvironment.IsServer())
         {
             return false;
         }
 
+        ApplyName();
         if (!base.UpdateAI(dt))
         {
             return false;
@@ -155,14 +207,14 @@ internal sealed class VjsNpcAI : BaseAI
         var threat = _threat;
         if (threat == null || threat.IsDead())
         {
-            DisengageCombat();
+            Disengage();
             return false;
         }
 
         var distance = Vector3.Distance(transform.position, threat.transform.position);
         if (distance > 30f || Time.time - _threatAt > 20f)
         {
-            DisengageCombat();
+            Disengage();
             return false;
         }
 
@@ -174,8 +226,6 @@ internal sealed class VjsNpcAI : BaseAI
             weapon = humanoid.GetCurrentWeapon();
         }
 
-        _status = NpcActionStatus.Running;
-        _reason = null;
         if (weapon == null)
         {
             Flee(dt, threat.transform.position);
@@ -206,8 +256,13 @@ internal sealed class VjsNpcAI : BaseAI
         return true;
     }
 
-    private void DisengageCombat()
+    private void Disengage()
     {
+        if (!_engaged && _threat == null)
+        {
+            return;
+        }
+
         _engaged = false;
         _threat = null;
         SetAlerted(false);
@@ -223,16 +278,35 @@ internal sealed class VjsNpcAI : BaseAI
         }
 
         var now = Time.time;
-        var checkPath = now >= _reachCheckAt;
-        if (checkPath)
+        if (now >= _deadline)
         {
-            _reachCheckAt = now + ReachCheckSeconds;
+            Fail("nav-timeout");
+            return;
         }
 
-        // A missing navmesh is not a failed intent: walk straight at the target. The body still
-        // collides, swims and steps, so short trips and freshly loaded zones keep working.
-        if (Pathfinding.instance == null || (checkPath && !HavePath(_target)))
+        if (Pathfinding.instance == null)
         {
+            // No navmesh at all: straight-line movement is the only option; the intent deadline bounds it.
+            MoveDirect();
+            TrackProgress(now);
+            return;
+        }
+
+        if (now >= _reachCheckAt)
+        {
+            _reachCheckAt = now + ReachCheckSeconds;
+            _hasPath = HavePath(_target);
+        }
+
+        if (!_hasPath)
+        {
+            if (distance > DirectFallbackDistance)
+            {
+                Fail("nav-unreachable");
+                return;
+            }
+
+            // Short hops into gaps the navmesh does not cover still work by walking.
             MoveDirect();
             TrackProgress(now);
             return;
@@ -243,16 +317,10 @@ internal sealed class VjsNpcAI : BaseAI
             if (Horizontal(transform.position, _target) <= _stopDistance + ArriveSlop + 0.5f)
             {
                 Arrive();
+                return;
             }
-            else if (!FoundPath())
-            {
-                MoveDirect();
-                TrackProgress(now);
-            }
-            else
-            {
-                Fail("nav-incomplete");
-            }
+
+            Fail("nav-incomplete");
             return;
         }
 
