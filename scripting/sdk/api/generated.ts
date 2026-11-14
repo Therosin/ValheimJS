@@ -475,11 +475,15 @@ export interface DrawApi {
  */
 export interface AiApi {
     /**
-     * Emits a named signal on this plugin's blackboard; listeners receive the payload.
+     * Drops a local channel created by this plugin. Shared channels cannot be dropped.
+     */
+    boardDrop(channel: string | null): boolean;
+    /**
+     * Emits a named signal on a blackboard scope; only that scope's listeners receive it.
      */
     boardEmit(name: string, data: unknown, channel: string | null): void;
     /**
-     * Reads a value from this plugin's AI blackboard; channel selects an isolated blackboard channel.
+     * Reads a blackboard scope. Empty channel is this plugin's local root; @local/<name> is a local channel; @shared or @shared/<name> is the world-shared board.
      */
     boardGet(key: string, channel: string | null): unknown;
     /**
@@ -487,7 +491,7 @@ export interface AiApi {
      */
     boardHas(key: string, channel: string | null): boolean;
     /**
-     * Cancels a blackboard change/signal subscription.
+     * Cancels a blackboard change/signal/middleware subscription.
      */
     boardOff(subscription: number): boolean;
     /**
@@ -499,13 +503,17 @@ export interface AiApi {
      */
     boardOnSignal(name: string, callback: (...args: unknown[]) => unknown, channel: string | null): number;
     /**
-     * Sets a value on this plugin's AI blackboard; channel selects an isolated channel.
+     * Sets a blackboard scope value. See boardGet for scope syntax.
      */
     boardSet(key: string, value: unknown, channel: string | null): void;
     /**
-     * Copies all state from this plugin's blackboard scope.
+     * Copies all state from a blackboard scope.
      */
     boardSnapshot(channel: string | null): Record<string, unknown>;
+    /**
+     * Registers reactive middleware or a pre-commit interceptor. The callback receives an operation context with get/set/emit/cancel/replace. Returns a subscription id.
+     */
+    boardUse(callback: (...args: unknown[]) => unknown, channel: string | null, interceptor: boolean): number;
     /**
      * Stops the instance and runs active execAfter hooks as interrupted.
      */

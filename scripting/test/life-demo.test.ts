@@ -6,7 +6,8 @@ import {
     type BehaviorOutcome,
     type BehaviorRuntime,
     type VillagerActor,
-    type VillagerActivity
+    type VillagerActivity,
+    type VillagerBoard
 } from "../testing/life-demo/lib/brain";
 
 class FakeActor implements VillagerActor {
@@ -35,6 +36,19 @@ class FakeActor implements VillagerActor {
     idle(): boolean {
         this.calls.push("idle");
         return true;
+    }
+}
+
+class FakeBoard implements VillagerBoard {
+    readonly values: Record<string, unknown> = {};
+    readonly signals: Array<{ name: string; data: unknown }> = [];
+
+    set(key: string, value: unknown): void {
+        this.values[key] = value;
+    }
+
+    emit(name: string, data?: unknown): void {
+        this.signals.push({ name, data });
     }
 }
 
@@ -159,6 +173,7 @@ function brain(
         memory?: Record<string, unknown>;
         needs?: { energy?: number; social?: number; curiosity?: number };
         home?: NpcPos;
+        board?: VillagerBoard;
     } = {}
 ) {
     return new VillagerBrain({
@@ -168,6 +183,7 @@ function brain(
         home: options.home ?? { x: 0, y: 10, z: 0 },
         memory: options.memory,
         needs: { curiosity: 0.4, ...options.needs },
+        board: options.board,
         random: () => 0.5
     });
 }
@@ -178,6 +194,24 @@ describe("villager brain", () => {
         const current = brain(runtime);
         expect(current.tick(view(), 1000)).toBe("wander");
         expect(runtime.started).toEqual(["wander"]);
+    });
+
+    test("publishes hot state and threat signals to its board", () => {
+        const runtime = new FakeRuntime();
+        const board = new FakeBoard();
+        const current = brain(runtime, { board });
+        const enemy = sensed({ id: "enemy", enemy: true, distance: 4, pos: { x: 4, y: 10, z: 0 } });
+
+        current.tick(view({ nearby: [enemy] }), 1000);
+
+        expect(board.values.activity).toBe("flee");
+        expect(board.values.threat).toMatchObject({ id: "enemy", distance: 4 });
+        expect(board.values.needs).toMatchObject({ energy: expect.any(Number), social: expect.any(Number) });
+        expect(board.signals).toContainEqual({
+            name: "activity:start",
+            data: { activity: "flee", targetId: "enemy" }
+        });
+        expect(board.signals).toContainEqual({ name: "threat:seen", data: expect.objectContaining({ id: "enemy" }) });
     });
 
     test("flees a visible enemy", () => {

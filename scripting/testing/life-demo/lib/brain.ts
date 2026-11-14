@@ -26,6 +26,17 @@ export interface VillagerNeeds {
     curiosity: number;
 }
 
+/** Narrow board surface used by the brain; the SDK `BoardScope` satisfies it. */
+export interface VillagerBoard {
+    set(key: string, value: unknown): void;
+    emit(name: string, data?: unknown): void;
+}
+
+const NOOP_BOARD: VillagerBoard = {
+    set: () => {},
+    emit: () => {}
+};
+
 export type BehaviorOutcome = "success" | "failure" | "running";
 
 export interface BehaviorActionContext {
@@ -58,6 +69,7 @@ export interface VillagerBrainOptions {
     home: NpcPos;
     memory?: Record<string, unknown>;
     needs?: Partial<VillagerNeeds>;
+    board?: VillagerBoard;
     random?: () => number;
     log?: (message: string) => void;
 }
@@ -99,6 +111,7 @@ export class VillagerBrain {
     private readonly behaviors: Record<VillagerActivity, string>;
     private readonly random: () => number;
     private readonly log?: (message: string) => void;
+    private readonly board: VillagerBoard;
     private readonly visited: Set<string>;
     private readonly blocked: Map<string, number>;
     private readonly cooldownUntil: Record<VillagerActivity, number> = {
@@ -118,6 +131,7 @@ export class VillagerBrain {
     private activeDestination: NpcPos | null = null;
     private restSeconds = 20;
     private lastTick = 0;
+    private lastThreatId: string | null = null;
     private dirty = false;
     private home: NpcPos;
     private sheltered = false;
@@ -131,6 +145,7 @@ export class VillagerBrain {
         this.behaviors = options.behaviors;
         this.random = options.random ?? Math.random;
         this.log = options.log;
+        this.board = options.board ?? NOOP_BOARD;
         this.memory = options.memory ?? {};
         this.home = isPosition(this.memory.home) ? this.memory.home : options.home;
         this.sheltered = typeof this.memory.shelter === "string";
@@ -151,6 +166,10 @@ export class VillagerBrain {
                   )
                 : []
         );
+        this.publish("home", this.home);
+        this.publish("sheltered", this.sheltered);
+        this.publish("activity", this.activity);
+        this.publishNeeds();
     }
 
     get current(): VillagerActivity {
@@ -190,6 +209,36 @@ export class VillagerBrain {
         this.dirty = false;
     }
 
+    private publish(key: string, value: unknown): void {
+        this.board.set(key, value);
+    }
+
+    private publishNeeds(): void {
+        this.publish("needs", {
+            energy: this.needs.energy,
+            social: this.needs.social,
+            curiosity: this.needs.curiosity
+        });
+    }
+
+    private publishThreat(threat: NpcSensed | null): void {
+        const id = threat?.id ?? null;
+        if (id === this.lastThreatId) return;
+        this.lastThreatId = id;
+        this.publish("threat", threat ? this.targetSummary(threat) : null);
+        if (threat) this.board.emit("threat:seen", this.targetSummary(threat));
+    }
+
+    private targetSummary(target: NpcSensed): Record<string, unknown> {
+        return {
+            id: target.id,
+            name: target.name,
+            kind: target.kind,
+            distance: target.distance,
+            pos: target.pos
+        };
+    }
+
     /** Manual/LLM seam: cancel the current tree and run one activity next tick. */
     request(activity: VillagerActivity, target?: NpcSensed | null, now = Date.now()): void {
         if (this.instance) {
@@ -197,6 +246,7 @@ export class VillagerBrain {
             this.instance = null;
         }
         this.requested = { activity, target: target ?? undefined, until: now + 30_000 };
+        this.board.emit("request", { activity, targetId: target?.id ?? null });
     }
 
     /** One NPC tick. The brain ticks the active YAML instance or selects a new activity. */
@@ -204,6 +254,7 @@ export class VillagerBrain {
         const elapsed = this.lastTick > 0 ? Math.min(5, (now - this.lastTick) / 1000) : 0;
         this.lastTick = now;
         this.updateNeeds(view, elapsed);
+        this.publishNeeds();
 
         if (this.instance) {
             const status = this.runtime.tick(this.instance, elapsed);
@@ -218,6 +269,7 @@ export class VillagerBrain {
         }
 
         const threat = this.threat(view);
+        this.publishThreat(threat);
         if (threat) {
             this.start("flee", now, threat, 1000);
             return this.activity;
@@ -242,6 +294,8 @@ export class VillagerBrain {
             this.runtime.release(this.instance);
             this.instance = null;
         }
+        this.publish("activity", "idle");
+        this.board.emit("despawn");
     }
 
     private choose(view: NpcView, now: number): { activity: VillagerActivity; score: number; target?: NpcSensed } | null {
@@ -302,6 +356,12 @@ export class VillagerBrain {
         this.activeTarget = target;
         this.activeDestination = null;
         this.restSeconds = 12 + this.random() * 18;
+        this.publish("activity", activity);
+        this.publish("target", target ? this.targetSummary(target) : null);
+        this.board.emit("activity:start", {
+            activity,
+            targetId: target?.id ?? null
+        });
         const targetText = target
             ? ` -> ${target.name || target.kind || target.id} @ ${Math.round(target.pos.x)},${Math.round(target.pos.z)}`
             : "";
@@ -341,6 +401,9 @@ export class VillagerBrain {
 
         const [minimum, maximum] = COOLDOWN_SECONDS[activity];
         this.cooldownUntil[activity] = now + (minimum + this.random() * (maximum - minimum)) * 1000;
+        this.publishNeeds();
+        this.publish("target", null);
+        this.board.emit("activity:complete", { activity });
     }
 
     private abandon(now: number): void {
@@ -357,12 +420,14 @@ export class VillagerBrain {
         }
         const activity = this.activity;
         this.activeTarget = null;
+        this.board.emit("activity:failed", { activity });
         if (activity === "forage") this.cooldownUntil[activity] = now + 20_000 + this.random() * 20_000;
         else this.cooldownUntil[activity] = now + 3000 + this.random() * 3000;
     }
 
     private pause(now: number): void {
         this.activity = "wander";
+        this.publish("activity", this.activity);
         this.cooldownUntil.wander = now + 1000;
     }
 
@@ -495,6 +560,9 @@ export class VillagerBrain {
             this.memory.home = this.home;
             this.memory.shelter = target.id;
             this.dirty = true;
+            this.publish("home", this.home);
+            this.publish("sheltered", true);
+            this.board.emit("shelter:claimed", this.targetSummary(target));
             this.log?.(`claimed shelter ${target.name || target.id}`);
             return "success";
         }
@@ -512,6 +580,7 @@ export class VillagerBrain {
             if (!target) return "failure";
             this.memory.lastMet = { id: target.id, name: target.name, at: Date.now() };
             this.dirty = true;
+            this.board.emit("met", this.targetSummary(target));
             return "success";
         }
 

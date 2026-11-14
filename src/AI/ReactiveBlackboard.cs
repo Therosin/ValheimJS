@@ -613,6 +613,18 @@ public sealed class BlackboardChannels
     }
 
     /// <summary>
+    /// Removes a channel from this registry. Existing references keep their state and events,
+    /// but new lookups create a fresh channel.
+    /// </summary>
+    /// <param name="name">Channel name.</param>
+    /// <returns>True if the channel was removed.</returns>
+    public bool Remove(string name)
+    {
+        BlackboardScope.ValidateName(name, nameof(name));
+        return _channels.Remove(name);
+    }
+
+    /// <summary>
     /// Gets the names of all currently registered channels.
     /// </summary>
     public IReadOnlyCollection<string> Names =>

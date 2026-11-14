@@ -147,6 +147,53 @@ internal static class AiProbe
                             api.boardOff(id);
                             return seen;
                         },
+                        boardScopes: function () {
+                            var local = "@local/probe:scope";
+                            var shared = "@shared/probe:village";
+                            api.boardSet("scope-only", 5, local);
+                            api.boardSet("scope-only", 9, shared);
+                            var out = {
+                                local: api.boardGet("scope-only", local),
+                                shared: api.boardGet("scope-only", shared),
+                                root: api.boardGet("scope-only", null),
+                                localHas: api.boardHas("scope-only", local),
+                                sharedHas: api.boardHas("scope-only", shared),
+                                dropped: api.boardDrop(local),
+                                afterDrop: api.boardGet("scope-only", local),
+                                sharedKept: api.boardDrop(shared) === false
+                            };
+                            return out;
+                        },
+                        boardMiddleware: function () {
+                            var channel = "@local/probe:middleware";
+                            var changes = [];
+                            var watch = api.boardOnChange("", function (key, value) {
+                                changes.push(key + ":" + value);
+                            }, channel);
+                            var guard = api.boardUse(function (ctx) {
+                                if (ctx.isChange("blocked")) ctx.cancel();
+                                if (ctx.isChange("clamped")) ctx.replace(100);
+                                if (ctx.isChange("observed")) ctx.set("derived", ctx.value + 1);
+                            }, channel, true);
+                            var post = api.boardUse(function (ctx) {
+                                if (ctx.isChange("derived")) ctx.set("seen", true);
+                            }, channel, false);
+                            api.boardSet("blocked", true, channel);
+                            api.boardSet("clamped", 200, channel);
+                            api.boardSet("observed", 5, channel);
+                            var out = {
+                                blocked: api.boardHas("blocked", channel),
+                                clamped: api.boardGet("clamped", channel),
+                                derived: api.boardGet("derived", channel),
+                                seen: api.boardGet("seen", channel),
+                                changes: changes
+                            };
+                            api.boardOff(watch);
+                            api.boardOff(guard);
+                            api.boardOff(post);
+                            api.boardDrop(channel);
+                            return out;
+                        },
                         execs: function () { return ctx.state.execs; },
                         childTick: function () { return api.tick(ctx.state.childId, 0.1); },
                         sensesTick: function () { return api.tick(ctx.state.senseId, 0.1); },
@@ -275,12 +322,27 @@ internal static class AiProbe
                 var boardSignal = host.DispatchTo("probe", "boardSignal", "{}") ?? "null";
                 Assert(boardSignal.Contains("ping:7:null"), "board signal: " + boardSignal);
 
+                var boardScopes = host.DispatchTo("probe", "boardScopes", "{}") ?? "null";
+                Assert(boardScopes.Contains("\"local\":5") && boardScopes.Contains("\"shared\":9") &&
+                       boardScopes.Contains("\"root\":null") && boardScopes.Contains("\"dropped\":true") &&
+                       boardScopes.Contains("\"afterDrop\":null") && boardScopes.Contains("\"sharedKept\":true"),
+                    "board scopes: " + boardScopes);
+
+                var boardMiddleware = host.DispatchTo("probe", "boardMiddleware", "{}") ?? "null";
+                Assert(boardMiddleware.Contains("\"blocked\":false") &&
+                       boardMiddleware.Contains("\"clamped\":100") &&
+                       boardMiddleware.Contains("\"derived\":6") &&
+                       boardMiddleware.Contains("\"seen\":true") &&
+                       boardMiddleware.Contains("clamped:100") &&
+                       boardMiddleware.Contains("derived:6"),
+                    "board middleware: " + boardMiddleware);
+
                 host.Reload();
                 Assert(!host.HasErrors, "reload errors: " + string.Join(" | ", host.Errors));
                 var reloaded = host.DispatchTo("probe", "step", "{}") ?? "null";
                 Assert(reloaded.Contains("\"status\":\"running\""), "tick after reload: " + reloaded);
 
-                Console.WriteLine("PASS: ai binding compiles trees, bridges callbacks, shares state and isolates plugins");
+                Console.WriteLine("PASS: ai binding compiles trees, bridges callbacks, scopes boards and exposes middleware");
                 return 0;
             }
             finally

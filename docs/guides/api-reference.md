@@ -347,22 +347,53 @@ actions, conditions and imported `use` trees at the plugin's log destination. Of
 
 ### Reactive blackboard
 
-Each plugin gets its own `Blackboard`; named channels isolate independent state and subscribers.
+Each plugin owns a local `Blackboard`; `local(name)` gives one entity/behaviour its own scope.
+`shared(name)` resolves the same world-shared channel in every plugin; `join(name)` adds a
+disposable membership that owns its subscriptions. A scope has independent state and events:
 
 ```ts
-ai.board.get<T>(key, channel?): T | null
-ai.board.set(key, value, channel?): void
-ai.board.has(key, channel?): boolean
-ai.board.snapshot<T>(channel?): T
-ai.board.emit(name, data?, channel?): void
-ai.board.onChange(key, handler, channel?): number   // empty key = all keys
-ai.board.onSignal(name, handler, channel?): number  // empty name = all signals
-ai.board.off(subscription): boolean
+const local = ai.board.local(`npc:${entity.id}`);
+local.set("activity", "wander");
+local.emit("activity:start", { activity: "wander" });
+
+const village = ai.board.join("village:oakwood");
+village.onSignal("threat:seen", (_name, threat) => local.emit("heard:threat", threat));
+village.emit("villager:online", { id: entity.id });
+
+// onChange(key, handler) / onSignal(name, handler) return BoardSubscription
+const watch = local.onChange("activity", (key, value, oldValue, channel) => { /* ... */ });
+watch.dispose();
+
+// leave the shared channel and release all subscriptions made through it
+village.dispose();
+// drop the local channel when the entity is gone
+local.release();
 ```
 
-`onChange` handlers receive `(key, value, oldValue, channel)`; `onSignal` handlers receive
-`(name, data, channel)`. Subscriptions are plugin-scoped and dropped on unload. Middleware and
-pre-commit interceptors are implemented in the C# `Blackboard` but are not exposed to JS yet.
+Handlers receive `(key, value, oldValue, channel)` and `(name, data, channel)`. Subscriptions are
+plugin-scoped and are also dropped on plugin unload.
+
+`use(handler)` observes committed operations; `intercept(handler)` runs before commit:
+
+```ts
+const guard = local.intercept(ctx => {
+    if (ctx.isChange("health")) ctx.replace(Math.max(1, Number(ctx.value)));
+    if (ctx.isChange("sleeping") && ctx.get("alert")) ctx.cancel();
+    if (ctx.isChange("activity")) ctx.set("activityChangedAt", Date.now());
+});
+
+local.use(ctx => {
+    if (ctx.isEvent("threat:seen")) ctx.emit("threat:logged", ctx.value);
+});
+```
+
+The context exposes `kind`, `key`, `value`, `oldValue`, `channel`, `scope`, `isChange`, `isEvent`,
+`get`, `has`, `set`, `emit`, `cancel` and `replace`. `cancel`/`replace` are only valid while an
+interceptor is running. Use `ctx.set`/`ctx.emit` to request follow-up operations; they run after
+the current operation commits.
+
+The flat `ai.board.get/set/has/snapshot/emit/onChange/onSignal/off` methods remain available for
+low-level access; `@local/<name>` and `@shared/<name>` are the encoded scope forms.
 
 ```ts
 const tree = ai.compile(yaml);

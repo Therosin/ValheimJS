@@ -37,7 +37,7 @@ export {
     type NpcSpawnOptions,
     type NpcView
 } from "./npc";
-export { ai, type AiActionOutcome, type AiContext, type AiInstantiateOptions, type AiLoadOptions, type AiStatus, type AiTickResult, type BlackboardChangeHandler, type BlackboardSignalHandler } from "./ai";
+export { ai, type AiActionOutcome, type AiContext, type AiInstantiateOptions, type AiLoadOptions, type AiStatus, type AiTickResult, type BlackboardChangeHandler, type BlackboardSignalHandler, type BoardMiddlewareHandler, type BoardOperationContext, BoardMembership, BoardScope, BoardSubscription } from "./ai";
 export { ui, type UiDefineOptions, type UiOpenOptions } from "./ui";
 export { draw, type DrawOptions, type DrawPoint } from "./draw";
 export { all, any, cooldown, delay, never, not, once, predicates, stable, type Predicate } from "./predicates";

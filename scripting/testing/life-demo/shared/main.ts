@@ -5,6 +5,8 @@ import {
     log,
     npc,
     npcBase,
+    type BoardMembership,
+    type BoardScope,
     type NpcIntent,
     type NpcPos,
     type NpcView
@@ -41,6 +43,10 @@ function makeVillager(trees: Record<VillagerActivity, string>) {
     return class Villager extends Base {
         private brain: VillagerBrain | null = null;
         private lastSave = 0;
+        private board: BoardScope | null = null;
+        private membership: BoardMembership | null = null;
+        private boardLinks: Array<() => void> = [];
+        private memberId: string | null = null;
 
         onSpawn(view: NpcView) {
             if (!this.brain) this.attach(view);
@@ -66,6 +72,7 @@ function makeVillager(trees: Record<VillagerActivity, string>) {
         onDespawn() {
             this.brain?.dispose();
             this.brain = null;
+            this.closeBoard();
         }
 
         onIntent(_view: NpcView, intent: NpcIntent) {
@@ -81,12 +88,35 @@ function makeVillager(trees: Record<VillagerActivity, string>) {
 
         private attach(view: NpcView) {
             this.brain?.dispose();
+            this.closeBoard();
+
+            const local = ai.board.local(`npc:${view.id}`);
+            const village = ai.board.join("village:life-demo");
+            const offThreat = local.onSignal("threat:seen", (_name, data) => {
+                if (!data || typeof data !== "object") return;
+                village.emit("threat:seen", { sourceId: view.id, threat: data });
+            });
+            const offHeard = village.onSignal("threat:seen", (_name, data) => {
+                if (!data || typeof data !== "object") return;
+                if ("sourceId" in data && data.sourceId === view.id) return;
+                local.emit("heard:threat", data);
+            });
+            this.boardLinks = [
+                () => offThreat.dispose(),
+                () => offHeard.dispose()
+            ];
+            this.board = local;
+            this.membership = village;
+            this.memberId = view.id;
+            village.emit("villager:online", { id: view.id, name: this.name });
+
             const brain = new VillagerBrain({
                 actor: this,
                 runtime,
                 behaviors: trees,
                 home: view.home,
                 memory: npc.memory(this),
+                board: local,
                 log: message => log(`[${this.name}] ${message}`)
             });
             this.brain = brain;
@@ -97,6 +127,22 @@ function makeVillager(trees: Record<VillagerActivity, string>) {
                 `[${this.name}] started at ${Math.round(view.x)}, ${Math.round(view.z)}; ` +
                     `home ${Math.round(home.x)}, ${Math.round(home.z)}${brain.isSheltered ? " (shelter)" : ""}`
             );
+        }
+
+        private closeBoard() {
+            const membership = this.membership;
+            if (membership) {
+                if (this.memberId) {
+                    membership.emit("villager:offline", { id: this.memberId, name: this.name });
+                }
+                membership.dispose();
+            }
+            this.membership = null;
+            for (const off of this.boardLinks) off();
+            this.boardLinks = [];
+            this.board?.release();
+            this.board = null;
+            this.memberId = null;
         }
     };
 }

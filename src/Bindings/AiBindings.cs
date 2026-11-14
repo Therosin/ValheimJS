@@ -6,6 +6,7 @@ using Jint.Native;
 using Jint.Native.Function;
 using Jint.Native.Object;
 using Jint.Runtime;
+using Jint.Runtime.Interop;
 using ValheimJS.AI;
 using ValheimJS.Core;
 using ValheimJS.Scripting.Binding;
@@ -84,12 +85,12 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
     }
 
     [JsBinding("boardGet", Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "unknown",
-        Description = "Reads a value from this plugin's AI blackboard; channel selects an isolated blackboard channel.")]
+        Description = "Reads a blackboard scope. Empty channel is this plugin's local root; @local/<name> is a local channel; @shared or @shared/<name> is the world-shared board.")]
     public JsValue BoardGet(string plugin, string key, [JsNullable] string? channel) =>
         Board(plugin, channel).TryGetRaw(key, out var value) ? ToJs(value) : JsValue.Null;
 
     [JsBinding("boardSet", Scoped = true,
-        Description = "Sets a value on this plugin's AI blackboard; channel selects an isolated channel.")]
+        Description = "Sets a blackboard scope value. See boardGet for scope syntax.")]
     public void BoardSet(string plugin, string key, JsValue value, [JsNullable] string? channel) =>
         Board(plugin, channel).Set(key, FromJs(value));
 
@@ -98,12 +99,12 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
         Board(plugin, channel).Contains(key);
 
     [JsBinding("boardSnapshot", Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "Record<string, unknown>",
-        Description = "Copies all state from this plugin's blackboard scope.")]
+        Description = "Copies all state from a blackboard scope.")]
     public JsValue BoardSnapshot(string plugin, [JsNullable] string? channel) =>
         ToJsMap(Board(plugin, channel).Snapshot());
 
     [JsBinding("boardEmit", Scoped = true,
-        Description = "Emits a named signal on this plugin's blackboard; listeners receive the payload.")]
+        Description = "Emits a named signal on a blackboard scope; only that scope's listeners receive it.")]
     public void BoardEmit(string plugin, string name, JsValue data, [JsNullable] string? channel) =>
         Board(plugin, channel).Emit(name, FromJs(data));
 
@@ -141,7 +142,7 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
         return RegisterBoardSubscription(plugin, subscription);
     }
 
-    [JsBinding("boardOff", Scoped = true, Description = "Cancels a blackboard change/signal subscription.")]
+    [JsBinding("boardOff", Scoped = true, Description = "Cancels a blackboard change/signal/middleware subscription.")]
     public bool BoardOff(string plugin, int subscription)
     {
         if (!_boardSubscriptions.TryGetValue(plugin, out var subscriptions) ||
@@ -154,7 +155,68 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
         return true;
     }
 
+    [JsBinding("boardUse", Scoped = true,
+        Description = "Registers reactive middleware or a pre-commit interceptor. The callback receives an operation context with get/set/emit/cancel/replace. Returns a subscription id.")]
+    public int BoardUse(string plugin, JsCallback callback, [JsNullable] string? channel, bool interceptor)
+    {
+        var scope = Board(plugin, channel);
+        var subscription = new BoardSubscription();
+        Action<BlackboardContext> handler = context => InvokeBoardMiddleware(plugin, callback, context);
+        var registration = interceptor ? scope.UseInterceptor(handler) : scope.Use(handler);
+        subscription.Remove = registration.Dispose;
+        return RegisterBoardSubscription(plugin, subscription);
+    }
+
+    [JsBinding("boardDrop", Scoped = true, Description = "Drops a local channel created by this plugin. Shared channels cannot be dropped.")]
+    public bool BoardDrop(string plugin, [JsNullable] string? channel)
+    {
+        if (string.IsNullOrWhiteSpace(channel) ||
+            string.Equals(channel, LocalScope, StringComparison.Ordinal) ||
+            string.Equals(channel, SharedScope, StringComparison.Ordinal) ||
+            channel.StartsWith(SharedScopePrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var name = channel.StartsWith(LocalScopePrefix, StringComparison.Ordinal)
+            ? channel.Substring(LocalScopePrefix.Length)
+            : channel;
+        return !string.IsNullOrWhiteSpace(name) && LocalBoard(plugin).Channels.Remove(name);
+    }
+
+    private const string SharedScope = "@shared";
+    private const string SharedScopePrefix = "@shared/";
+    private const string LocalScope = "@local";
+    private const string LocalScopePrefix = "@local/";
+
     private BlackboardScope Board(string plugin, string? channel)
+    {
+        var local = LocalBoard(plugin);
+
+        if (string.IsNullOrWhiteSpace(channel) || string.Equals(channel, LocalScope, StringComparison.Ordinal))
+        {
+            return local;
+        }
+
+        if (string.Equals(channel, SharedScope, StringComparison.Ordinal))
+        {
+            return Blackboard.Global;
+        }
+
+        if (channel.StartsWith(SharedScopePrefix, StringComparison.Ordinal))
+        {
+            return Blackboard.Global.Channels.Get(channel.Substring(SharedScopePrefix.Length));
+        }
+
+        if (channel.StartsWith(LocalScopePrefix, StringComparison.Ordinal))
+        {
+            return local.Channels.Get(channel.Substring(LocalScopePrefix.Length));
+        }
+
+        return local.Channels.Get(channel);
+    }
+
+    private Blackboard LocalBoard(string plugin)
     {
         if (!_boards.TryGetValue(plugin, out var board))
         {
@@ -162,7 +224,7 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
             _boards[plugin] = board;
         }
 
-        return string.IsNullOrWhiteSpace(channel) ? board : board.Channels.Get(channel);
+        return board;
     }
 
     private int RegisterBoardSubscription(string plugin, BoardSubscription subscription)
@@ -188,6 +250,74 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
         {
             LogWarn($"[{plugin}] ai.board {kind} callback failed: {exception.Message}");
         }
+    }
+
+    private void InvokeBoardMiddleware(string plugin, JsCallback callback, BlackboardContext context)
+    {
+        try
+        {
+            callback.Invoke(MiddlewareContext(context));
+        }
+        catch (Exception exception)
+        {
+            LogWarn($"[{plugin}] ai.board middleware failed on '{context.Key}': {exception.Message}");
+        }
+    }
+
+    private JsValue MiddlewareContext(BlackboardContext context)
+    {
+        JsValue ReadKey(JsValue[] args) =>
+            args.Length > 0 && args[0].IsString()
+                ? JsValue.FromObject(Engine, args[0].AsString())
+                : JsValue.Undefined;
+
+        string Key(JsValue[] args) =>
+            args.Length > 0 && args[0].IsString()
+                ? args[0].AsString()
+                : throw new BehaviourException("ai.board middleware key must be a string.");
+
+        return JsPayload.Object(Engine)
+            .Set("kind", context.Kind == BlackboardOperationKind.Change ? "change" : "signal")
+            .Set("key", context.Key)
+            .Set("value", ToJs(context.Value))
+            .Set("oldValue", ToJs(context.OldValue))
+            .Set("channel", context.ChannelName)
+            .Set("scope", ReferenceEquals(context.Scope.Owner, Blackboard.Global) ? "shared" : "local")
+            .Set("isChange", new ClrFunction(Engine, "isChange", (_, args) =>
+            {
+                var key = ReadKey(args);
+                return key.IsUndefined() ? context.Kind == BlackboardOperationKind.Change : context.IsChange(key.AsString());
+            }))
+            .Set("isEvent", new ClrFunction(Engine, "isEvent", (_, args) =>
+            {
+                var name = ReadKey(args);
+                return name.IsUndefined() ? context.Kind == BlackboardOperationKind.Signal : context.IsEvent(name.AsString());
+            }))
+            .Set("get", new ClrFunction(Engine, "get", (_, args) =>
+                ToJs(context.GetOrDefault<object?>(Key(args), null))))
+            .Set("has", new ClrFunction(Engine, "has", (_, args) =>
+                context.Scope.Contains(Key(args))))
+            .Set("set", new ClrFunction(Engine, "set", (_, args) =>
+            {
+                context.Set(Key(args), FromJs(args.Length > 1 ? args[1] : JsValue.Null));
+                return JsValue.Undefined;
+            }))
+            .Set("emit", new ClrFunction(Engine, "emit", (_, args) =>
+            {
+                context.Emit(Key(args), FromJs(args.Length > 1 ? args[1] : JsValue.Null));
+                return JsValue.Undefined;
+            }))
+            .Set("cancel", new ClrFunction(Engine, "cancel", (_, _) =>
+            {
+                context.Cancel();
+                return JsValue.Undefined;
+            }))
+            .Set("replace", new ClrFunction(Engine, "replace", (_, args) =>
+            {
+                context.Replace(FromJs(args.Length > 0 ? args[0] : JsValue.Null));
+                return JsValue.Undefined;
+            }))
+            .Build();
     }
 
     [JsBinding(Scoped = true, Description = "Compiles YAML into a tree id. Imports come from options.imports keyed by alias.")]

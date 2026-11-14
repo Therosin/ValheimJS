@@ -407,9 +407,32 @@ the current tree and runs one activity before normal selection resumes.
   once the villager is far away, it is getting dark or energy is low.
 - Recognition facts live in `npc.memory` (`home`, `shelter`, `visited`, `blocked`, `lastMet`), so a
   reload or restart resumes the same life.
+- **Hot state** lives in a per-villager blackboard scope (`ai.board.local('npc:<id>')`): `activity`,
+  `needs`, `threat`, `home`, `sheltered` and transitions such as `activity:start`/`activity:complete`.
+  The brain publishes; the YAML trees still own execution.
+- **Shared coordination** uses `ai.board.join('village:life-demo')`. Each villager joins on spawn,
+  publishes `villager:online`/`threat:seen`, and translates another villager's threat signal into
+  its own local `heard:threat` event. It does not copy the other villager's state.
+- **Lifetime** is explicit: `BoardMembership.dispose()` drops shared subscriptions, and
+  `local.release()` drops the per-villager channel on despawn.
 
-Tests: `scripting/test/life-demo.test.ts` covers brain selection/lifecycle; `task probe:life`
-compiles the real YAML files and asserts each activity's composed action sequence.
+```ts
+const local = ai.board.local(`npc:${view.id}`);
+const village = ai.board.join("village:life-demo");
+
+local.onSignal("threat:seen", (_name, threat) => {
+    village.emit("threat:seen", { sourceId: view.id, threat });
+});
+village.onSignal("threat:seen", (_name, data) => {
+    if (data && typeof data === "object" && !("sourceId" in data && data.sourceId === view.id)) {
+        local.emit("heard:threat", data);
+    }
+});
+```
+
+Tests: `scripting/test/life-demo.test.ts` covers brain selection/lifecycle and board publication;
+`scripting/test/board.test.ts` covers scope/membership lifetime; `task probe:life` compiles the real
+YAML files and asserts each activity's composed action sequence.
 
 ## Authority, cadence and limits
 
