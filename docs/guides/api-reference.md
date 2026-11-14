@@ -43,7 +43,6 @@ game.dedicated(): boolean          // server-process branch
 game.isServer(): boolean           // confirmed live authority; false before session
 game.isClient(): boolean           // client-process branch, including player hosts
 game.sessionReady(): boolean      // ZNet exists; not world/player readiness
-game.clientReady(): boolean       // local player exists, not teleporting; false on dedicated
 game.singlePlayer(): boolean
 game.peers(): number
 game.instance(): string            // stable per process start
@@ -81,6 +80,8 @@ startup, not an error.
 ## `world`
 
 ```ts
+world.available(): boolean                            // native scene/object table ready
+world.clientReady(): boolean                          // local player loaded; false on dedicated
 world.zdoCount(): number
 world.zdoAvailable(): boolean
 world.spawn(prefab: string, x: number, y: number, z: number): string | null

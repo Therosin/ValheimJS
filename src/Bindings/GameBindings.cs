@@ -36,9 +36,6 @@ internal sealed class GameBindings : JsBindings
     [JsBinding(Description = "True for a client process, including a player hosting a world; does not imply a local player exists.")]
     public bool IsClient() => !IsDedicated;
 
-    [JsBinding(Description = "True when a local client world is playable: ZNetScene is ready, the local player exists and is not teleporting. False on a dedicated server.")]
-    public bool ClientReady() => ValheimJS.World.WorldManager.ClientReady();
-
     [JsBinding(Description = "True when this process is a single-player session.")]
     public bool SinglePlayer() => GameEnvironment.SinglePlayer;
 

@@ -53,10 +53,6 @@ export declare class ValheimPlayer {
  */
 export interface GameApi {
     /**
-     * True when a local client world is playable: ZNetScene is ready, the local player exists and is not teleporting. False on a dedicated server.
-     */
-    clientReady(): boolean;
-    /**
      * Current world day, or 0 before the world loads.
      */
     day(): number;
@@ -311,9 +307,17 @@ export interface WorldApi {
      */
     alive(handle: string): boolean;
     /**
+     * True when the native world scene and object table are ready.
+     */
+    available(): boolean;
+    /**
      * Live characters within a radius, nearest first; limit 0 returns everything.
      */
     charactersNear(x: number, y: number, z: number, radius: number, limit: number): WorldCharacter[];
+    /**
+     * True when a local client world is playable: ZNetScene is ready, the local player exists and is not teleporting. False on a dedicated server.
+     */
+    clientReady(): boolean;
     /**
      * Containers within a radius, nearest first; limit 0 returns everything.
      */

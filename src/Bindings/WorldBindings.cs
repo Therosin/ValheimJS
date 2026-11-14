@@ -5,6 +5,7 @@ using System.Reflection;
 using UnityEngine;
 using ValheimJS.Core;
 using ValheimJS.Scripting.Binding;
+using ValheimJS.World;
 using Object = UnityEngine.Object;
 
 namespace ValheimJS.Bindings;
@@ -33,6 +34,12 @@ internal sealed class WorldBindings : JsBindings
     public WorldBindings(JsBindingContext context) : base(context)
     {
     }
+
+    [JsBinding(Description = "True when the native world scene and object table are ready.")]
+    public bool Available() => WorldManager.Instance?.Available == true;
+
+    [JsBinding(Description = "True when a local client world is playable: ZNetScene is ready, the local player exists and is not teleporting. False on a dedicated server.")]
+    public bool ClientReady() => WorldManager.ClientReady();
 
     [JsBinding(Description = "Number of live world objects (props, creatures, structures).")]
     public int ZdoCount()
