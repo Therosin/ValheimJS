@@ -204,6 +204,14 @@ npc.setMemory(this, memory);
 relevance changes. Use it for ownership, interaction history, quest state and arbitrary facts.
 Use `state(key)`/`setState(key, value)` for small string keys; use `npc.memory` for structured data.
 
+### Orphan cleanup
+
+Scripted NPC ZDOs carry `vjs.sim`, `vjs.plugin` and `vjs.kind`. After plugins load, and periodically
+thereafter, the server removes VJS-marked ZDOs whose plugin/kind is no longer registered. That
+prevents old demo or removed-plugin NPCs from producing client “missing prefab” spam and staying
+in the save forever. Pre-marker `vjs_npc_wanderer` objects are handled by a legacy hash fallback;
+a prefab hash alone cannot be decoded into a `vjs_*` name.
+
 ## 6. Signals observe the same store
 
 Signals sample on the host pump. Because perception is cached on the NPC tick, predicates can

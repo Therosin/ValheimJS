@@ -56,6 +56,7 @@ internal sealed class WorldObject
 internal sealed class WorldKind
 {
     internal string Name = "";
+    internal string Plugin = "";
     internal string Prefab = "";
     internal double TickMs = 500;
     internal float RelevancyRadius = 64f;

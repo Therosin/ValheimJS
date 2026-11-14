@@ -92,6 +92,7 @@ public class Plugin : BaseUnityPlugin
                 Logger.LogInfo($"hook registered: {patch.Name}");
             }
             _host!.Load();
+            _world?.PluginsLoaded();
             if (_watch.Value) StartWatcher();
             Logger.LogInfo($"ValheimJS ready — {_host.LoadedNames.Count} plugin(s) from {_host.Root}");
         }
@@ -184,6 +185,7 @@ public class Plugin : BaseUnityPlugin
             _reloadRequested = false;
             Logger.LogInfo("Reloading JS plugins…");
             _host.Reload();
+            _world?.PluginsLoaded();
         }
 
         _tickAccumulator += Time.unscaledDeltaTime;

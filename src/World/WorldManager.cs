@@ -1,7 +1,9 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Reflection;
 using UnityEngine;
 using ValheimJS.Core;
 using ValheimJS.Entities;
@@ -30,10 +32,23 @@ internal sealed class WorldManager : IDisposable
     private readonly List<(string Handle, float X, float Z)> _relevancyObjects = new();
     private float _nextRehydrate;
     private float _nextRelevancy;
+    private float _nextCleanup;
     private float _nextSync;
     private bool _syncInFlight;
     private bool _synced;
     private bool _disposed;
+    private bool _pluginsLoaded;
+    private static readonly FieldInfo? ObjectsField = typeof(ZDOMan).GetField(
+        "m_objectsByID",
+        BindingFlags.Instance | BindingFlags.NonPublic);
+    /// <summary>
+    /// Pre-marker NPC prefabs. New ZDOs carry <c>vjs.plugin</c>/<c>vjs.kind</c>, so only the
+    /// historical npc-demo needs a hard-coded fallback; hashes cannot reveal a name prefix.
+    /// </summary>
+    private static readonly HashSet<int> LegacyPrefabHashes = new()
+    {
+        "vjs_npc_wanderer".GetStableHashCode()
+    };
 
     internal static WorldManager? Instance { get; private set; }
 
@@ -100,6 +115,22 @@ internal sealed class WorldManager : IDisposable
         {
             Plugin.Logger.LogWarning($"world kind '{kind.Name}' prepare failed: {exception.Message}");
         }
+    }
+
+    internal void UnregisterKind(string plugin, string kind)
+    {
+        if (_kinds.TryGetValue(kind, out var info) &&
+            string.Equals(info.Plugin, plugin, StringComparison.Ordinal))
+        {
+            _kinds.Remove(kind);
+        }
+    }
+
+    /// <summary>Called after the JS host has loaded all plugin definitions for this session.</summary>
+    internal void PluginsLoaded()
+    {
+        _pluginsLoaded = true;
+        _nextCleanup = 0f;
     }
 
     internal void ApplyPendingPrefabs()
@@ -431,6 +462,12 @@ internal sealed class WorldManager : IDisposable
         }
 
         var now = Time.realtimeSinceStartup;
+        if (now >= _nextCleanup)
+        {
+            _nextCleanup = now + 30f;
+            CleanupOrphanedObjects();
+        }
+
         if (now >= _nextRehydrate)
         {
             _nextRehydrate = now + 10f;
@@ -739,6 +776,76 @@ internal sealed class WorldManager : IDisposable
 
         return reference;
     }
+
+    /// <summary>
+    /// Removes VJS-marked ZDOs whose owning plugin/kind is no longer registered. This runs only
+    /// on the authority after plugins load and periodically afterwards. A prefab hash alone
+    /// cannot be reversed into a <c>vjs_</c> name, so ownership is deliberately carried in the
+    /// ZDO (`vjs.sim`, `vjs.plugin`, `vjs.kind`).
+    /// </summary>
+    private void CleanupOrphanedObjects()
+    {
+        if (!_pluginsLoaded)
+        {
+            return;
+        }
+
+        var manager = ZDOMan.instance;
+        var scene = ZNetScene.instance;
+        if (manager == null || scene == null || ObjectsField == null ||
+            ObjectsField.GetValue(manager) is not IDictionary objects)
+        {
+            return;
+        }
+
+        var removed = 0;
+        foreach (var value in objects.Values.Cast<object>().ToList())
+        {
+            if (value is not ZDO zdo || zdo.GetPrefab() == 0)
+            {
+                continue;
+            }
+
+            var hash = zdo.GetPrefab();
+            if (!IsValheimJsObject(zdo, hash) || IsActiveKind(zdo, hash))
+            {
+                continue;
+            }
+
+            if (!zdo.IsOwner())
+            {
+                zdo.SetOwner(ZDOMan.GetSessionID());
+            }
+
+            _objects.Remove(zdo.m_uid.ToString());
+            manager.DestroyZDO(zdo);
+            removed++;
+        }
+
+        if (removed > 0)
+        {
+            Plugin.Logger.LogWarning($"world cleanup: removed {removed} orphaned ValheimJS object(s)");
+        }
+    }
+
+    private bool IsActiveKind(ZDO zdo, int hash)
+    {
+        var plugin = zdo.GetString(WorldKeys.Plugin, "");
+        var kind = zdo.GetString(WorldKeys.Kind, "");
+        if (plugin.Length == 0 || kind.Length == 0 ||
+            !_kinds.TryGetValue(kind, out var info) ||
+            !string.Equals(info.Plugin, plugin, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return info.Prefab.GetStableHashCode() == hash;
+    }
+
+    private static bool IsValheimJsObject(ZDO zdo, int hash) =>
+        string.Equals(zdo.GetString(WorldKeys.Sim, ""), "server", StringComparison.Ordinal) ||
+        zdo.GetString(WorldKeys.Plugin, "").Length > 0 ||
+        LegacyPrefabHashes.Contains(hash);
 
     private void Rehydrate()
     {

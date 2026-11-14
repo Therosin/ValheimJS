@@ -116,6 +116,7 @@ internal sealed class NpcBindings : JsBindings
         manager.RegisterKind(new WorldKind
         {
             Name = definition.Kind,
+            Plugin = plugin,
             Prefab = NpcPrefabs.PrefabName(definition.Kind),
             TickMs = definition.TickMs,
             RelevancyRadius = 64f,
@@ -283,6 +284,14 @@ internal sealed class NpcBindings : JsBindings
 
     public override void Release(string plugin)
     {
+        if (WorldManager.Instance is { } manager && _blueprints.TryGetValue(plugin, out var kinds))
+        {
+            foreach (var blueprint in kinds.Values)
+            {
+                manager.UnregisterKind(plugin, blueprint.Kind);
+            }
+        }
+
         _blueprints.Remove(plugin);
         _debug.Remove(plugin);
         AiSenses.Clear(plugin);
@@ -290,6 +299,14 @@ internal sealed class NpcBindings : JsBindings
 
     public override void Dispose()
     {
+        if (WorldManager.Instance is { } manager)
+        {
+            foreach (var blueprint in _blueprints.Values.SelectMany(kinds => kinds.Values))
+            {
+                manager.UnregisterKind(blueprint.Plugin, blueprint.Kind);
+            }
+        }
+
         _blueprints.Clear();
         _debug.Clear();
         AiSenses.Clear();
