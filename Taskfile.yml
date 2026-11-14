@@ -51,13 +51,17 @@ tasks:
       - bun install
       - bun run build.ts --source testing --out dist-testing
     generates:
-      - ./dist/*/*.js
-      - ./dist/*/manifest.ini
+      - ./dist-testing/*/*.js
+      - ./dist-testing/*/manifest.ini
+      - ./dist-testing/*/behaviours/**/*
+      - ./dist-testing/*/assets/**/*
     sources:
       - ./sdk/**/*.ts
       - ./lib/**/*.ts
-      - ./plugins/**/*.ts
-      - ./plugins/**/manifest.ini
+      - ./testing/**/*.ts
+      - ./testing/**/*.yaml
+      - ./testing/**/*.toml
+      - ./testing/**/manifest.ini
       - ./build.ts
 
   typecheck:
