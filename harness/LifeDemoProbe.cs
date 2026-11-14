@@ -53,6 +53,7 @@ internal static class LifeDemoProbe
                 : throw new BehaviourException($"import alias '{alias}' has no file in {file}"));
 
         var calls = new List<string>();
+        var trace = new List<string>();
         var running = new Dictionary<string, int>(StringComparer.Ordinal);
         var state = tree.CreateInstance(
             host: null,
@@ -73,7 +74,8 @@ internal static class LifeDemoProbe
                 return BehaviourResult.Success();
             },
             condition: (name, _) => name != "at-home",
-            random: () => 0.5);
+            random: () => 0.5,
+            trace: trace.Add);
 
         state.State["destination"] = new Dictionary<string, object?> { ["x"] = 1d, ["y"] = 2d, ["z"] = 3d };
         state.State["target"] = new Dictionary<string, object?> { ["id"] = "target", ["pos"] = state.State["destination"] };
@@ -94,6 +96,13 @@ internal static class LifeDemoProbe
         if (!calls.SequenceEqual(expected))
         {
             throw new BehaviourException($"{file}: actions [{string.Join(", ", calls)}], expected [{string.Join(", ", expected)}]");
+        }
+
+        if (!trace.Any(line => line.Contains("tree ")) ||
+            !trace.Any(line => line.Contains("use move")) ||
+            !trace.Any(line => line.Contains("action move-to")))
+        {
+            throw new BehaviourException($"{file}: trace did not expose tree/move composition: {string.Join(" | ", trace)}");
         }
     }
 }

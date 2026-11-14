@@ -57,6 +57,10 @@ export function npcBase(): new (handle: string) => ValheimBaseNPC {
 
 /** Scripted NPCs: spawn, perception store, intents, memory and durable state. */
 export const npc = {
+    /** Enable host-side NPC tracing: lifecycle, new senses and settled intent failures. */
+    debug(enabled: boolean): boolean {
+        return context().host.api.npc.debug(enabled);
+    },
     available(): boolean {
         return context().host.api.npc.available();
     },

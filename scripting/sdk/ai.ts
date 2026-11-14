@@ -32,6 +32,10 @@ export type { AiActionOutcome, AiContext, AiInstantiateOptions, AiLoadOptions, A
  * `docs/guides/npc-ai.md` for a complete per-NPC example.
  */
 export const ai = {
+    /** Enable host-side tracing of tree nodes, actions, conditions and imports for this plugin. */
+    debug(enabled: boolean): boolean {
+        return context().host.api.ai.debug(enabled);
+    },
     /** Compiles YAML text; imports come from `options.imports` keyed by alias, never from disk. */
     compile(yaml: string, options: AiLoadOptions = {}): string {
         return context().host.api.ai.compile(yaml, options);

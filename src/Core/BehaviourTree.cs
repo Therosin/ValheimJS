@@ -253,8 +253,9 @@ public sealed class BehaviourTree
         BehaviourScriptExecutor? execute = null,
         BehaviourActionExecutor? action = null,
         BehaviourConditionEvaluator? condition = null,
-        Func<double>? random = null) =>
-        new(this, host, execute, action, condition, random);
+        Func<double>? random = null,
+        Action<string>? trace = null) =>
+        new(this, host, execute, action, condition, random, trace);
 
     internal static object? Clone(object? value) => value switch
     {
@@ -933,6 +934,8 @@ public sealed class BehaviourInstance
     private readonly Dictionary<string, object?> _state;
     private readonly Dictionary<BehaviourNode, Frame> _frames = new();
     private readonly Frame _mainFrame = new();
+    private Action<string>? _trace;
+    private bool _traceTree;
     private int _maxJumpsPerTick = 64;
     private bool _cancelled;
 
@@ -942,7 +945,8 @@ public sealed class BehaviourInstance
         BehaviourScriptExecutor? execute,
         BehaviourActionExecutor? action,
         BehaviourConditionEvaluator? condition,
-        Func<double>? random)
+        Func<double>? random,
+        Action<string>? trace)
     {
         _tree = tree;
         _host = host;
@@ -950,6 +954,7 @@ public sealed class BehaviourInstance
         _action = action;
         _condition = condition;
         _random = random ?? NextSharedRandom;
+        _trace = trace;
 
         _state = new Dictionary<string, object?>(StringComparer.Ordinal);
         foreach (var pair in tree.InitialState)
@@ -959,6 +964,13 @@ public sealed class BehaviourInstance
     }
 
     public BehaviourTree Tree => _tree;
+
+    /// <summary>Optional diagnostic trace for node entry/exit. Set to null to disable.</summary>
+    public Action<string>? Trace
+    {
+        get => _trace;
+        set => _trace = value;
+    }
 
     /// <summary>Live mutable state. Host callbacks and scripts read and write the same dictionary.</summary>
     public IDictionary<string, object?> State => _state;
@@ -1132,6 +1144,7 @@ public sealed class BehaviourInstance
             state.Cursor = 0;
             state.Selected = -1;
             state.Args = ResolveArguments(node);
+            TraceEnter(node);
             if (node.ExecBefore != null)
             {
                 RunScript(node.ExecBefore, node, state, interrupted: false);
@@ -1556,11 +1569,66 @@ public sealed class BehaviourInstance
             RunScript(node.ExecAfter, node, state, interrupted);
         }
 
+        TraceExit(node, status);
         state.Active = false;
         state.Cursor = 0;
         state.Selected = -1;
         state.Args = null;
     }
+
+    private void TraceEnter(BehaviourNode node)
+    {
+        if (_trace == null) return;
+        if (!_traceTree)
+        {
+            _traceTree = true;
+            var source = _tree.SourcePath;
+            var name = string.IsNullOrEmpty(source) ? _tree.Id : Path.GetFileName(source);
+            TraceLine($"tree {name}");
+        }
+
+        TraceLine(Indent(node) + DescribeNode(node));
+    }
+
+    private void TraceExit(BehaviourNode node, BehaviourStatus status)
+    {
+        if (_trace == null) return;
+        TraceLine(Indent(node) + "done " + DescribeNode(node) + " " + StatusName(status));
+    }
+
+    private void TraceLine(string line)
+    {
+        try
+        {
+            _trace?.Invoke(line);
+        }
+        catch
+        {
+            // Diagnostics must never change behaviour.
+        }
+    }
+
+    private static string Indent(BehaviourNode node) => new(' ', Math.Min(20, Depth(node) * 2));
+
+    private static string DescribeNode(BehaviourNode node) => node.Kind switch
+    {
+        BehaviourNodeKind.Sequence => "sequence",
+        BehaviourNodeKind.Selector => "selector",
+        BehaviourNodeKind.Random => "random",
+        BehaviourNodeKind.Action => "action " + node.Action,
+        BehaviourNodeKind.Condition => "condition " + node.Condition,
+        BehaviourNodeKind.Use => "use " + (node.Use?.Id ?? "?"),
+        BehaviourNodeKind.Goto => "goto " + node.GotoId,
+        _ => node.Kind.ToString()
+    };
+
+    private static string StatusName(BehaviourStatus status) => status switch
+    {
+        BehaviourStatus.Success => "success",
+        BehaviourStatus.Failure => "failure",
+        BehaviourStatus.Cancelled => "cancelled",
+        _ => "running"
+    };
 
     private void RunScript(string code, BehaviourNode node, NodeState state, bool interrupted)
     {

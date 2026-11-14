@@ -69,9 +69,14 @@ function makeVillager(trees: Record<VillagerActivity, string>) {
         }
 
         onIntent(_view: NpcView, intent: NpcIntent) {
-            if (intent.status === "failed") {
-                log(`[${this.name}] ${intent.kind} failed: ${intent.reason ?? "unknown"}`);
-            }
+            if (intent.status !== "failed") return;
+            const target = intent.target
+                ? `${Math.round(intent.target.x)},${Math.round(intent.target.z)}`
+                : "-";
+            log(
+                `[${this.name}] ${intent.kind} failed: ${intent.reason ?? "unknown"} ` +
+                    `target=${target} id=${intent.targetId ?? "-"}`
+            );
         }
 
         private attach(view: NpcView) {
@@ -101,6 +106,11 @@ export default definePlugin({
 
     setup(ctx) {
         if (!("npc" in ctx.host.api) || !("assets" in ctx.host.api)) return;
+        if (ctx.host.config("debug") === "true") {
+            ai.debug(true);
+            npc.debug(true);
+            log("debug tracing enabled for ai/npc");
+        }
         npc.register(makeVillager(compileBehaviours()), {
             kind: "villager",
             prefab: "Dverger",

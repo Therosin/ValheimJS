@@ -22,6 +22,9 @@ param(
 
     [string]$JsOut = 'scripting/dist',
 
+    # Optional plugin names to copy; empty means every plugin in $JsOut.
+    [string[]]$Plugins = @(),
+
     [string]$ProjectRoot = (Split-Path -Parent $PSScriptRoot)
 )
 
@@ -95,8 +98,18 @@ New-Item -ItemType Directory -Force -Path $pluginRoot | Out-Null
 # Mirror, don't merge: a plugin removed from the repo must disappear from the target too.
 Get-ChildItem -LiteralPath $pluginRoot -Force | Remove-Item -Recurse -Force
 $jsItems = @(Get-ChildItem -LiteralPath $jsOut -Force -ErrorAction SilentlyContinue)
-if ($jsItems.Count -gt 0) {
-    Copy-Item -Path (Join-Path $jsOut '*') -Destination $pluginRoot -Recurse -Force
+if ($Plugins.Count -gt 0) {
+    $available = @($jsItems | ForEach-Object { $_.Name })
+    $unknown = @($Plugins | Where-Object { $available -notcontains $_ })
+    if ($unknown.Count -gt 0) {
+        throw ("Unknown plugin(s): {0}. Available: {1}" -f ($unknown -join ', '), ($available -join ', '))
+    }
+
+    $jsItems = @($jsItems | Where-Object { $Plugins -contains $_.Name })
+}
+
+foreach ($item in $jsItems) {
+    Copy-Item -LiteralPath $item.FullName -Destination $pluginRoot -Recurse -Force
 }
 
 Write-Output "Deployed $Target plugin -> $pluginDir"

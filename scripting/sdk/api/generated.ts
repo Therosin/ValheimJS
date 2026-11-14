@@ -385,6 +385,10 @@ export interface NpcApi {
      */
     base(): new (handle: string) => ValheimBaseNPC;
     /**
+     * Enables host-side NPC tracing: lifecycle, perception and settled intents.
+     */
+    debug(enabled: boolean): boolean;
+    /**
      * Despawns one of this plugin's NPCs.
      */
     despawn(entity: unknown): boolean;
@@ -478,6 +482,10 @@ export interface AiApi {
      * Compiles YAML into a tree id. Imports come from options.imports keyed by alias.
      */
     compile(yaml: string, options: unknown): string;
+    /**
+     * Enables host-side AI tracing for this plugin (tree nodes, actions, conditions and imports).
+     */
+    debug(enabled: boolean): boolean;
     /**
      * Creates an independent instance of a compiled tree; returns its id.
      */

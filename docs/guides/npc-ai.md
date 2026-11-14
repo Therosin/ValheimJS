@@ -428,10 +428,32 @@ compiles the real YAML files and asserts each activity's composed action sequenc
 ## Debugging
 
 ```ts
+npc.debug(true);    // lifecycle, new senses, settled intent reason/target
+ai.debug(true);     // tree filename, nodes, actions, conditions, imports
 log(JSON.stringify(npc.perception(this), null, 2));
 log(npc.sensed(this, { remembered: true, max: 64 }));
 log(ai.status(this.brain));
 ```
 
-Use `task probe:ai` for the binding and perception-model contract, and `task probe:behaviour` for
-the YAML engine.
+An `ai.debug(true)` trace looks like:
+
+```text
+[ai] tree forage.yaml
+[ai] sequence
+[ai]   action select-point
+[ai]   done action select-point success
+[ai]   use move
+[ai]   action move-to
+[ai]   done action move-to success
+[ai]   done use move success
+[ai]   use look-around
+[ai]   action look-around
+...
+```
+
+`npc.debug(true)` adds lines such as `intent moveTo failed reason=nav-unavailable target=12,-4 id=-`
+and `sensed Dverger Rogue (creature) distance=8.2 enemy=true`. Both flags are per plugin and off by
+default; `life-demo` reads `debug=true` from its config.
+
+Use `task probe:ai` for the binding and perception-model contract, `task probe:behaviour` for the
+YAML engine, and `task probe:life` for the composed behaviour library.

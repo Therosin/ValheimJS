@@ -22,11 +22,14 @@ internal sealed class NpcPresenter : MonoBehaviour
 
     private ZNetView? _view;
     private ZSyncAnimation? _animation;
+    private Character? _character;
+    private bool _named;
 
     private void Awake()
     {
         _view = GetComponent<ZNetView>();
         _animation = GetComponent<ZSyncAnimation>();
+        _character = GetComponent<Character>();
     }
 
     private void LateUpdate()
@@ -40,6 +43,16 @@ internal sealed class NpcPresenter : MonoBehaviour
         if (zdo == null || _view.IsOwner())
         {
             return;
+        }
+
+        if (!_named && _character != null)
+        {
+            var name = zdo.GetString(WorldKeys.Name, "");
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                _character.m_name = name;
+                _named = true;
+            }
         }
 
         _animation.SetFloat(ForwardSpeed, zdo.GetFloat(WorldKeys.Speed, 0f));

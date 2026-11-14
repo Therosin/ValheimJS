@@ -47,11 +47,13 @@ internal sealed class NpcBindings : JsBindings
         internal JsCallback? OnSensed;
         internal JsCallback? OnIntent;
         internal string LastIntent = "idle";
+        internal string LastIntentKind = "";
         internal bool Muted;
         internal bool Hydrated;
     }
 
     private readonly Dictionary<string, Dictionary<string, Blueprint>> _blueprints = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _debug = new(StringComparer.Ordinal);
     private JsTypeRegistry? _types;
     private JsNativeType? _npcType;
 
@@ -78,6 +80,14 @@ internal sealed class NpcBindings : JsBindings
 
     [JsBinding(Scoped = true, Description = "True when the world scene can host NPCs.")]
     public bool Available(string plugin) => WorldManager.Instance?.Available == true;
+
+    [JsBinding(Scoped = true, Description = "Enables host-side NPC tracing: lifecycle, perception and settled intents.")]
+    public bool Debug(string plugin, bool enabled)
+    {
+        if (enabled) _debug.Add(plugin);
+        else _debug.Remove(plugin);
+        return enabled;
+    }
 
     [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "new (handle: string) => ValheimBaseNPC",
         Description = "Base constructor for plugin NPC subclasses.")]
@@ -273,12 +283,14 @@ internal sealed class NpcBindings : JsBindings
     public override void Release(string plugin)
     {
         _blueprints.Remove(plugin);
+        _debug.Remove(plugin);
         AiSenses.Clear(plugin);
     }
 
     public override void Dispose()
     {
         _blueprints.Clear();
+        _debug.Clear();
         AiSenses.Clear();
     }
 
@@ -306,6 +318,11 @@ internal sealed class NpcBindings : JsBindings
                 continue;
             }
 
+            if (!known && _debug.Contains(blueprint.Plugin))
+            {
+                LogInfo($"[{blueprint.Plugin}] [npc] {blueprint.Kind} spawned {handle}");
+            }
+
             if (!known && !GameEnvironment.IsServer())
             {
                 Invoke(blueprint, instance, instance.OnSpawn, "onSpawn", View(blueprint.Plugin, handle));
@@ -327,6 +344,7 @@ internal sealed class NpcBindings : JsBindings
             }
 
             var instance = blueprint.Instances[handle];
+            if (_debug.Contains(blueprint.Plugin)) LogInfo($"[{blueprint.Plugin}] [npc] {blueprint.Kind} despawned {handle}");
             Invoke(blueprint, instance, instance.OnDespawn, "onDespawn");
             blueprint.Instances.Remove(handle);
             AiSenses.Clear(blueprint.Plugin, handle);
@@ -360,6 +378,15 @@ internal sealed class NpcBindings : JsBindings
 
             foreach (var entry in manager.TakeNewSenses(blueprint.Plugin, instance.Handle))
             {
+                if (_debug.Contains(blueprint.Plugin))
+                {
+                    LogInfo(
+                        $"[{blueprint.Plugin}] [npc] {blueprint.Kind} {instance.Handle} sensed " +
+                        $"{entry.Name} ({(string.IsNullOrEmpty(entry.Kind) ? entry.Prefab ?? entry.Id : entry.Kind)}) " +
+                        $"at {entry.X:0.0},{entry.Y:0.0},{entry.Z:0.0} distance={entry.Distance:0.0} " +
+                        $"enemy={entry.Enemy} player={entry.IsPlayer} object={entry.IsObject}");
+                }
+
                 Invoke(blueprint, instance, instance.OnSensed, "onSensed",
                     JsPayload.FromPlain(Engine, entry.ToPlain(obj.Position.x, obj.Position.y, obj.Position.z, obj.Yaw, now)));
             }
@@ -370,6 +397,10 @@ internal sealed class NpcBindings : JsBindings
             if (!instance.Hydrated)
             {
                 instance.Hydrated = true;
+                if (_debug.Contains(blueprint.Plugin))
+                {
+                    LogInfo($"[{blueprint.Plugin}] [npc] {blueprint.Kind} {instance.Handle} rehydrated");
+                }
                 Invoke(blueprint, instance, instance.OnRehydrate, "onRehydrate", view);
             }
 
@@ -386,6 +417,18 @@ internal sealed class NpcBindings : JsBindings
         }
 
         var status = intent.Status;
+        if (_debug.Contains(blueprint.Plugin) &&
+            (intent.Kind != instance.LastIntentKind || status != instance.LastIntent))
+        {
+            var target = intent.X.HasValue
+                ? $"{intent.X.Value:0.0},{intent.Y ?? 0d:0.0},{intent.Z ?? 0d:0.0}"
+                : "-";
+            LogInfo(
+                $"[{blueprint.Plugin}] [npc] {blueprint.Kind} {instance.Handle} intent " +
+                $"{intent.Kind} {status} reason={intent.Reason ?? "-"} target={target} id={intent.TargetId ?? "-"}");
+        }
+
+        instance.LastIntentKind = intent.Kind;
         if (status is "arrived" or "failed")
         {
             if (instance.LastIntent == status)

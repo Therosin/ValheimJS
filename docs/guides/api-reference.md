@@ -164,6 +164,7 @@ method does not exist on clients. `get` resolves one known player on either side
 
 ```ts
 npc.available(): boolean
+npc.debug(enabled: boolean): boolean
 npc.register(ctor, { kind, prefab, tickMs?, faction?, perception? }): void
 npc.spawn(kind, { position: { x, y, z }, name? }): ValheimBaseNPC | null
 npc.despawn(entity): boolean
@@ -323,6 +324,7 @@ Rules:
 ## `ai`
 
 ```ts
+ai.debug(enabled: boolean): boolean
 ai.compile(yaml, { source?, imports?, warn? }): string
 ai.instantiate(tree, { this?, state?, exec?, action?, condition?, random?, senses?, maxJumpsPerTick? }): string
 ai.tick(instance, deltaTime?): { status: "success" | "failure" | "running" | "cancelled"; output: unknown }
@@ -339,6 +341,9 @@ YAML behaviour trees with `sequence`, `selector`, `random`, `action`, `condition
 `use`, `execBefore`/`exec`/`execAfter`, `@[state]` references and `out` assignment. The engine
 never ticks itself: call `ai.tick` from `onServerTick` or an NPC `onTick`. Compile once and
 instantiate per entity; instances keep independent state.
+
+`ai.debug(true)` enables a host trace for this plugin. It logs the tree filename, node entry/exit,
+actions, conditions and imported `use` trees at the plugin's log destination. Off by default.
 
 ```ts
 const tree = ai.compile(yaml);

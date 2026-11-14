@@ -115,6 +115,7 @@ export class VillagerBrain {
     private activity: VillagerActivity = "wander";
     private instance: string | null = null;
     private activeTarget: NpcSensed | null = null;
+    private activeDestination: NpcPos | null = null;
     private restSeconds = 20;
     private lastTick = 0;
     private dirty = false;
@@ -218,19 +219,19 @@ export class VillagerBrain {
 
         const threat = this.threat(view);
         if (threat) {
-            this.start("flee", now, threat);
+            this.start("flee", now, threat, 1000);
             return this.activity;
         }
 
         if (this.requested && now <= this.requested.until) {
             const request = this.requested;
             this.requested = null;
-            this.start(request.activity, now, request.target ?? null);
+            this.start(request.activity, now, request.target ?? null, 999);
             return this.activity;
         }
 
         const decision = this.choose(view, now);
-        if (decision) this.start(decision.activity, now, decision.target ?? null);
+        if (decision) this.start(decision.activity, now, decision.target ?? null, decision.score);
         else this.pause(now);
         return this.activity;
     }
@@ -243,7 +244,7 @@ export class VillagerBrain {
         }
     }
 
-    private choose(view: NpcView, now: number): { activity: VillagerActivity; target?: NpcSensed } | null {
+    private choose(view: NpcView, now: number): { activity: VillagerActivity; score: number; target?: NpcSensed } | null {
         const night = view.environment ? !view.environment.isDay : false;
         const away = distance(view, this.home);
         const player = nearest(view.nearby, entry => entry.isPlayer && entry.visible && !entry.isDead && entry.distance <= 18);
@@ -259,7 +260,9 @@ export class VillagerBrain {
         const decisions: Array<{ activity: VillagerActivity; score: number; target?: NpcSensed }> = [];
 
         if (this.needs.energy < 0.25) decisions.push({ activity: "rest", score: 800 });
-        else if (night) decisions.push({ activity: "rest", score: 500 + (1 - this.needs.energy) * 200 });
+        else if (night && this.needs.energy < 0.9) {
+            decisions.push({ activity: "rest", score: 500 + (1 - this.needs.energy) * 200 });
+        }
 
         if (away > 25) decisions.push({ activity: "return", score: 700 });
         else if (this.homesick && away > 8) decisions.push({ activity: "return", score: 650 });
@@ -287,7 +290,7 @@ export class VillagerBrain {
         return decisions.sort((left, right) => right.score - left.score)[0] ?? null;
     }
 
-    private start(activity: VillagerActivity, now: number, target: NpcSensed | null): void {
+    private start(activity: VillagerActivity, now: number, target: NpcSensed | null, score = 0): void {
         const tree = this.behaviors[activity];
         if (!tree) {
             this.log?.(`missing behaviour tree for ${activity}`);
@@ -297,8 +300,12 @@ export class VillagerBrain {
 
         this.activity = activity;
         this.activeTarget = target;
+        this.activeDestination = null;
         this.restSeconds = 12 + this.random() * 18;
-        this.log?.(`${activity}${target ? ` -> ${target.name || target.kind || target.id}` : ""}`);
+        const targetText = target
+            ? ` -> ${target.name || target.kind || target.id} @ ${Math.round(target.pos.x)},${Math.round(target.pos.z)}`
+            : "";
+        this.log?.(`selected ${activity} score=${Math.round(score)}${targetText}`);
 
         const state: Record<string, unknown> = {
             home: this.home,
@@ -337,7 +344,13 @@ export class VillagerBrain {
     }
 
     private abandon(now: number): void {
-        this.log?.(`${this.activity} failed`);
+        const targetText = this.activeTarget
+            ? ` target=${this.activeTarget.name || this.activeTarget.kind || this.activeTarget.id}@${Math.round(this.activeTarget.pos.x)},${Math.round(this.activeTarget.pos.z)}`
+            : "";
+        const destinationText = this.activeDestination
+            ? ` destination=${Math.round(this.activeDestination.x)},${Math.round(this.activeDestination.z)}`
+            : "";
+        this.log?.(`${this.activity} failed${targetText}${destinationText}`);
         if (this.activity === "inspect" && this.activeTarget) {
             this.blocked.set(this.activeTarget.id, now + 5 * 60 * 1000);
             this.dirty = true;
@@ -405,6 +418,7 @@ export class VillagerBrain {
             const around = stringOr(ctx.args.around, "home") === "self" ? view : this.home;
             const point = this.pointAround(around, view.y, numberOr(ctx.args.min, 3), numberOr(ctx.args.max, 8));
             state.destination = point;
+            this.activeDestination = point;
             state.run = ctx.args.run === true;
             state.moveIssued = false;
             return "success";
@@ -412,6 +426,7 @@ export class VillagerBrain {
 
         if (name === "select-home") {
             state.destination = this.home;
+            this.activeDestination = this.home;
             state.run = false;
             state.moveIssued = false;
             return "success";
@@ -428,6 +443,7 @@ export class VillagerBrain {
             this.activeTarget = shelter;
             state.target = shelter;
             state.destination = shelter.pos;
+            this.activeDestination = shelter.pos;
             state.moveIssued = false;
             return "success";
         }
@@ -439,6 +455,7 @@ export class VillagerBrain {
             this.activeTarget = threat;
             state.target = threat;
             state.destination = this.fleePoint(view, threat);
+            this.activeDestination = state.destination as NpcPos;
             state.run = true;
             state.moveIssued = false;
             return "success";
@@ -521,6 +538,7 @@ export class VillagerBrain {
         this.activeTarget = target;
         state.target = target;
         state.destination = target.pos;
+        this.activeDestination = target.pos;
         state.moveIssued = false;
         return "success";
     }

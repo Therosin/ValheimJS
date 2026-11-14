@@ -55,9 +55,22 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
     private readonly Dictionary<string, Dictionary<string, TreeEntry>> _trees = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _treeIds = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _brainIds = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _debug = new(StringComparer.Ordinal);
 
     public AiBindings(JsBindingContext context) : base(context)
     {
+    }
+
+    [JsBinding(Scoped = true, Description = "Enables host-side AI tracing for this plugin (tree nodes, actions, conditions and imports).")]
+    public bool Debug(string plugin, bool enabled)
+    {
+        if (enabled) _debug.Add(plugin);
+        else _debug.Remove(plugin);
+        foreach (var brain in For(plugin).Values)
+        {
+            ApplyTrace(plugin, brain);
+        }
+        return enabled;
     }
 
     [JsBinding(Scoped = true, Description = "Compiles YAML into a tree id. Imports come from options.imports keyed by alias.")]
@@ -166,6 +179,7 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
 
         brain.Id = "brain" + Next(_brainIds, plugin);
         brains.Add(brain.Id, brain);
+        ApplyTrace(plugin, brain);
 
         if (settings != null && settings.Get("state") is ObjectInstance state)
         {
@@ -279,8 +293,14 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
         _trees.Remove(plugin);
         _treeIds.Remove(plugin);
         _brainIds.Remove(plugin);
+        _debug.Remove(plugin);
         AiSenses.Clear(plugin);
     }
+
+    private void ApplyTrace(string plugin, Brain brain) =>
+        brain.Instance.Trace = _debug.Contains(plugin)
+            ? line => LogInfo($"[{plugin}] [ai] {line}")
+            : null;
 
     public override void Dispose()
     {

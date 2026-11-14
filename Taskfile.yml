@@ -95,16 +95,16 @@ tasks:
     cmd: 'bun run build.ts nav-debug --source testing-optional --out dist-testing --deploy "{{.CLIENT_PLUGINS}}"'
 
   dev:deploy:client:
-    desc: Deploy the test plugin set (not shipped) to the client
-    prompt: "Overwrite the client plugin and JS plugin folders with test plugins?"
+    desc: Deploy the active test plugin set (life-demo) to the client
+    prompt: "Overwrite the client plugin and JS plugin folders with the active test plugins?"
     deps: [build, bundle:testing]
-    cmd: '{{.ps}} -NoProfile -File ./scripts/deploy.ps1 -Target client -JsOut scripting/dist-testing'
+    cmd: '{{.ps}} -NoProfile -File ./scripts/deploy.ps1 -Target client -JsOut scripting/dist-testing -Plugins life-demo'
 
   dev:deploy:server:
-    desc: Deploy the test plugin set (not shipped) to the dedicated server
-    prompt: "Overwrite the server plugin and JS plugin folders with test plugins?"
+    desc: Deploy the active test plugin set (life-demo) to the dedicated server
+    prompt: "Overwrite the server plugin and JS plugin folders with the active test plugins?"
     deps: [build, bundle:testing]
-    cmd: '{{.ps}} -NoProfile -File ./scripts/deploy.ps1 -Target server -JsOut scripting/dist-testing'
+    cmd: '{{.ps}} -NoProfile -File ./scripts/deploy.ps1 -Target server -JsOut scripting/dist-testing -Plugins life-demo'
 
   probe:process:
     desc: Verify process gates, component lifecycle, dependencies and cleanup
