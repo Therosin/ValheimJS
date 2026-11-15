@@ -47,9 +47,8 @@ internal sealed class NpcBindings : JsBindings
         internal JsCallback? OnDespawn;
         internal JsCallback? OnSensed;
         internal JsCallback? OnAction;
-        internal string LastAction = "idle";
-        internal string LastActionKind = "";
-        internal bool Muted;
+        internal readonly Dictionary<string, int> Failures = new(StringComparer.Ordinal);
+        internal readonly HashSet<string> DisabledHooks = new(StringComparer.Ordinal);
         internal bool Hydrated;
         internal bool PendingSpawn;
     }
@@ -174,7 +173,7 @@ internal sealed class NpcBindings : JsBindings
     public JsValue BoardGet(string plugin, JsValue entity, string key)
     {
         var handle = HandleOf(entity);
-        return handle == null ? JsValue.Null : JsPayload.FromPlain(Engine, NpcBoard.Get(handle, key));
+        return handle == null ? JsValue.Null : JsPayload.FromPlain(Engine, NpcBoards.Get(handle, key));
     }
 
     [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "Record<string, unknown>",
@@ -184,7 +183,7 @@ internal sealed class NpcBindings : JsBindings
         var handle = HandleOf(entity);
         return handle == null
             ? JsPayload.Object(Engine).Build()
-            : JsPayload.FromPlain(Engine, NpcBoard.Snapshot(handle));
+            : JsPayload.FromPlain(Engine, NpcBoards.Snapshot(handle));
     }
 
     [JsBinding(Scoped = true, Description = "Subscribes to one core-owned NPC board key (empty key = all); returns an id.")]
@@ -192,11 +191,22 @@ internal sealed class NpcBindings : JsBindings
     {
         var handle = HandleOf(entity)
                      ?? throw new InvalidOperationException("npc.boardOnChange: unknown entity");
-        var id = NpcBoard.Subscribe(plugin, handle, key, callback, entity);
-        foreach (var pair in NpcBoard.Snapshot(handle))
+        var filter = string.IsNullOrWhiteSpace(key) ? null : key;
+        var id = NpcBoards.Subscribe(plugin, handle, filter, change =>
         {
-            if (!string.IsNullOrWhiteSpace(key) &&
-                !string.Equals(pair.Key, key, StringComparison.Ordinal))
+            try
+            {
+                callback.InvokeOn(entity, change.Key, JsPayload.FromPlain(Engine, change.NewValue));
+            }
+            catch (Exception exception)
+            {
+                LogWarn($"npc.boardOnChange listener failed: {exception.Message}");
+            }
+        });
+
+        foreach (var pair in NpcBoards.Snapshot(handle))
+        {
+            if (filter != null && !string.Equals(pair.Key, filter, StringComparison.Ordinal))
             {
                 continue;
             }
@@ -215,7 +225,7 @@ internal sealed class NpcBindings : JsBindings
     }
 
     [JsBinding(Scoped = true, Description = "Removes a core-owned NPC board subscription.")]
-    public bool BoardOff(string plugin, double id) => NpcBoard.Unsubscribe(plugin, (long)id);
+    public bool BoardOff(string plugin, double id) => NpcBoards.Unsubscribe(plugin, (long)id);
 
     [JsBinding(Scoped = true, Description = "True when the world scene can host NPCs.")]
     public bool Available(string plugin) => WorldManager.Instance?.Available == true;
@@ -240,7 +250,9 @@ internal sealed class NpcBindings : JsBindings
         var faction = OptionalString(settings, "faction");
         var items = OptionalStrings(settings, "items");
         var sensors = Sensors(settings);
-        if (!NpcDefinition.TryCreate(kind, prefab, tickMs, faction, items, sensors, out var definition, out var error))
+        var autoEngage = OptionalBool(settings, "autoEngage", false);
+        if (!NpcDefinition.TryCreate(kind, prefab, tickMs, faction, items, sensors, autoEngage,
+                out var definition, out var error))
         {
             throw new InvalidOperationException(error);
         }
@@ -432,7 +444,7 @@ internal sealed class NpcBindings : JsBindings
 
         _blueprints.Remove(plugin);
         _debug.Remove(plugin);
-        NpcBoard.Release(plugin);
+        NpcBoards.Release(plugin);
         AiSenses.Clear(plugin);
     }
 
@@ -448,6 +460,7 @@ internal sealed class NpcBindings : JsBindings
 
         _blueprints.Clear();
         _debug.Clear();
+        NpcBoards.Clear();
         AiSenses.Clear();
     }
 
@@ -477,14 +490,11 @@ internal sealed class NpcBindings : JsBindings
 
             if (!known && _debug.Contains(blueprint.Plugin))
             {
-                LogInfo($"[{blueprint.Plugin}] [npc] {blueprint.Kind} spawned {handle}");
+                LogInfo($"[{blueprint.Plugin}] [npc] {blueprint.Kind} discovered {handle}");
             }
 
-            if (!known && !GameEnvironment.IsServer())
-            {
-                instance.PendingSpawn = true;
-            }
-
+            // Clients cannot observe the spawn: any handle they discover already existed, so the
+            // first hydration is a rehydrate. Only Spawn() marks an instance as newly spawned.
             if (!instance.Hydrated && !GameEnvironment.IsServer() &&
                 BodyReady(blueprint.Plugin, handle))
             {
@@ -545,7 +555,7 @@ internal sealed class NpcBindings : JsBindings
                 continue;
             }
 
-            var perception = instance.Muted ? null : PerceptionOf(blueprint.Plugin, instance.Handle);
+            var perception = PerceptionOf(blueprint.Plugin, instance.Handle);
             if (perception == null)
             {
                 continue;
@@ -569,12 +579,14 @@ internal sealed class NpcBindings : JsBindings
                     JsPayload.FromPlain(Engine, entry.ToPlain(obj.Position.x, obj.Position.y, obj.Position.z, obj.Yaw, now)));
             }
 
-            ReportAction(blueprint, instance, perception, obj.Yaw);
+            ReportSettlements(blueprint, instance, perception, obj.Yaw);
 
             var view = Payload(perception, obj.Yaw);
             if (!instance.Hydrated)
             {
                 instance.Hydrated = true;
+                instance.Failures.Clear();
+                instance.DisabledHooks.Clear();
                 var spawned = instance.PendingSpawn;
                 instance.PendingSpawn = false;
                 if (_debug.Contains(blueprint.Plugin))
@@ -589,41 +601,25 @@ internal sealed class NpcBindings : JsBindings
         }
     }
 
-    private void ReportAction(Blueprint blueprint, Instance instance, NpcPerception perception, float yaw)
+    private void ReportSettlements(Blueprint blueprint, Instance instance, NpcPerception perception, float yaw)
     {
-        var action = perception.Action;
-        if (action == null)
+        foreach (var action in WorldManager.Instance?.TakeActionSettlements(blueprint.Plugin, instance.Handle) ??
+                                   Array.Empty<NpcActionView>())
         {
-            return;
-        }
-
-        var status = action.Status;
-        if (_debug.Contains(blueprint.Plugin) &&
-            (action.Kind != instance.LastActionKind || status != instance.LastAction))
-        {
-            var target = action.X.HasValue
-                ? $"{action.X.Value:0.0},{action.Y ?? 0d:0.0},{action.Z ?? 0d:0.0}"
-                : "-";
-            LogInfo(
-                $"[{blueprint.Plugin}] [npc] {blueprint.Kind} {instance.Handle} action " +
-                $"{action.Kind} {status} reason={action.Reason ?? "-"} target={target} id={action.TargetId ?? "-"}");
-        }
-
-        instance.LastActionKind = action.Kind;
-        if (status is "arrived" or "failed" or "cancelled")
-        {
-            if (instance.LastAction == status)
+            if (_debug.Contains(blueprint.Plugin))
             {
-                return;
+                var target = action.X.HasValue
+                    ? $"{action.X.Value:0.0},{action.Y ?? 0d:0.0},{action.Z ?? 0d:0.0}"
+                    : "-";
+                LogInfo(
+                    $"[{blueprint.Plugin}] [npc] {blueprint.Kind} {instance.Handle} action " +
+                    $"#{action.Seq} {action.Kind} {action.Status} reason={action.Reason ?? "-"} target={target} " +
+                    $"id={action.TargetId ?? "-"}");
             }
 
-            instance.LastAction = status;
             Invoke(blueprint, instance, instance.OnAction, "onAction",
                 Payload(perception, yaw), JsPayload.FromPlain(Engine, action.ToPlain()));
-            return;
         }
-
-        instance.LastAction = status;
     }
 
     private Instance? CreateInstance(Blueprint blueprint, string handle)
@@ -681,7 +677,7 @@ internal sealed class NpcBindings : JsBindings
 
     private void Invoke(Blueprint blueprint, Instance instance, JsCallback? callback, string hook, params object?[] arguments)
     {
-        if (callback == null)
+        if (callback == null || instance.DisabledHooks.Contains(hook))
         {
             return;
         }
@@ -689,11 +685,20 @@ internal sealed class NpcBindings : JsBindings
         try
         {
             callback.InvokeOn(instance.Object, arguments);
+            instance.Failures.Remove(hook);
         }
         catch (Exception exception)
         {
-            instance.Muted = true;
-            LogError($"[{blueprint.Plugin}] npc '{instance.Handle}' {hook} threw: {Describe(exception)}");
+            instance.Failures.TryGetValue(hook, out var failures);
+            failures++;
+            instance.Failures[hook] = failures;
+            LogError($"[{blueprint.Plugin}] npc '{instance.Handle}' {hook} threw ({failures}): {Describe(exception)}");
+            if (failures >= 3)
+            {
+                instance.DisabledHooks.Add(hook);
+                LogError($"[{blueprint.Plugin}] npc '{instance.Handle}' {hook} disabled after repeated failures");
+            }
+
             if (hook == "onTick")
             {
                 WorldManager.Instance?.Command(blueprint.Plugin, instance.Handle, "idle");
@@ -898,6 +903,17 @@ internal sealed class NpcBindings : JsBindings
     private static bool Bool(ObjectInstance options, string name, bool fallback)
     {
         var value = options.Get(name);
+        if (value.IsUndefined() || value.IsNull())
+        {
+            return fallback;
+        }
+
+        return value.IsBoolean() ? value.AsBoolean() : throw new ArgumentException($"npc: '{name}' must be a boolean");
+    }
+
+    private static bool OptionalBool(ObjectInstance? options, string name, bool fallback)
+    {
+        var value = options?.Get(name) ?? JsValue.Undefined;
         if (value.IsUndefined() || value.IsNull())
         {
             return fallback;

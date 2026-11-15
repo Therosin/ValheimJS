@@ -17,6 +17,7 @@ internal interface IInventoryProvider
     Inventory? Inventory { get; }
     Humanoid? Owner { get; }
     bool CanWrite { get; }
+    bool CanEquip { get; }
     string? Save();
 }
 
@@ -42,6 +43,8 @@ internal sealed class NpcInventoryProvider : IInventoryProvider
     public Humanoid? Owner => Object?.Character as Humanoid;
 
     public bool CanWrite => Available;
+
+    public bool CanEquip => Available;
 
     public string? Save()
     {
@@ -83,13 +86,14 @@ internal sealed class ContainerInventoryProvider : IInventoryProvider
 
     public bool CanWrite => false;
 
+    public bool CanEquip => false;
+
     public string? Save() => "not-supported";
 }
 
 /// <summary>
 /// Generic inventory accessor returned by <c>npc.inventory</c> and <c>npc.container</c>.
-/// The same JavaScript surface backs an NPC body, a player body and a world container; the
-/// provider decides which verbs are legal.
+/// The provider decides which verbs are legal: bodies own equipment, containers do not.
 /// </summary>
 [JsType("Inventory", Description = "A native inventory or container with query and mutation verbs.")]
 public sealed class NpcInventoryAccessor
@@ -108,6 +112,8 @@ public sealed class NpcInventoryAccessor
     public string Kind => _provider.Kind;
 
     public bool Writable => _provider.CanWrite;
+
+    public bool EquipmentSupported => _provider.CanEquip;
 
     public double Weight => _provider.Inventory?.GetTotalWeight() ?? 0d;
 
@@ -139,11 +145,16 @@ public sealed class NpcInventoryAccessor
         }
     }
 
-    [JsReturns("NpcEquipment")]
+    [JsReturns("NpcEquipment | null")]
     public JsValue Equipment
     {
         get
         {
+            if (!_provider.CanEquip)
+            {
+                return JsValue.Null;
+            }
+
             var snapshot = VjsInventory.Snapshot(_provider.Owner, _provider.Inventory);
             return JsPayload.FromPlain(_engine, snapshot["equipment"]);
         }
@@ -163,9 +174,12 @@ public sealed class NpcInventoryAccessor
         if (!_provider.CanWrite) return Result(false, "not-supported");
         var inventory = _provider.Inventory;
         if (inventory == null) return Result(false, "no-inventory");
-        var added = VjsInventory.Add(inventory, prefab, (int)Math.Round(count), (int)Math.Round(quality));
+        var requested = Math.Max(1, (int)Math.Round(count));
+        var added = VjsInventory.Add(inventory, prefab, requested, (int)Math.Round(quality));
         var reason = _provider.Save();
-        return Result(added > 0, added > 0 ? reason : "no-room", added);
+        if (added == 0) return Result(false, reason ?? "no-room", 0);
+        if (added < requested) return Result(false, reason ?? "partial", added);
+        return Result(reason == null, reason, added);
     }
 
     [JsReturns("ActionResult")]
@@ -173,26 +187,43 @@ public sealed class NpcInventoryAccessor
     {
         if (!_provider.CanWrite) return Result(false, "not-supported");
         var inventory = _provider.Inventory;
-        var item = Resolve(selector);
         if (inventory == null) return Result(false, "no-inventory");
-        if (item == null) return Result(false, "no-item");
-        var removed = VjsInventory.Remove(inventory, item, (int)Math.Round(count));
+        var requested = Math.Max(1, (int)Math.Round(count));
+        var remaining = requested;
+        var removed = 0;
+        while (remaining > 0)
+        {
+            var item = Resolve(selector);
+            if (item == null) break;
+            var taken = VjsInventory.Remove(inventory, item, remaining);
+            if (taken <= 0) break;
+            removed += taken;
+            remaining -= taken;
+        }
+
         var reason = _provider.Save();
-        return Result(removed > 0, removed > 0 ? reason : "no-item", removed);
+        if (removed == 0) return Result(false, reason ?? "no-item", 0);
+        if (removed < requested) return Result(false, reason ?? "partial", removed);
+        return Result(reason == null, reason, removed);
     }
 
     [JsReturns("ActionResult")]
-    public JsValue Use(JsValue selector) => ConsumeOrEquip(selector, null);
+    public JsValue Use(JsValue selector) => _provider.CanEquip
+        ? ConsumeOrEquip(selector, null)
+        : Result(false, "not-supported");
 
     [JsReturns("ActionResult")]
     public JsValue Consume(JsValue selector) => ConsumeOrEquip(selector, "consume");
 
     [JsReturns("ActionResult")]
-    public JsValue Equip(JsValue selector) => ConsumeOrEquip(selector, "equip");
+    public JsValue Equip(JsValue selector) => _provider.CanEquip
+        ? ConsumeOrEquip(selector, "equip")
+        : Result(false, "not-supported");
 
     [JsReturns("ActionResult")]
     public JsValue Unequip(JsValue selector)
     {
+        if (!_provider.CanEquip) return Result(false, "not-supported");
         var owner = _provider.Owner;
         if (owner == null) return Result(false, "not-owner");
         var item = Resolve(selector);
@@ -225,6 +256,7 @@ public sealed class NpcInventoryAccessor
 
     public bool CanEquip(JsValue selector)
     {
+        if (!_provider.CanEquip) return false;
         var item = Resolve(selector);
         return item != null && VjsInventory.Kind(item) is "weapon" or "tool" or "armor" &&
                VjsInventory.CanUse(_provider.Owner, item);

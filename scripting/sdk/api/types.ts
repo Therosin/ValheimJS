@@ -121,6 +121,8 @@ export interface NpcView {
     level: number;
     home: NpcPos;
     ready: boolean;
+    /** Native auto-combat state; engaged bodies report `paused`/`combat` for their intent. */
+    combat: { engaged: boolean; threatId: string | null };
     self: NpcStats | null;
     action: NpcAction | null;
     environment: NpcEnvironment | null;
@@ -138,19 +140,23 @@ export interface NpcPos {
 export type NpcActionStatus = "idle" | "running" | "paused" | "arrived" | "failed" | "cancelled";
 
 export interface NpcAction {
+    /** Monotonic per-NPC id; increments on every issued intent. */
+    seq: number;
     kind: "idle" | "stop" | "moveTo" | "wait" | "lookAt" | "face" | "pick" | string;
     status: NpcActionStatus;
     reason: string | null;
     targetId: string | null;
     target: NpcPos | null;
-    /** 0..1 for ongoing native work, null when not applicable. */
+    /** 0..1 for a running moveTo, 1 once it arrives; null for other actions. */
     progress: number | null;
 }
 
 export interface ActionResult {
+    /** True only when the full request succeeded. */
     ok: boolean;
+    /** `partial` when only part of the request could be applied; `count` is then the applied amount. */
     reason: string | null;
-    /** Number of items affected, when relevant. */
+    /** Number of items affected; for `partial` results this is less than requested. */
     count?: number;
 }
 
@@ -233,7 +239,7 @@ export interface NpcSensed {
     bearing: number;
     visible: boolean;
     inRange: boolean;
-    /** Pickables: currently harvestable. Other objects default to true. */
+    /** Pickables: harvestable. Characters: alive. Other objects: true. */
     ready: boolean;
     /** Pickables: the yielded item is food. */
     food: boolean;
@@ -246,9 +252,9 @@ export interface NpcSensed {
     isObject: boolean;
     health: number;
     maxHealth: number;
-    /** Seconds since the entity first entered the store. */
+    /** Seconds since first contact (in range). */
     firstSeen: number;
-    /** Seconds since last visible; -1 when never seen inside the view cone. */
+    /** Seconds since the entry was last in range; -1 when it has never been in range since first contact. */
     lastSeen: number;
     seenCount: number;
 }

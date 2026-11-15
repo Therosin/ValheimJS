@@ -145,6 +145,7 @@ tasks:
       - task: probe:ui
       - task: probe:life
       - task: probe:blackboard
+      - task: probe:npc
       - task: probe:assets
       - task: harness
 
@@ -189,6 +190,11 @@ tasks:
     desc: Verify blackboard state, signals, channels, middleware and interceptors
     deps: [build]
     cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-blackboard
+
+  probe:npc:
+    desc: Verify NPC action lifecycle, wait deadlines, death stickiness and inventory payload
+    deps: [build]
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-npc
 
   probe:assets:
     desc: Verify read-only shipped plugin assets and path confinement

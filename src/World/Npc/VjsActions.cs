@@ -12,11 +12,25 @@ namespace ValheimJS.World;
 internal static class VjsActions
 {
     private const float PickRange = 3.5f;
+    private static readonly int PickedKey = "picked".GetStableHashCode();
+    private static readonly int EnabledKey = "enabled".GetStableHashCode();
     private static readonly FieldInfo? PickablePicked = typeof(Pickable).GetField(
         "m_picked", BindingFlags.Instance | BindingFlags.NonPublic);
 
-    internal static bool IsPickableReady(Pickable? pickable) =>
-        pickable != null && pickable.GetEnabled != 0 && PickablePicked?.GetValue(pickable) is not true;
+    internal static bool IsPickableReady(ZDO zdo, Pickable? pickable, GameObject prefab)
+    {
+        if (pickable != null)
+        {
+            return pickable.GetEnabled != 0 && PickablePicked?.GetValue(pickable) is not true;
+        }
+
+        // Culled pickables have no live component; read the networked state instead of the
+        // prefab's uninitialized field, which always looks unpicked.
+        var fallback = prefab.GetComponent<Pickable>();
+        var enabled = zdo.GetBool(EnabledKey, true);
+        var picked = zdo.GetBool(PickedKey, fallback != null && fallback.m_defaultPicked);
+        return enabled && !picked;
+    }
 
     internal static bool IsFoodPickable(Pickable? pickable)
     {

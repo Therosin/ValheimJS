@@ -166,7 +166,7 @@ method does not exist on clients. `get` resolves one known player on either side
 ```ts
 npc.available(): boolean
 npc.debug(enabled: boolean): boolean
-npc.register(ctor, { kind, prefab, tickMs?, faction?, perception? }): void
+npc.register(ctor, { kind, body, tickMs?, faction?, items?, autoEngage?, perception? }): void
 npc.spawn(kind, { position: { x, y, z }, name? }): ValheimBaseNPC | null
 npc.despawn(entity): boolean
 npc.handles(kind): ValheimBaseNPC[]
@@ -182,12 +182,12 @@ npcBase(): new (handle: string) => ValheimBaseNPC
 ```ts
 readonly id: string; kind: string; name: string;
 readonly x, y, z: number; readonly health, maxHealth: number; readonly isAlive: boolean;
-moveTo(x, y, z, run: boolean): boolean;   // async intent; status in view.intent
-idle(): boolean;                          // wander near home
-stop(): boolean;                          // stand still
-wait(seconds: number): boolean;
-lookAt(x, y, z): boolean;
-face(entityId: string): boolean;
+moveTo(x, y, z, run: boolean): ActionResult;   // async; outcome in view.action
+idle(): ActionResult;                          // wander near home
+stop(): ActionResult;                          // stand still
+wait(seconds: number): ActionResult;
+lookAt(x, y, z): ActionResult;
+face(entityId: string): ActionResult;
 state(key): string | null;
 setState(key, value): boolean;
 removeState(key): boolean;
@@ -206,7 +206,7 @@ function makeWanderer() {
         onSpawn(view: NpcView) {}
         onRehydrate(view: NpcView) {}
         onSensed(entry: NpcSensed) {}
-        onIntent(view: NpcView, intent: NpcIntent) {}
+        onAction(view: NpcView, action: NpcAction) {}
         onTick(view: NpcView) { this.moveTo(5, view.y, 0, false); }
         onDespawn() {}
     };
@@ -239,16 +239,16 @@ interface NpcSensed {
     pos: { x: number; y: number; z: number };   // last known
     rel: { x: number; y: number; z: number };   // relative to the NPC
     distance: number; bearing: number;          // bearing is signed from facing
-    visible: boolean; inRange: boolean; enemy: boolean;
+    visible: boolean; inRange: boolean; ready: boolean; enemy: boolean;
     isPlayer: boolean; isNpc: boolean; isTamed: boolean; isDead: boolean;
     level: number; isObject: boolean;
     health: number; maxHealth: number;
-    firstSeen: number; lastSeen: number;        // seconds; lastSeen -1 when never visible
+    firstSeen: number; lastSeen: number;        // seconds since first/last in-range contact
     seenCount: number;
 }
 ```
 
-`NpcView` adds self data, intent and environment:
+`NpcView` adds self data, action and environment:
 
 ```ts
 interface NpcView {
@@ -256,7 +256,8 @@ interface NpcView {
     health: number; maxHealth: number; isAlive: boolean;
     faction: string; isTamed: boolean; level: number;
     home: { x: number; y: number; z: number };
-    intent: NpcIntent | null;
+    combat: { engaged: boolean; threatId: string | null };
+    action: NpcAction | null;    // { seq, kind, status, reason, target, targetId, progress }
     environment: { day: number; isDay: boolean; biome: string; weather: string | null } | null;
     nearby: NpcSensed[];      // current characters
     remembered: NpcSensed[];  // out-of-range contacts
@@ -293,13 +294,15 @@ if (player) {
 }
 ```
 
-### Intents and hooks
+### Actions and hooks
 
-Intents run on the server and report state through `view.intent`:
-`{ kind, status: "idle" | "running" | "arrived" | "failed", reason, target, targetId }`.
-`onIntent` fires once when an intent settles; AI actions can return `running` while the intent is
-still active (`npc.perception(this)?.intent?.status === "running"`). `onSensed` fires once for each
-new entity or object added to the store.
+Actions run on the server and report state through `view.action`:
+`{ seq, kind, status: "idle" | "running" | "paused" | "arrived" | "failed" | "cancelled",
+reason, target, targetId, progress }`. `onAction` fires exactly once per settled action
+(arrival, failure or cancellation); a new intent cancels the in-flight one first, which reports
+`cancelled` / `superseded`. AI actions can return `running` while the action is still active
+(`npc.action(this)?.status === "running"`). `onSensed` fires once for each new entity or object
+added to the store.
 
 Signals sample the same cached store, so predicates are cheap:
 
@@ -313,9 +316,9 @@ observer.on("hunter-threat:Enter", () => log("a hunter has a visible enemy"));
 
 Rules:
 - **Server authority.** `spawn`/`despawn`, intents, perception and memory writes run on the server;
-  clients are viewers. `onTick`/`onSensed`/`onIntent` only run on the server.
+  clients are viewers. `onTick`/`onSensed`/`onAction` only run on the server.
 - **Persistence.** Entities are ZDOs with `vjs.sim`, `vjs.plugin`, `vjs.kind`, `vjs.name`,
-  `vjs.home.*`, `vjs.intent.*` and `vjs.memory`; `setState` writes `vjs.s.<key>`.
+  `vjs.home.*`, `vjs.action.*` and `vjs.memory`; `setState` writes `vjs.s.<key>`.
 - **Cadence.** `tickMs` defaults to 500 and is clamped to 100..5000; the host pump sets the floor.
 - **Relations.** `enemy` mirrors the game's faction matrix (`BaseAI.IsEnemy`), including tamed and
   group overrides. `faction` at registration chooses the clone's stance.

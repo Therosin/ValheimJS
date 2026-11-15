@@ -73,6 +73,9 @@ internal sealed class NpcAction
 /// <summary>Serializable view of the current native action and its last outcome.</summary>
 internal sealed class NpcActionView
 {
+    /// <summary>Monotonic per-NPC action id; increments on every issued intent.</summary>
+    internal long Seq { get; init; }
+
     internal string Kind { get; init; } = "idle";
 
     internal string Status { get; init; } = "idle";
@@ -97,6 +100,7 @@ internal sealed class NpcActionView
 
         return new Dictionary<string, object?>
         {
+            ["seq"] = Seq,
             ["kind"] = Kind,
             ["status"] = Status,
             ["reason"] = Reason,
@@ -368,6 +372,9 @@ internal sealed class NpcDefinition
 
     internal NpcSensors Sensors { get; private init; } = new();
 
+    /// <summary>Whether the body fights back when damaged. Opt-in: the default is to keep the script's intent.</summary>
+    internal bool AutoEngage { get; private init; }
+
     internal static bool TryCreate(
         string? kind,
         string? body,
@@ -375,6 +382,7 @@ internal sealed class NpcDefinition
         string? faction,
         IReadOnlyList<string>? items,
         NpcSensors? sensors,
+        bool autoEngage,
         out NpcDefinition definition,
         out string error)
     {
@@ -444,7 +452,8 @@ internal sealed class NpcDefinition
             TickMs = Math.Min(5000d, Math.Max(100d, tickMs)),
             Faction = faction,
             Items = items ?? Array.Empty<string>(),
-            Sensors = effective
+            Sensors = effective,
+            AutoEngage = autoEngage
         };
 
         return true;
@@ -484,6 +493,8 @@ internal sealed class NpcPerception
     internal double HomeY { get; init; }
     internal double HomeZ { get; init; }
     internal bool Ready { get; init; }
+    internal bool Engaged { get; init; }
+    internal string? ThreatId { get; init; }
     internal Dictionary<string, object?>? Self { get; init; }
     internal NpcActionView? Action { get; init; }
     internal NpcEnvironment? Environment { get; init; }
@@ -526,6 +537,11 @@ internal sealed class NpcPerception
             ["level"] = Level,
             ["home"] = new Dictionary<string, object?> { ["x"] = HomeX, ["y"] = HomeY, ["z"] = HomeZ },
             ["ready"] = Ready,
+            ["combat"] = new Dictionary<string, object?>
+            {
+                ["engaged"] = Engaged,
+                ["threatId"] = ThreatId
+            },
             ["self"] = Self,
             ["action"] = Action?.ToPlain(),
             ["environment"] = Environment?.ToPlain(),
@@ -542,4 +558,11 @@ internal interface INpcSenses
     IReadOnlyList<NpcSensedEntity> Senses(NpcSenseQuery query);
 
     IReadOnlyList<NpcSensedEntity> TakeNewSenses();
+}
+
+/// <summary>Implemented by world behaviours that settle scripted actions.</summary>
+internal interface INpcActions
+{
+    /// <summary>Drains terminal action outcomes exactly once, in order.</summary>
+    IReadOnlyList<NpcActionView> TakeActionSettlements();
 }
