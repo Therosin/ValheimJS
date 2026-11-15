@@ -292,6 +292,11 @@ internal static class NpcInteraction
             return NpcInteractionResult.Fail("not-loaded", verb);
         }
 
+        if (!PrivateArea.CheckAccess(instance.transform.position))
+        {
+            return NpcInteractionResult.Fail("no-access", verb);
+        }
+
         var from = store ? npcInventory : containerInventory;
         var to = store ? containerInventory : npcInventory;
         var item = VjsInventory.Resolve(from, options.Prefab, options.Name, options.X, options.Y);
