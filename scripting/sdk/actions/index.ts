@@ -3,6 +3,7 @@ import "./wait";
 import "./pick";
 import "./combat";
 import "./interact";
+import "./inventory";
 import "./flow";
 
 export {
@@ -16,6 +17,7 @@ export {
     type ActionSettlement,
     type ActionStatus,
     type ActionResultLike,
+    type InventoryActions,
     type PlannerActor,
     type Vec3Like
 } from "./registry";

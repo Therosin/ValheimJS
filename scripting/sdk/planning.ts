@@ -6,6 +6,7 @@ import {
     type ActionOutcome,
     type ActionSettlement,
     type ActionResultLike,
+    type InventoryActions,
     type PlannerActor,
     type Vec3Like
 } from "./actions";
@@ -18,6 +19,7 @@ export type {
     ActionOutcome,
     ActionSettlement,
     ActionResultLike,
+    InventoryActions,
     PlannerActor,
     Vec3Like
 } from "./actions";
@@ -329,6 +331,8 @@ export interface PlanOptions {
     timeoutMs?: number;
     /** Hold through `paused` actions up to this long; omitted = hold until plan timeout. */
     pauseGraceMs?: number;
+    /** Inventory used by `equip`/`unequip`/`consume`/`drop` steps. */
+    inventory?: InventoryActions;
     log?: (message: string) => void;
 }
 
@@ -352,6 +356,10 @@ export type Step = StepBase &
         | { attack: { target: string; secondary?: boolean } }
         | { jump: true }
         | { interact: InteractStep }
+        | { equip: unknown }
+        | { unequip: unknown }
+        | { consume: unknown }
+        | { drop: unknown; count?: number }
         | { follow: { target: string; distance?: number; run?: boolean } }
         | { until: (context: ActionContext) => boolean }
         | { call: (context: ActionContext) => ActionOutcome | void }
@@ -516,6 +524,7 @@ export class Plan {
             now,
             state: this.state,
             local: this.local,
+            inventory: this.options.inventory ?? null,
             get awaiting() {
                 return plan.awaiting !== null;
             },

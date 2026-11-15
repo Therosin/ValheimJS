@@ -64,6 +64,7 @@ export {
     type GoalExitReason,
     type GoalStatus,
     type InteractStep,
+    type InventoryActions,
     type PlanOptions,
     type PlanStatus,
     type PlannerActor,

@@ -13,6 +13,14 @@ export interface ActionResultLike {
     reason?: string | null;
 }
 
+/** Subset of the inventory accessor used by built-in steps. */
+export interface InventoryActions {
+    use(selector: unknown): ActionResultLike;
+    equip(selector: unknown): ActionResultLike;
+    unequip(selector: unknown): ActionResultLike;
+    drop(selector: unknown, count?: number): ActionResultLike;
+}
+
 export interface PlannerActor {
     moveTo(x: number, y: number, z: number, run: boolean): ActionResultLike;
     idle(): ActionResultLike;
@@ -53,6 +61,8 @@ export interface ActionContext {
     readonly state: Record<string, unknown>;
     /** Per-step scratch data; reset when the step advances or retries. */
     readonly local: Record<string, unknown>;
+    /** Inventory supplied to the plan, or null. */
+    readonly inventory: InventoryActions | null;
     /** True while a native action issued through `issue` has not settled. */
     readonly awaiting: boolean;
     log(message: string): void;

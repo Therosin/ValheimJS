@@ -23,6 +23,11 @@ internal sealed class VjsNpcAI : BaseAI
     private const float MoveTimeoutSeconds = 60f;
     private const float OffMeshArriveDistance = 2f;
     private const float DirectFallbackSeconds = 5f;
+    private const float DoorCheckSeconds = 0.4f;
+    private const float DoorOpenRadius = 3f;
+    private static readonly int DoorState = "state".GetStableHashCode();
+    private static readonly int DoorMask = LayerMask.GetMask("piece", "Default", "static_solid");
+    private static readonly Collider[] DoorHits = new Collider[16];
 
     private Vector3 _target;
     private float _stopDistance;
@@ -37,6 +42,7 @@ internal sealed class VjsNpcAI : BaseAI
     private float _deadline;
     private bool _hasPath = true;
     private float _directAt;
+    private float _doorCheckAt;
     private bool _jumped;
     private Character? _threat;
     private float _threatAt;
@@ -46,6 +52,9 @@ internal sealed class VjsNpcAI : BaseAI
 
     /// <summary>Opt-in: the body fights only when its kind asks for it.</summary>
     internal bool AutoEngage { get; set; }
+
+    /// <summary>Open closed doors in front while moving; plugin policy can disable it.</summary>
+    internal bool AutoOpenDoors { get; set; } = true;
 
     internal NpcActionStatus Status =>
         _engaged && IntentActive ? NpcActionStatus.Paused : _status;
@@ -248,8 +257,76 @@ internal sealed class VjsNpcAI : BaseAI
             return true;
         }
 
+        TickDoors();
         TickMove(dt);
         return true;
+    }
+
+    /// <summary>Opens a closed door directly ahead so native pathing can continue through it.</summary>
+    private void TickDoors()
+    {
+        if (!AutoOpenDoors || m_character == null)
+        {
+            return;
+        }
+
+        var now = Time.time;
+        if (now < _doorCheckAt)
+        {
+            return;
+        }
+
+        _doorCheckAt = now + DoorCheckSeconds;
+        var humanoid = m_character as Humanoid;
+        if (humanoid == null)
+        {
+            return;
+        }
+
+        var origin = transform.position;
+        var count = Physics.OverlapSphereNonAlloc(origin, DoorOpenRadius, DoorHits, DoorMask);
+        for (var index = 0; index < count; index++)
+        {
+            var door = DoorHits[index]?.GetComponentInParent<Door>();
+            if (door == null)
+            {
+                continue;
+            }
+
+            var zdo = door.GetComponent<ZNetView>()?.GetZDO();
+            if (zdo == null || zdo.GetInt(DoorState) != 0)
+            {
+                continue;
+            }
+
+            var delta = door.transform.position - origin;
+            delta.y = 0f;
+            if (delta.sqrMagnitude > 0.0001f)
+            {
+                var forward = transform.forward;
+                forward.y = 0f;
+                if (Vector3.Dot(forward.normalized, delta.normalized) < 0.1f)
+                {
+                    continue;
+                }
+            }
+
+            if (door.m_checkGuardStone && !PrivateArea.CheckAccess(door.transform.position))
+            {
+                continue;
+            }
+
+            if (door.m_keyItem != null &&
+                (humanoid.GetInventory() == null ||
+                 !humanoid.GetInventory().HaveItem(door.m_keyItem.m_itemData.m_shared.m_name)))
+            {
+                continue;
+            }
+
+            door.Interact(humanoid, false, false);
+            _doorCheckAt = now + 0.5f;
+            return;
+        }
     }
 
     private bool TickCombat(float dt)

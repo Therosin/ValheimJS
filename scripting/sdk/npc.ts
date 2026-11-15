@@ -56,6 +56,8 @@ export interface NpcRegistration {
      * body fights back until the threat is gone. Default false: the script's intent wins.
      */
     autoEngage?: boolean;
+    /** Open closed doors directly ahead while moving. Default true. */
+    autoOpenDoors?: boolean;
     /** Per-kind perception tuning; defaults preserve the classic 20 m/8-entity scan. */
     perception?: NpcPerceptionOptions;
 }

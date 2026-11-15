@@ -133,15 +133,17 @@ internal static class NpcProbe
 
     private static void DefinitionDefaults()
     {
-        if (!NpcDefinition.TryCreate("villager", "Player", 500d, null, null, null, false,
+        if (!NpcDefinition.TryCreate("villager", "Player", 500d, null, null, null, false, true,
                 out var definition, out var error))
             throw new InvalidOperationException("definition rejected: " + error);
         if (definition.AutoEngage)
             throw new InvalidOperationException("auto engagement must be opt-in");
+        if (!definition.AutoOpenDoors)
+            throw new InvalidOperationException("door opening should default on");
 
-        if (!NpcDefinition.TryCreate("guard", "Player", 500d, null, null, null, true,
-                out var guard, out _) || !guard.AutoEngage)
-            throw new InvalidOperationException("auto engagement option was lost");
+        if (!NpcDefinition.TryCreate("guard", "Player", 500d, null, null, null, true, false,
+                out var guard, out _) || !guard.AutoEngage || guard.AutoOpenDoors)
+            throw new InvalidOperationException("definition options were lost");
     }
 
     private static void Audibility()

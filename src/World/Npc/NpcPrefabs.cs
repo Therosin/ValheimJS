@@ -120,6 +120,7 @@ internal static class NpcPrefabs
         ai.m_avoidWater = true;
         ai.m_avoidLava = true;
         ai.AutoEngage = definition.AutoEngage;
+        ai.AutoOpenDoors = definition.AutoOpenDoors;
 
         clone.SetActive(true);
         if (NamedPrefabsField?.GetValue(scene) is not Dictionary<int, GameObject> named)

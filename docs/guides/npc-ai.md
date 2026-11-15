@@ -88,6 +88,10 @@ intent, and a damaged NPC keeps doing what the script asked. While an engaged bo
 its intent reports `status: "paused"`, `reason: "combat"`; `view.combat` carries
 `{ engaged, threatId }`. Issuing any intent (including `idle`/`stop`) cancels auto-combat.
 
+Door navigation is on by default (`autoOpenDoors: true`): while moving, the body opens a closed
+door directly ahead within 3 m, including keyed doors it carries the key for. Plugins can disable
+it per kind and open doors explicitly through `affordances`/`interact`.
+
 ## 2. What an NPC perceives
 
 Each NPC owns a store, refreshed on demand (100 ms cache) when a hook or query reads it, so an
@@ -446,7 +450,16 @@ planner.setGoals([
 ```
 
 Built-in steps: `moveTo`, `wait`, `lookAt`, `face`, `pick`, `stop`, `idle`, `interact`, `attack`,
-`jump`, `follow`, `until`, `call`. Each accepts `timeoutMs` and `retry` at the step level.
+`jump`, `follow`, `until`, `call`, and inventory steps `equip`, `unequip`, `consume`, `drop`.
+Each accepts `timeoutMs` and `retry` at the step level. Inventory steps use the accessor passed to
+the plan:
+
+```ts
+ctx.run([
+    { consume: { name: "Raspberry" } },
+    { equip: { prefab: "Club" } }
+], { inventory: npc.inventory(this), timeoutMs: 10_000 });
+```
 
 Built-in actions live in `sdk/actions/*` and register themselves. New actions register the same
 way and are used as named steps:

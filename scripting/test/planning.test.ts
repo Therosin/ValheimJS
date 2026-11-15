@@ -345,6 +345,33 @@ describe("plan", () => {
         expect(plan.tick(view, 0)).toBe("success");
         expect(received).toBe(7);
     });
+
+    test("inventory steps use the supplied inventory", () => {
+        const calls: string[] = [];
+        const inventory = {
+            use: () => (calls.push("use"), { ok: true }),
+            equip: () => (calls.push("equip"), { ok: true }),
+            unequip: () => (calls.push("unequip"), { ok: true }),
+            drop: (_selector: unknown, count?: number) => {
+                calls.push(`drop:${count ?? 1}`);
+                return { ok: true };
+            }
+        };
+        const view = viewWith();
+        const plan = new Plan(actor(), [
+            { equip: "Club" },
+            { consume: "Raspberry" },
+            { drop: "Wood", count: 2 }
+        ], { inventory });
+
+        expect(plan.tick(view, 0)).toBe("running");
+        expect(plan.tick(view, 1)).toBe("running");
+        expect(plan.tick(view, 2)).toBe("success");
+        expect(calls).toEqual(["equip", "use", "drop:2"]);
+
+        const missing = new Plan(actor(), [{ equip: "Club" }]);
+        expect(missing.tick(view, 0)).toBe("failure");
+    });
 });
 
 function viewWith(): NpcView {

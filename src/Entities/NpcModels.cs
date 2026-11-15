@@ -395,6 +395,9 @@ internal sealed class NpcDefinition
     /// <summary>Whether the body fights back when damaged. Opt-in: the default is to keep the script's intent.</summary>
     internal bool AutoEngage { get; private init; }
 
+    /// <summary>Whether the body opens closed doors in front while moving.</summary>
+    internal bool AutoOpenDoors { get; private init; } = true;
+
     internal static bool TryCreate(
         string? kind,
         string? body,
@@ -403,6 +406,7 @@ internal sealed class NpcDefinition
         IReadOnlyList<string>? items,
         NpcSensors? sensors,
         bool autoEngage,
+        bool autoOpenDoors,
         out NpcDefinition definition,
         out string error)
     {
@@ -473,7 +477,8 @@ internal sealed class NpcDefinition
             Faction = faction,
             Items = items ?? Array.Empty<string>(),
             Sensors = effective,
-            AutoEngage = autoEngage
+            AutoEngage = autoEngage,
+            AutoOpenDoors = autoOpenDoors
         };
 
         return true;

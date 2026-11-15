@@ -310,7 +310,8 @@ internal sealed class NpcBindings : JsBindings
         var items = OptionalStrings(settings, "items");
         var sensors = Sensors(settings);
         var autoEngage = OptionalBool(settings, "autoEngage", false);
-        if (!NpcDefinition.TryCreate(kind, prefab, tickMs, faction, items, sensors, autoEngage,
+        var autoOpenDoors = OptionalBool(settings, "autoOpenDoors", true);
+        if (!NpcDefinition.TryCreate(kind, prefab, tickMs, faction, items, sensors, autoEngage, autoOpenDoors,
                 out var definition, out var error))
         {
             throw new InvalidOperationException(error);

@@ -166,7 +166,7 @@ method does not exist on clients. `get` resolves one known player on either side
 ```ts
 npc.available(): boolean
 npc.debug(enabled: boolean): boolean
-npc.register(ctor, { kind, body, tickMs?, faction?, items?, autoEngage?, perception? }): void
+npc.register(ctor, { kind, body, tickMs?, faction?, items?, autoEngage?, autoOpenDoors?, perception? }): void
 npc.spawn(kind, { position: { x, y, z }, name? }): ValheimBaseNPC | null
 npc.despawn(entity): boolean
 npc.handles(kind): ValheimBaseNPC[]
