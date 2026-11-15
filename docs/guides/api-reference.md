@@ -174,6 +174,8 @@ npc.perception(entity): NpcView | null
 npc.sensed(entity, filter?): NpcSensed[]        // store query; remembered: true includes lost contacts
 npc.affordances(entity, target): NpcAffordances // verbs/support for one target object
 npc.interact(entity, target, options?): NpcInteractionResult
+npc.attack(entity, target, secondary?): ActionResult
+npc.jump(entity): ActionResult
 npc.memory(entity): Record<string, unknown>     // durable plugin-owned memory
 npc.setMemory(entity, value): boolean
 npcBase(): new (handle: string) => ValheimBaseNPC
@@ -193,6 +195,8 @@ face(entityId: string): ActionResult;
 pick(entityId: string): ActionResult;
 affordances(targetId: string): NpcAffordances;
 interact(targetId: string, options?: NpcInteractOptions): NpcInteractionResult;
+attack(targetId: string, secondary?: boolean): ActionResult;   // live character in weapon range
+jump(): ActionResult;
 state(key): string | null;
 setState(key, value): boolean;
 removeState(key): boolean;

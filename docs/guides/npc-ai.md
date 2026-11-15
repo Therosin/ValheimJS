@@ -214,7 +214,10 @@ not in the transient store.
 ## 4. Drive the NPC
 
 Native actions are asynchronous. `moveTo`, `wait`, `lookAt`, `face` and `pick` return an
-`ActionResult` (`{ ok, reason, count? }`) and report progress through `view.action`:
+`ActionResult` (`{ ok, reason, count? }`) and report progress through `view.action`.
+`attack(targetId, secondary?)` and `jump()` are immediate server actions: they return
+`ActionResult` and do not replace the current action. Attack requires a live character in weapon
+range (`out-of-range` otherwise).
 
 ```ts
 interface ActionResult {
@@ -414,31 +417,53 @@ NPC has arrived.
 highest-scoring one, preempts with optional hysteresis, and applies optional cooldowns. It has no
 built-in goals or reactions; the plugin owns interpretation, priorities and callbacks.
 
-```ts
-import { Planner, type Goal, type NpcView } from "../../../sdk/index";
+A goal starts a `Plan`: a linear, cancellable list of steps looked up in the action registry.
 
-const goals: Goal[] = [
-    {
-        id: "investigate",
-        score: view => view.nearby.some(entry => entry.audible && !entry.visible) ? 60 : 0,
-        tick: ctx => {
-            const noise = ctx.view.nearby.find(entry => entry.audible && !entry.visible);
-            if (!noise) return "failure";
-            ctx.moveTo(noise.pos.x, noise.pos.y, noise.pos.z, true);
-            return "running";
-        }
-    },
-    {
-        id: "work",
-        score: () => 40,
-        tick: () => "running"
-    }
-];
+```ts
+import { Planner, registerAction, type Goal } from "../../../sdk/index";
 
 const planner = new Planner(this, { log: message => log(message) }); // inside the NPC class
-planner.setGoals(goals);
+planner.setGoals([
+    {
+        id: "store",
+        score: view => view.self?.hungry ? 30 : 0,
+        enter(ctx) {
+            const chest = ctx.view.objects.find(entry => entry.kind === "container");
+            if (!chest) return;
+            ctx.run([
+                { moveTo: chest.pos, run: true },
+                { interact: { target: chest.id, verb: "store", prefab: "Wood", count: 10 } },
+                { call: () => log("stored") }
+            ], { timeoutMs: 30_000 });
+        },
+        tick(ctx) {
+            if (ctx.planStatus === "failure") return "failure";
+            return ctx.planStatus === "success" ? "success" : "running";
+        }
+    }
+]);
 // in onTick: planner.tick(view);
 ```
+
+Built-in steps: `moveTo`, `wait`, `lookAt`, `face`, `pick`, `stop`, `idle`, `interact`, `attack`,
+`jump`, `follow`, `until`, `call`. Each accepts `timeoutMs` and `retry` at the step level.
+
+Built-in actions live in `sdk/actions/*` and register themselves. New actions register the same
+way and are used as named steps:
+
+```ts
+registerAction<{ text: string }>("say", {
+    tick(context, config) {
+        log(`${context.view.id}: ${config.text}`);
+        return "success";
+    }
+});
+
+ctx.run([{ action: "say", config: { text: "hello" } }]);
+```
+
+The engine owns only timeouts, retries, action settlement by `seq`, pause grace and cancellation.
+It never chooses goals, reactions or priorities.
 
 The same primitives support every policy without core changes:
 

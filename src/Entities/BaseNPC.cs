@@ -93,6 +93,14 @@ public sealed class BaseNPC
     [JsReturns("NpcInteractionResult")]
     public JsValue Interact(string id, JsValue options) => _interact(id, options);
 
+    /// <summary>Starts a native attack against a live character in weapon range.</summary>
+    [JsReturns("ActionResult")]
+    public JsValue Attack(string id, bool secondary = false) => Run("attack", id, secondary);
+
+    /// <summary>Jumps once.</summary>
+    [JsReturns("ActionResult")]
+    public JsValue Jump() => Run("jump");
+
     [JsIgnore]
     private JsValue Run(string command, params object?[] args) =>
         _result(WorldManager.Instance?.Command(_plugin, Id, command, args) ?? CommandResult.Fail("no-world"));

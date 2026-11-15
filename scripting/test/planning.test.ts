@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Planner, type Goal, type PlannerActor } from "../sdk/planning";
+import { Plan, Planner, registerAction, type Goal, type PlannerActor } from "../sdk/planning";
 import type { NpcView } from "../sdk/api/types";
 
 function view(): NpcView {
@@ -140,3 +140,213 @@ describe("planner", () => {
         expect(fake.calls).toEqual(["moveTo", "face"]);
     });
 });
+
+function sensed(id: string, distance: number): NpcSensed {
+    return {
+        id,
+        name: id,
+        kind: "container",
+        prefab: null,
+        faction: "",
+        pos: { x: 10, y: 0, z: 0 },
+        rel: { x: 10, y: 0, z: 0 },
+        distance,
+        bearing: 0,
+        visible: true,
+        inRange: true,
+        ready: true,
+        noise: 0,
+        audible: false,
+        food: false,
+        enemy: false,
+        isPlayer: false,
+        isNpc: false,
+        isTamed: false,
+        isDead: false,
+        level: 1,
+        isObject: true,
+        health: 1,
+        maxHealth: 1,
+        firstSeen: 0,
+        lastSeen: 0,
+        seenCount: 1
+    };
+}
+
+function action(kind: string, status: NpcAction["status"], reason: string | null = null): NpcAction {
+    return {
+        seq: 1,
+        kind,
+        status,
+        reason,
+        targetId: null,
+        target: null,
+        progress: null
+    };
+}
+
+describe("plan", () => {
+    test("awaits issued actions by kind and status", () => {
+        const fake = actor();
+        const calls: string[] = [];
+        fake.moveTo = () => {
+            calls.push("moveTo");
+            return { ok: true };
+        };
+        const view = viewWith();
+        const plan = new Plan(fake, [
+            { moveTo: { x: 1, y: 0, z: 2 } },
+            { call: () => calls.push("call") }
+        ], { now: () => 0 });
+
+        expect(plan.tick(view, 0)).toBe("running");
+        expect(calls).toEqual(["moveTo"]);
+
+        view.action = action("moveTo", "running");
+        expect(plan.tick(view, 1)).toBe("running");
+
+        view.action = action("moveTo", "arrived");
+        expect(plan.tick(view, 2)).toBe("running");
+        expect(plan.tick(view, 3)).toBe("success");
+        expect(calls).toEqual(["moveTo", "call"]);
+    });
+
+    test("holds on paused actions and can time out", () => {
+        const fake = actor();
+        fake.moveTo = () => ({ ok: true });
+        const view = viewWith();
+        const plan = new Plan(fake, [{ moveTo: { x: 1, y: 0, z: 0 } }], { pauseGraceMs: 100 });
+
+        view.action = action("moveTo", "paused", "combat");
+        plan.tick(view, 0);
+        view.action = action("moveTo", "paused", "combat");
+        expect(plan.tick(view, 150)).toBe("running");
+        expect(plan.tick(view, 300)).toBe("failure");
+        expect(plan.reason).toBe("combat");
+    });
+
+    test("approaches an interaction target before interacting", () => {
+        const fake = actor();
+        let attempts = 0;
+        let moved = 0;
+        fake.moveTo = () => {
+            moved++;
+            return { ok: true };
+        };
+        fake.interact = () => {
+            attempts++;
+            return { ok: attempts > 1, reason: attempts > 1 ? null : "out-of-range", verb: "store", count: 1 };
+        };
+        const view = viewWith();
+        view.objects = [sensed("2:2", 10)];
+        const plan = new Plan(fake, [
+            { interact: { target: "2:2", verb: "store", approach: { distance: 3 } } }
+        ]);
+
+        plan.tick(view, 0);
+        expect(moved).toBe(1);
+
+        view.action = action("moveTo", "arrived");
+        plan.tick(view, 1);
+        view.objects[0]!.distance = 2;
+        plan.tick(view, 2);
+        expect(plan.tick(view, 3)).toBe("success");
+        expect(attempts).toBe(2);
+    });
+
+    test("follows a moving target until inside the distance", () => {
+        const fake = actor();
+        fake.moveTo = () => ({ ok: true });
+        const view = viewWith();
+        view.nearby = [sensed("1:2", 10)];
+        view.nearby[0]!.isObject = false;
+        const plan = new Plan(fake, [{ follow: { target: "1:2", distance: 4 } }]);
+
+        plan.tick(view, 0);
+        view.action = action("moveTo", "arrived");
+        plan.tick(view, 1);
+        view.nearby[0]!.distance = 3;
+        expect(plan.tick(view, 2)).toBe("success");
+    });
+
+    test("retries a failed step the plugin asked to retry", () => {
+        const fake = actor();
+        let attempts = 0;
+        fake.interact = () => {
+            attempts++;
+            return { ok: false, reason: "no-room", verb: "store", count: 0 };
+        };
+        const view = viewWith();
+        const plan = new Plan(fake, [
+            { interact: { target: "2:2", verb: "store", approach: false }, retry: { attempts: 1 } }
+        ]);
+
+        expect(plan.tick(view, 0)).toBe("running");
+        expect(attempts).toBe(1);
+        expect(plan.tick(view, 1)).toBe("failure");
+        expect(attempts).toBe(2);
+    });
+
+    test("until, timeout and cancellation", () => {
+        let ready = false;
+        const plan = new Plan(actor(), [{ until: () => ready }], { timeoutMs: 100 });
+        const view = viewWith();
+
+        expect(plan.tick(view, 0)).toBe("running");
+        ready = true;
+        expect(plan.tick(view, 10)).toBe("success");
+
+        const slow = new Plan(actor(), [{ until: () => false }], { timeoutMs: 100 });
+        expect(slow.tick(view, 0)).toBe("running");
+        expect(slow.tick(view, 150)).toBe("failure");
+        expect(slow.reason).toBe("plan-timeout");
+
+        slow.cancel("plugin-cancel");
+        expect(slow.planStatus).toBe("failure");
+    });
+
+    test("planner ticks a goal-owned plan and exposes its status", () => {
+        const fake = actor();
+        fake.moveTo = () => ({ ok: true });
+        const view = viewWith();
+        const planner = new Planner(fake, { now: () => 0 });
+        let done = false;
+        planner.setGoals([
+            {
+                id: "go",
+                score: () => (done ? 0 : 1),
+                enter: ctx => {
+                    ctx.run([{ moveTo: { x: 1, y: 0, z: 0 } }]);
+                },
+                tick: ctx => ctx.planStatus === "success" ? "success" : "running",
+                exit: () => {
+                    done = true;
+                }
+            }
+        ]);
+
+        expect(planner.tick(view, 0)).toBe("go");
+        view.action = action("moveTo", "arrived");
+        expect(planner.tick(view, 1)).toBe("go");
+        expect(planner.tick(view, 2)).toBeNull();
+    });
+
+    test("plugin actions register and run by name", () => {
+        let received = 0;
+        registerAction<{ value: number }>("remember", {
+            tick(_context, config) {
+                received = config.value;
+                return "success";
+            }
+        });
+
+        const view = viewWith();
+        const plan = new Plan(actor(), [{ action: "remember", config: { value: 7 } }]);
+        expect(plan.tick(view, 0)).toBe("success");
+        expect(received).toBe(7);
+    });
+});
+
+function viewWith(): NpcView {
+    return { ...view(), action: null };
+}

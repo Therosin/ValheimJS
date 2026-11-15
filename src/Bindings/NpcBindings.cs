@@ -173,6 +173,37 @@ internal sealed class NpcBindings : JsBindings
         });
     }
 
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "ActionResult",
+        Description = "Starts a native attack against a character in weapon range.")]
+    public JsValue Attack(string plugin, JsValue entity, string target, bool secondary)
+    {
+        var handle = HandleOf(entity);
+        var result = handle == null
+            ? CommandResult.Fail("unknown-handle")
+            : WorldManager.Instance?.Command(plugin, handle, "attack", target, secondary) ??
+              CommandResult.Fail("no-world");
+        return JsPayload.FromPlain(Engine, new Dictionary<string, object?>
+        {
+            ["ok"] = result.Ok,
+            ["reason"] = result.Reason
+        });
+    }
+
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "ActionResult",
+        Description = "Jumps once.")]
+    public JsValue Jump(string plugin, JsValue entity)
+    {
+        var handle = HandleOf(entity);
+        var result = handle == null
+            ? CommandResult.Fail("unknown-handle")
+            : WorldManager.Instance?.Command(plugin, handle, "jump") ?? CommandResult.Fail("no-world");
+        return JsPayload.FromPlain(Engine, new Dictionary<string, object?>
+        {
+            ["ok"] = result.Ok,
+            ["reason"] = result.Reason
+        });
+    }
+
     [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "NpcAffordances",
         Description = "Inspects what a target object supports for one of this plugin's NPCs.")]
     public JsValue Affordances(string plugin, JsValue entity, string target)

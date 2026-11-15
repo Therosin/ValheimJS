@@ -50,13 +50,28 @@ export {
 } from "./npc";
 export { ai, type AiActionOutcome, type AiContext, type AiInstantiateOptions, type AiLoadOptions, type AiStatus, type AiTickResult, type BlackboardChangeHandler, type BlackboardSignalHandler, type BoardMiddlewareHandler, type BoardOperationContext, BoardMembership, BoardScope, BoardSubscription } from "./ai";
 export {
+    Plan,
     Planner,
+    registerAction,
+    ActionRegistry,
+    actions,
+    type ActionContext,
+    type ActionHandler,
+    type ActionOutcome,
+    type ActionResultLike,
     type Goal,
     type GoalContext,
     type GoalExitReason,
     type GoalStatus,
+    type InteractStep,
+    type PlanOptions,
+    type PlanStatus,
     type PlannerActor,
-    type PlannerOptions
+    type PlannerOptions,
+    type RetryOptions,
+    type Step,
+    type StepOutcome,
+    type Vec3Like
 } from "./planning";
 export { ui, type UiDefineOptions, type UiOpenOptions } from "./ui";
 export { draw, type DrawOptions, type DrawPoint } from "./draw";

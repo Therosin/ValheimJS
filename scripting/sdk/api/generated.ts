@@ -28,6 +28,8 @@ export declare class ValheimBaseNPC {
     pick(id: string): ActionResult;
     affordances(id: string): NpcAffordances;
     interact(id: string, options: unknown): NpcInteractionResult;
+    attack(id: string, secondary?: boolean): ActionResult;
+    jump(): ActionResult;
     state(key: string): string | null;
     setState(key: string, value: string): boolean;
     removeState(key: string): boolean;
@@ -453,6 +455,10 @@ export interface NpcApi {
      */
     affordances(entity: unknown, target: string): NpcAffordances;
     /**
+     * Starts a native attack against a character in weapon range.
+     */
+    attack(entity: unknown, target: string, secondary: boolean): ActionResult;
+    /**
      * True when the world scene can host NPCs.
      */
     available(): boolean;
@@ -500,6 +506,10 @@ export interface NpcApi {
      * Generic inventory accessor for one of this plugin's NPCs.
      */
     inventory(entity: unknown): Inventory;
+    /**
+     * Jumps once.
+     */
+    jump(entity: unknown): ActionResult;
     /**
      * Persistent plugin-owned memory object for one NPC (survives restarts).
      */

@@ -478,6 +478,48 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
                 ai?.ClearIntent();
                 return CommandResult.Success;
             }
+            case "attack" when args.Length >= 1:
+            {
+                var handle = args[0] as string ?? string.Empty;
+                if (!WorldManager.TryParseHandle(handle, out var targetId))
+                {
+                    return CommandResult.Fail("invalid-target");
+                }
+
+                var target = ZNetScene.instance?.FindInstance(targetId)?.GetComponent<Character>();
+                if (obj.Character == null)
+                {
+                    return CommandResult.Fail("body-lost");
+                }
+
+                if (target == null)
+                {
+                    return CommandResult.Fail("target-missing");
+                }
+
+                if (target == obj.Character || target.IsDead())
+                {
+                    return CommandResult.Fail("invalid-target");
+                }
+
+                var weapon = (obj.Character as Humanoid)?.GetCurrentWeapon();
+                var range = Mathf.Max(2f, weapon != null ? weapon.m_shared.m_aiAttackRange : 2f);
+                if (Vector3.Distance(obj.Character.transform.position, target.transform.position) > range)
+                {
+                    return CommandResult.Fail("out-of-range");
+                }
+
+                obj.Character.StartAttack(target, args.Length > 1 && Convert.ToBoolean(args[1]));
+                return CommandResult.Success;
+            }
+            case "jump":
+                if (obj.Character == null)
+                {
+                    return CommandResult.Fail("body-lost");
+                }
+
+                obj.Character.Jump(false);
+                return CommandResult.Success;
             default:
                 return CommandResult.Fail("unknown-action");
         }

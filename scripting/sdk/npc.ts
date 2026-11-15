@@ -141,6 +141,14 @@ export const npc = {
     interact(entity: ValheimBaseNPC, target: string, options: NpcInteractOptions = {}): NpcInteractionResult {
         return context().host.api.npc.interact(entity, target, options) as NpcInteractionResult;
     },
+    /** Starts a native attack against a live character in weapon range. */
+    attack(entity: ValheimBaseNPC, target: string, secondary = false): ActionResult {
+        return context().host.api.npc.attack(entity, target, secondary);
+    },
+    /** Jumps once. */
+    jump(entity: ValheimBaseNPC): ActionResult {
+        return context().host.api.npc.jump(entity);
+    },
     /** Reads one core-owned per-NPC board value. */
     boardGet(entity: ValheimBaseNPC, key: string): unknown {
         return context().host.api.npc.boardGet(entity, key);
