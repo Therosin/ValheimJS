@@ -345,10 +345,12 @@ export class VillagerBrain {
             decisions.push({ activity: "rest", score: 500 + (1 - this.needs.energy) * 200 });
         }
 
-        if (away > 25) decisions.push({ activity: "return", score: 700 });
-        else if (this.homesick && away > 8) decisions.push({ activity: "return", score: 650 });
-        else if (night && away > 8) decisions.push({ activity: "return", score: 450 });
-        else if (this.needs.energy < 0.35 && away > 10) decisions.push({ activity: "return", score: 350 });
+        if (this.ready("return", now)) {
+            if (away > 25) decisions.push({ activity: "return", score: 700 });
+            else if (this.homesick && away > 8) decisions.push({ activity: "return", score: 650 });
+            else if (night && away > 8) decisions.push({ activity: "return", score: 450 });
+            else if (this.needs.energy < 0.35 && away > 10) decisions.push({ activity: "return", score: 350 });
+        }
 
         if (!this.sheltered && this.ready("seekHome", now) && this.findShelter(view)) {
             decisions.push({ activity: "seekHome", score: 420 });
@@ -448,8 +450,15 @@ export class VillagerBrain {
         const activity = this.activity;
         this.activeTarget = null;
         this.board.emit("activity:failed", { activity });
-        if (activity === "forage") this.cooldownUntil[activity] = now + 20_000 + this.random() * 20_000;
-        else this.cooldownUntil[activity] = now + 3000 + this.random() * 3000;
+        if (activity === "return") {
+            // The home point can be blocked (built over, inside a fire or wall); stop retrying it every tick.
+            this.homesick = false;
+            this.cooldownUntil.return = now + 30_000;
+        } else if (activity === "forage") {
+            this.cooldownUntil[activity] = now + 20_000 + this.random() * 20_000;
+        } else {
+            this.cooldownUntil[activity] = now + 3000 + this.random() * 3000;
+        }
     }
 
     private pause(now: number): void {

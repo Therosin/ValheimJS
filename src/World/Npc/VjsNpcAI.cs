@@ -21,7 +21,8 @@ internal sealed class VjsNpcAI : BaseAI
     private const float ArriveSlop = 0.35f;
     private const float ReachCheckSeconds = 0.75f;
     private const float MoveTimeoutSeconds = 60f;
-    private const float DirectFallbackDistance = 3f;
+    private const float OffMeshArriveDistance = 2f;
+    private const float DirectFallbackSeconds = 5f;
 
     private Vector3 _target;
     private float _stopDistance;
@@ -35,6 +36,7 @@ internal sealed class VjsNpcAI : BaseAI
     private float _reachCheckAt;
     private float _deadline;
     private bool _hasPath = true;
+    private float _directAt;
     private bool _jumped;
     private Character? _threat;
     private float _threatAt;
@@ -119,6 +121,7 @@ internal sealed class VjsNpcAI : BaseAI
         _reachCheckAt = 0f;
         _deadline = Time.time + MoveTimeoutSeconds;
         _hasPath = true;
+        _directAt = 0f;
         _jumped = false;
         _status = NpcActionStatus.Running;
         _reason = null;
@@ -298,20 +301,6 @@ internal sealed class VjsNpcAI : BaseAI
             _hasPath = HavePath(_target);
         }
 
-        if (!_hasPath)
-        {
-            if (distance > DirectFallbackDistance)
-            {
-                Fail("nav-unreachable");
-                return;
-            }
-
-            // Short hops into gaps the navmesh does not cover still work by walking.
-            MoveDirect();
-            TrackProgress(now);
-            return;
-        }
-
         if (MoveTo(dt, _target, _stopDistance, _run))
         {
             if (Horizontal(transform.position, _target) <= _stopDistance + ArriveSlop + 0.5f)
@@ -320,10 +309,37 @@ internal sealed class VjsNpcAI : BaseAI
                 return;
             }
 
+            // The path may end next to an off-mesh destination (a point inside a fire or a piece).
+            if (!_hasPath && distance <= OffMeshArriveDistance)
+            {
+                Arrive();
+                return;
+            }
+
+            if (!_hasPath)
+            {
+                // No full path: close the remaining gap directly for a bounded probe, then give up.
+                if (_directAt <= 0f)
+                {
+                    _directAt = now;
+                }
+
+                if (now - _directAt > DirectFallbackSeconds)
+                {
+                    Fail("nav-unreachable");
+                    return;
+                }
+
+                MoveDirect();
+                TrackProgress(now);
+                return;
+            }
+
             Fail("nav-incomplete");
             return;
         }
 
+        _directAt = 0f;
         TrackProgress(now);
     }
 
