@@ -20,14 +20,19 @@ public sealed class BaseNPC
     [JsIgnore] private readonly string _kind;
     [JsIgnore] private readonly string _name;
     [JsIgnore] private readonly Func<CommandResult, JsValue> _result;
+    [JsIgnore] private readonly Func<string, JsValue, JsValue> _interact;
+    [JsIgnore] private readonly Func<string, JsValue> _affordances;
 
-    internal BaseNPC(string plugin, ZDOID id, string kind, string name, Func<CommandResult, JsValue> result)
+    internal BaseNPC(string plugin, ZDOID id, string kind, string name, Func<CommandResult, JsValue> result,
+        Func<string, JsValue, JsValue> interact, Func<string, JsValue> affordances)
     {
         _plugin = plugin;
         _id = id;
         _kind = kind;
         _name = name;
         _result = result;
+        _interact = interact;
+        _affordances = affordances;
     }
 
     [JsIgnore] internal string Owner => _plugin;
@@ -79,6 +84,14 @@ public sealed class BaseNPC
     /// <summary>Picks a pickable object into the inventory when in range.</summary>
     [JsReturns("ActionResult")]
     public JsValue Pick(string id) => Run("pick", id);
+
+    /// <summary>Inspects what a target object supports for this body.</summary>
+    [JsReturns("NpcAffordances")]
+    public JsValue Affordances(string id) => _affordances(id);
+
+    /// <summary>Performs one supported interaction against a target object.</summary>
+    [JsReturns("NpcInteractionResult")]
+    public JsValue Interact(string id, JsValue options) => _interact(id, options);
 
     [JsIgnore]
     private JsValue Run(string command, params object?[] args) =>

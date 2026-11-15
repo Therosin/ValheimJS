@@ -113,7 +113,9 @@ internal static class NpcPrefabs
         ai.m_pathAgentType = Pathfinding.AgentType.Humanoid;
         ai.m_viewRange = definition.Sensors.ViewRange;
         ai.m_viewAngle = definition.Sensors.ViewAngle;
-        ai.m_hearRange = definition.Sensors.Radius;
+        ai.m_hearRange = definition.Sensors.Hearing > 0f
+            ? definition.Sensors.Hearing
+            : definition.Sensors.Radius;
         ai.m_avoidFire = true;
         ai.m_avoidWater = true;
         ai.m_avoidLava = true;

@@ -5,7 +5,11 @@ import type {
     FoodSlot,
     InventoryItem,
     NpcAction,
+    NpcAffordances,
+    NpcDamageEvent,
     NpcEquipment,
+    NpcInteractOptions,
+    NpcInteractionResult,
     NpcObject,
     NpcPerceptionOptions,
     NpcSenseFilter,
@@ -20,8 +24,12 @@ export type {
     FoodSlot,
     InventoryItem,
     NpcAction,
+    NpcAffordances,
+    NpcDamageEvent,
     NpcEnvironment,
     NpcEquipment,
+    NpcInteractOptions,
+    NpcInteractionResult,
     NpcObject,
     NpcPerceptionOptions,
     NpcPos,
@@ -124,6 +132,14 @@ export const npc = {
     /** Requests a native pick action against a pickable ZDO. */
     pick(entity: ValheimBaseNPC, target: string): ActionResult {
         return context().host.api.npc.pick(entity, target);
+    },
+    /** Inspects what a target object supports for this NPC. */
+    affordances(entity: ValheimBaseNPC, target: string): NpcAffordances {
+        return context().host.api.npc.affordances(entity, target) as NpcAffordances;
+    },
+    /** Performs one supported interaction against a target object. */
+    interact(entity: ValheimBaseNPC, target: string, options: NpcInteractOptions = {}): NpcInteractionResult {
+        return context().host.api.npc.interact(entity, target, options) as NpcInteractionResult;
     },
     /** Reads one core-owned per-NPC board value. */
     boardGet(entity: ValheimBaseNPC, key: string): unknown {

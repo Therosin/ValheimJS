@@ -31,8 +31,12 @@ export {
     type FoodSlot,
     type InventoryItem,
     type NpcAction,
+    type NpcAffordances,
+    type NpcDamageEvent,
     type NpcEnvironment,
     type NpcEquipment,
+    type NpcInteractOptions,
+    type NpcInteractionResult,
     type NpcObject,
     type NpcPerceptionOptions,
     type NpcPos,
@@ -45,6 +49,15 @@ export {
     type StatusEffect
 } from "./npc";
 export { ai, type AiActionOutcome, type AiContext, type AiInstantiateOptions, type AiLoadOptions, type AiStatus, type AiTickResult, type BlackboardChangeHandler, type BlackboardSignalHandler, type BoardMiddlewareHandler, type BoardOperationContext, BoardMembership, BoardScope, BoardSubscription } from "./ai";
+export {
+    Planner,
+    type Goal,
+    type GoalContext,
+    type GoalExitReason,
+    type GoalStatus,
+    type PlannerActor,
+    type PlannerOptions
+} from "./planning";
 export { ui, type UiDefineOptions, type UiOpenOptions } from "./ui";
 export { draw, type DrawOptions, type DrawPoint } from "./draw";
 export { all, any, cooldown, delay, never, not, once, predicates, stable, type Predicate } from "./predicates";

@@ -3,7 +3,7 @@
 // Do not edit by hand; run `task declarations:check` to verify drift.
 // </auto-generated>
 
-import type { Account, ActionResult, AiTickResult, ChatCommandDefinition, GameSnapshot, InventoryItem, KeyState, NpcAction, NpcEquipment, NpcSensed, NpcStats, NpcView, PeerInfo, SyncEntity, WorldCharacter, WorldContainer } from "./types";
+import type { Account, ActionResult, AiTickResult, ChatCommandDefinition, GameSnapshot, InventoryItem, KeyState, NpcAction, NpcAffordances, NpcEquipment, NpcInteractionResult, NpcSensed, NpcStats, NpcView, PeerInfo, SyncEntity, WorldCharacter, WorldContainer } from "./types";
 
 /**
  * A ZDO-backed scripted NPC.
@@ -26,6 +26,8 @@ export declare class ValheimBaseNPC {
     lookAt(x: number, y: number, z: number): ActionResult;
     face(id: string): ActionResult;
     pick(id: string): ActionResult;
+    affordances(id: string): NpcAffordances;
+    interact(id: string, options: unknown): NpcInteractionResult;
     state(key: string): string | null;
     setState(key: string, value: string): boolean;
     removeState(key: string): boolean;
@@ -447,6 +449,10 @@ export interface NpcApi {
      */
     action(entity: unknown): NpcAction | null;
     /**
+     * Inspects what a target object supports for one of this plugin's NPCs.
+     */
+    affordances(entity: unknown, target: string): NpcAffordances;
+    /**
      * True when the world scene can host NPCs.
      */
     available(): boolean;
@@ -486,6 +492,10 @@ export interface NpcApi {
      * Live NPCs of one kind owned by this plugin.
      */
     handles(kind: string): ValheimBaseNPC[];
+    /**
+     * Performs one supported interaction (pick/use/store/take/addOre/addFuel).
+     */
+    interact(entity: unknown, target: string, options: unknown): NpcInteractionResult;
     /**
      * Generic inventory accessor for one of this plugin's NPCs.
      */

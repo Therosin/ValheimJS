@@ -42,6 +42,7 @@ internal sealed class VjsNpcAI : BaseAI
     private float _threatAt;
     private bool _engaged;
     private bool _nameApplied;
+    private readonly System.Collections.Generic.List<NpcDamageEvent> _damage = new();
 
     /// <summary>Opt-in: the body fights only when its kind asks for it.</summary>
     internal bool AutoEngage { get; set; }
@@ -57,6 +58,45 @@ internal sealed class VjsNpcAI : BaseAI
 
     internal string? ThreatId =>
         _threat != null ? _threat.GetZDOID().ToString() : null;
+
+    internal System.Collections.Generic.IReadOnlyList<NpcDamageEvent> TakeDamageEvents()
+    {
+        if (_damage.Count == 0)
+        {
+            return System.Array.Empty<NpcDamageEvent>();
+        }
+
+        var result = _damage.ToArray();
+        _damage.Clear();
+        return result;
+    }
+
+    private void RecordDamage(float damage, Character attacker)
+    {
+        var delta = attacker.transform.position - transform.position;
+        if (_damage.Count >= 16)
+        {
+            _damage.RemoveAt(0);
+        }
+
+        _damage.Add(new NpcDamageEvent
+        {
+            AttackerId = attacker.GetZDOID().ToString(),
+            AttackerName = attacker.m_name,
+            AttackerFaction = attacker.GetFaction().ToString(),
+            X = attacker.transform.position.x,
+            Y = attacker.transform.position.y,
+            Z = attacker.transform.position.z,
+            DirectionX = delta.x,
+            DirectionZ = delta.z,
+            Damage = damage,
+            Health = m_character.GetHealth(),
+            MaxHealth = m_character.GetMaxHealth(),
+            IsPlayer = attacker.IsPlayer(),
+            IsNpc = attacker.GetComponent<VjsNpcAI>() != null,
+            IsTamed = attacker.IsTamed()
+        });
+    }
 
     private bool IntentActive => _moving || _lookOnly;
 
@@ -90,7 +130,14 @@ internal sealed class VjsNpcAI : BaseAI
     protected override void OnDamaged(float damage, Character attacker)
     {
         base.OnDamaged(damage, attacker);
-        if (!AutoEngage || m_character == null || attacker == null || attacker.IsDead())
+        if (m_character == null || attacker == null || attacker.IsDead())
+        {
+            return;
+        }
+
+        RecordDamage(damage, attacker);
+
+        if (!AutoEngage)
         {
             return;
         }

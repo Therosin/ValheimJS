@@ -10,7 +10,7 @@ namespace ValheimJS.World;
 /// removed from the prefab, so this behaviour is the only decision layer; JS drives it through
 /// actions and reads its perception snapshots.
 /// </summary>
-internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions
+internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INpcEvents
 {
     private const float ArriveDistance = 0.75f;
     private const float PerceptionCacheSeconds = 0.1f;
@@ -22,6 +22,8 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions
     private readonly Dictionary<string, NpcSensedEntity> _entities = new(StringComparer.Ordinal);
     private readonly Dictionary<string, NpcSensedEntity> _objects = new(StringComparer.Ordinal);
     private readonly List<NpcSensedEntity> _newEntities = new();
+    private readonly List<NpcSensedEntity> _heard = new();
+    private readonly List<NpcDamageEvent> _damage = new();
     private Vector3 _origin;
     private float _originYaw;
     private float _now;
@@ -134,7 +136,21 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions
         }
 
         SyncAction(obj);
+        DrainBodyEvents(obj);
         PublishBoard(obj);
+    }
+
+    private void DrainBodyEvents(WorldObject obj)
+    {
+        foreach (var damage in obj.AI?.TakeDamageEvents() ?? Array.Empty<NpcDamageEvent>())
+        {
+            if (_damage.Count >= 32)
+            {
+                _damage.RemoveAt(0);
+            }
+
+            _damage.Add(damage);
+        }
     }
 
     /// <summary>Advances the intent from the body, the wait deadline or death.</summary>
@@ -217,6 +233,30 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions
     }
 
     public IReadOnlyList<NpcActionView> TakeActionSettlements() => _state.TakeSettlements();
+
+    public IReadOnlyList<NpcSensedEntity> TakeHeard()
+    {
+        if (_heard.Count == 0)
+        {
+            return Array.Empty<NpcSensedEntity>();
+        }
+
+        var result = _heard.ToArray();
+        _heard.Clear();
+        return result;
+    }
+
+    public IReadOnlyList<NpcDamageEvent> TakeDamage()
+    {
+        if (_damage.Count == 0)
+        {
+            return Array.Empty<NpcDamageEvent>();
+        }
+
+        var result = _damage.ToArray();
+        _damage.Clear();
+        return result;
+    }
 
     private NpcActionView BuildActionView() => _state.View();
 
@@ -632,6 +672,12 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions
             }
 
             var visible = IsVisible(obj, position, distance, forward);
+            var hearRange = _sensors.Hearing > 0f ? _sensors.Hearing : _sensors.Radius;
+            var noise = live != null ? live.GetNoiseRange() : zdo.GetFloat(ZDOVars.s_noise, 0f);
+            var audible = obj.Character != null && live != null
+                ? BaseAI.CanHearTarget(obj.Character.transform, hearRange, live)
+                : NpcAudibility.IsAudible(distance, noise, hearRange, position.y > 3000f);
+            var wasAudible = entry.Audible;
             entry.Prefab = prefab != null ? prefab.name : null;
             entry.Name = character.m_name;
             entry.Kind = zdo.GetString(WorldKeys.Kind, out var npcKind) ? npcKind : string.Empty;
@@ -650,12 +696,32 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions
             entry.Level = live != null ? live.GetLevel() : zdo.GetInt(ZDOVars.s_level, 1);
             entry.Enemy = IsEnemy(selfFaction, selfTamed, selfGroup, character.GetFaction(), isTamed, character.m_group);
             entry.Ready = !isDead;
+            entry.Noise = noise;
+            entry.Audible = audible;
             entry.Visible = visible;
             entry.InRange = true;
             entry.LastSeenAt = _now;
             entry.SeenCount++;
 
+            if (audible && !wasAudible)
+            {
+                if (_heard.Count >= 32)
+                {
+                    _heard.RemoveAt(0);
+                }
+
+                _heard.Add(entry);
+            }
+
             nearby.Add(entry);
+        }
+
+        foreach (var entry in _entities.Values)
+        {
+            if (!entry.InRange)
+            {
+                entry.Audible = false;
+            }
         }
 
         PruneSenses();

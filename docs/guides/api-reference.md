@@ -172,6 +172,8 @@ npc.despawn(entity): boolean
 npc.handles(kind): ValheimBaseNPC[]
 npc.perception(entity): NpcView | null
 npc.sensed(entity, filter?): NpcSensed[]        // store query; remembered: true includes lost contacts
+npc.affordances(entity, target): NpcAffordances // verbs/support for one target object
+npc.interact(entity, target, options?): NpcInteractionResult
 npc.memory(entity): Record<string, unknown>     // durable plugin-owned memory
 npc.setMemory(entity, value): boolean
 npcBase(): new (handle: string) => ValheimBaseNPC
@@ -188,6 +190,9 @@ stop(): ActionResult;                          // stand still
 wait(seconds: number): ActionResult;
 lookAt(x, y, z): ActionResult;
 face(entityId: string): ActionResult;
+pick(entityId: string): ActionResult;
+affordances(targetId: string): NpcAffordances;
+interact(targetId: string, options?: NpcInteractOptions): NpcInteractionResult;
 state(key): string | null;
 setState(key, value): boolean;
 removeState(key): boolean;

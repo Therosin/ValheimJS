@@ -12,7 +12,6 @@ a player comes near. The authority re-syncs the reference before every scene cre
 and replays the stored intent when the body is re-instantiated.
 
 The pieces fit together in one loop:
-
 ```mermaid
 flowchart LR
     T["NPC tick (tickMs)"] --> P["Perception scan<br/>characters + world objects"]
@@ -26,6 +25,13 @@ flowchart LR
     I --> H["onAction"]
     P --> H2["onSensed"]
 ```
+
+## Capabilities, not behaviour
+
+The host exposes facts and verbs: native hearing (`noise`, `audible`, `onHeard`), damage
+(`onDamaged`), affordances (`npc.affordances`, `interact`) and the action primitives
+(`moveTo`/`wait`/`face`/`pick`/`stop`). It never decides what those mean. Guard, villager,
+animal and worker behaviours are plugin policy built from the same primitives.
 
 ## 1. Register and spawn
 
@@ -96,6 +102,10 @@ interface NpcSensed {
     rel: { x: number; y: number; z: number };   // relative to the NPC
     distance: number; bearing: number;          // bearing is signed from the NPC facing
     visible: boolean; inRange: boolean; ready: boolean; enemy: boolean;
+    /** Native noise radius emitted by a character; 0 for objects. */
+    noise: number;
+    /** Native hearing rule: within the NPC hear range and within the target's noise radius. */
+    audible: boolean;
     isPlayer: boolean; isNpc: boolean; isTamed: boolean; isDead: boolean;
     level: number; isObject: boolean;
     health: number; maxHealth: number;
@@ -105,6 +115,11 @@ interface NpcSensed {
 ```
 
 `ready` means harvestable for pickables, alive for characters and `true` for other objects.
+`audible` uses Valheim's own hearing rule: distance within the NPC's hear range (interior capped
+at 12 m) and closer than the target's current noise radius. Characters make noise natively when
+they attack, jump or land; `noise` is that radius. `perception.hearing` sets the hear range
+(`0` uses `radius`). `npc.sensed(this, { audible: true })` filters to what the NPC can hear
+without seeing.
 
 `NpcView` is the self + store view your hooks receive:
 
@@ -232,6 +247,18 @@ resumes when the body returns. `moveTo` fails with `nav-unreachable` when the na
 path and the target is far, `nav-incomplete` when the path ends short, `nav-timeout` after the
 60-second intent deadline, and `nav-stuck` when the body cannot make progress.
 
+`onHeard(entry)` fires once when a character becomes audible (native noise rule) and
+`onDamaged(event)` fires from the native damage callback:
+
+```ts
+onDamaged(hit: NpcDamageEvent) {
+    log(`hit by ${hit.attackerName} for ${hit.damage} (${hit.health}/${hit.maxHealth})`);
+}
+onHeard(entry: NpcSensed) {
+    if (entry.isPlayer) this.face(entry.id);
+}
+```
+
 `onSpawn` fires for instances created by this host (the authority's `npc.spawn`). Entities a
 client discovers already existed, so the first hook there is `onRehydrate`.
 
@@ -269,6 +296,31 @@ The same accessor reports `available`, `kind`, `writable`, `weight`, `capacity`,
 `items`, `equipment`, and `has/count/add/remove/use/consume/equip/unequip/drop`. Container
 writes are reserved until ownership/access is defined; the capability flags tell a script what
 the provider supports.
+
+### Interactions and affordances
+
+Perceive first, then ask what the target supports:
+
+```ts
+const chest = npc.sensed(this, { kinds: ["container"] })[0];
+npc.affordances(this, chest.id);
+// { kind: "container", verbs: ["store","take"], supported: true, inRange: true, ... }
+this.interact(chest.id, { verb: "store", prefab: "Wood", count: 10 });
+this.interact(chest.id, { verb: "take", name: "$item_cookedmeat", count: 1 });
+```
+
+Supported verbs: `pick` (pickables), `store`/`take` (containers, direct item transfer),
+`addOre`/`addFuel` (smelters via their native RPCs), and `use`/`open`/`close`/`toggle` for native
+interactables such as doors, fireplaces, beehives, item stands, armor stands, chairs and vagons.
+`hoverName`/`hoverText` are included for UI parity.
+
+Player/UI-only components are refused with `player-only` rather than opening a GUI: beds,
+crafting stations, cooking stations, portals and traders. `Bed.Interact`,
+`CraftingStation.Interact`, `Container.Interact` and `TeleportWorld.Interact` assume
+`Player.m_localPlayer`, `InventoryGui` or `TextInput`, so a plain NPC body must not call them.
+Interactions run server-side, require 3.5 m range and claim ZDO ownership first. Failures carry a
+reason: `out-of-range`, `not-loaded`, `no-access`, `rejected`, `no-item`, `no-room`,
+`verb-required`.
 
 ### Core blackboard
 
@@ -356,7 +408,49 @@ The matching JS actions live in the plugin. `chase` is responsible for its own l
 intent: issue `moveTo`, return `running` while it is active, and return success only once the
 NPC has arrived.
 
-## 8. Full plugin: a companion hunter
+## 8. Planning is plugin policy
+
+`Planner` is an optional, policy-free scheduler: it scores plugin-supplied goals, runs the
+highest-scoring one, preempts with optional hysteresis, and applies optional cooldowns. It has no
+built-in goals or reactions; the plugin owns interpretation, priorities and callbacks.
+
+```ts
+import { Planner, type Goal, type NpcView } from "../../../sdk/index";
+
+const goals: Goal[] = [
+    {
+        id: "investigate",
+        score: view => view.nearby.some(entry => entry.audible && !entry.visible) ? 60 : 0,
+        tick: ctx => {
+            const noise = ctx.view.nearby.find(entry => entry.audible && !entry.visible);
+            if (!noise) return "failure";
+            ctx.moveTo(noise.pos.x, noise.pos.y, noise.pos.z, true);
+            return "running";
+        }
+    },
+    {
+        id: "work",
+        score: () => 40,
+        tick: () => "running"
+    }
+];
+
+const planner = new Planner(this, { log: message => log(message) }); // inside the NPC class
+planner.setGoals(goals);
+// in onTick: planner.tick(view);
+```
+
+The same primitives support every policy without core changes:
+
+- **Villager**: investigate the noise, open the door, return home.
+- **Guard**: investigate, then raise an alarm.
+- **Animal**: flee instead.
+- **Worker**: ignore it while `work` scores higher.
+
+`onHeard` and `onDamaged` are the edges; `affordances`/`interact` are the verbs; the choice
+between fleeing, investigating and ignoring belongs to the plugin.
+
+## 9. Full plugin: a companion hunter
 
 ```ts
 import {

@@ -140,6 +140,10 @@ internal sealed class NpcSensedEntity
     internal bool InRange { get; set; }
     internal bool Ready { get; set; }
     internal bool Food { get; set; }
+    /// <summary>Current native noise radius emitted by a character; 0 for objects.</summary>
+    internal float Noise { get; set; }
+    /// <summary>Native hearing rule: within the NPC's hear range and within the target's noise radius.</summary>
+    internal bool Audible { get; set; }
     internal float FirstSeenAt { get; set; }
     internal float LastSeenAt { get; set; } = -1f;
     internal int SeenCount { get; set; }
@@ -174,6 +178,8 @@ internal sealed class NpcSensedEntity
             ["inRange"] = InRange,
             ["ready"] = Ready,
             ["food"] = Food,
+            ["noise"] = Noise,
+            ["audible"] = Audible,
             ["enemy"] = Enemy,
             ["isPlayer"] = IsPlayer,
             ["isNpc"] = IsNpc,
@@ -200,6 +206,7 @@ internal sealed class NpcSenseQuery
     internal float Angle { get; set; } = 180f;
     internal IReadOnlyList<string> Kinds { get; set; } = Array.Empty<string>();
     internal bool VisibleOnly { get; set; }
+    internal bool AudibleOnly { get; set; }
     internal bool EnemyOnly { get; set; }
     internal bool PlayersOnly { get; set; }
     internal bool IncludeRemembered { get; set; }
@@ -218,6 +225,11 @@ internal sealed class NpcSenseQuery
         }
 
         if (VisibleOnly && !entry.Visible)
+        {
+            return false;
+        }
+
+        if (AudibleOnly && !entry.Audible)
         {
             return false;
         }
@@ -295,6 +307,9 @@ internal sealed class NpcSensors
 {
     internal float Radius { get; init; } = 20f;
 
+    /// <summary>Hearing radius; 0 falls back to <see cref="Radius"/>.</summary>
+    internal float Hearing { get; init; }
+
     internal int Max { get; init; } = 8;
 
     internal float ViewRange { get; init; } = 20f;
@@ -323,6 +338,11 @@ internal sealed class NpcSensors
         if (Radius < 1f || Radius > 64f)
         {
             throw new ArgumentException("npc: perception.radius must be between 1 and 64");
+        }
+
+        if (Hearing < 0f || Hearing > 64f)
+        {
+            throw new ArgumentException("npc: perception.hearing must be between 0 and 64");
         }
 
         if (Max < 1 || Max > 32)
@@ -565,4 +585,65 @@ internal interface INpcActions
 {
     /// <summary>Drains terminal action outcomes exactly once, in order.</summary>
     IReadOnlyList<NpcActionView> TakeActionSettlements();
+}
+
+/// <summary>One native damage event observed by an NPC body.</summary>
+internal sealed class NpcDamageEvent
+{
+    internal string AttackerId { get; set; } = "";
+    internal string AttackerName { get; set; } = "";
+    internal string AttackerFaction { get; set; } = "";
+    internal double X { get; set; }
+    internal double Y { get; set; }
+    internal double Z { get; set; }
+    internal double DirectionX { get; set; }
+    internal double DirectionZ { get; set; }
+    internal float Damage { get; set; }
+    internal float Health { get; set; }
+    internal float MaxHealth { get; set; }
+    internal bool IsPlayer { get; set; }
+    internal bool IsNpc { get; set; }
+    internal bool IsTamed { get; set; }
+
+    internal Dictionary<string, object?> ToPlain() => new()
+    {
+        ["attackerId"] = AttackerId,
+        ["attackerName"] = AttackerName,
+        ["faction"] = AttackerFaction,
+        ["pos"] = new Dictionary<string, object?> { ["x"] = X, ["y"] = Y, ["z"] = Z },
+        ["direction"] = new Dictionary<string, object?> { ["x"] = DirectionX, ["z"] = DirectionZ },
+        ["damage"] = Damage,
+        ["health"] = Health,
+        ["maxHealth"] = MaxHealth,
+        ["isPlayer"] = IsPlayer,
+        ["isNpc"] = IsNpc,
+        ["isTamed"] = IsTamed
+    };
+}
+
+/// <summary>Native hearing rule shared by scanning and tests.</summary>
+internal static class NpcAudibility
+{
+    internal static bool IsAudible(float distance, float noise, float hearRange, bool interior)
+    {
+        if (hearRange <= 0f || noise <= 0f)
+        {
+            return false;
+        }
+
+        if (interior)
+        {
+            hearRange = Math.Min(12f, hearRange);
+        }
+
+        return distance <= hearRange && distance < noise;
+    }
+}
+
+/// <summary>Implemented by world behaviours that surface perception and body edges.</summary>
+internal interface INpcEvents
+{
+    IReadOnlyList<NpcSensedEntity> TakeHeard();
+
+    IReadOnlyList<NpcDamageEvent> TakeDamage();
 }

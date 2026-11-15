@@ -12,7 +12,8 @@ internal static class NpcProbe
             WaitDeadline();
             InventoryPayload();
             DefinitionDefaults();
-            Console.WriteLine("PASS: npc action lifecycle, wait deadlines, death stickiness and inventory payload");
+            Audibility();
+            Console.WriteLine("PASS: npc action lifecycle, wait deadlines, death stickiness, inventory payload and audibility");
             return 0;
         }
         catch (Exception exception)
@@ -141,5 +142,19 @@ internal static class NpcProbe
         if (!NpcDefinition.TryCreate("guard", "Player", 500d, null, null, null, true,
                 out var guard, out _) || !guard.AutoEngage)
             throw new InvalidOperationException("auto engagement option was lost");
+    }
+
+    private static void Audibility()
+    {
+        if (!NpcAudibility.IsAudible(10f, 15f, 20f, false))
+            throw new InvalidOperationException("noise inside range should be audible");
+        if (NpcAudibility.IsAudible(19f, 15f, 20f, false))
+            throw new InvalidOperationException("distance beyond the noise radius must not be audible");
+        if (NpcAudibility.IsAudible(13f, 20f, 20f, true))
+            throw new InvalidOperationException("interior hearing must cap at 12 m");
+        if (!NpcAudibility.IsAudible(11f, 20f, 20f, true))
+            throw new InvalidOperationException("interior hearing inside the cap must work");
+        if (NpcAudibility.IsAudible(5f, 0f, 20f, false))
+            throw new InvalidOperationException("silent targets must not be audible");
     }
 }

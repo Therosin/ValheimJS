@@ -485,6 +485,20 @@ internal sealed class WorldManager : IDisposable
         return obj?.Behavior is INpcSenses senses ? senses.TakeNewSenses() : Array.Empty<NpcSensedEntity>();
     }
 
+    /// <summary>Drains audible-enter events for one NPC.</summary>
+    internal IReadOnlyList<NpcSensedEntity> TakeHeard(string plugin, string handle)
+    {
+        var obj = Resolve(plugin, handle);
+        return obj?.Behavior is INpcEvents events ? events.TakeHeard() : Array.Empty<NpcSensedEntity>();
+    }
+
+    /// <summary>Drains native damage events for one NPC.</summary>
+    internal IReadOnlyList<NpcDamageEvent> TakeDamage(string plugin, string handle)
+    {
+        var obj = Resolve(plugin, handle);
+        return obj?.Behavior is INpcEvents events ? events.TakeDamage() : Array.Empty<NpcDamageEvent>();
+    }
+
     /// <summary>Drains settled action outcomes for one NPC, exactly once.</summary>
     internal IReadOnlyList<NpcActionView> TakeActionSettlements(string plugin, string handle)
     {

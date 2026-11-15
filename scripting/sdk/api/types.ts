@@ -241,6 +241,10 @@ export interface NpcSensed {
     inRange: boolean;
     /** Pickables: harvestable. Characters: alive. Other objects: true. */
     ready: boolean;
+    /** Current native noise radius emitted by a character; 0 for objects. */
+    noise: number;
+    /** Native hearing rule: within the NPC hear range and within the target's noise radius. */
+    audible: boolean;
     /** Pickables: the yielded item is food. */
     food: boolean;
     enemy: boolean;
@@ -262,6 +266,54 @@ export interface NpcSensed {
 /** World objects use the same record shape as entities; `kind` carries the object class. */
 export type NpcObject = NpcSensed;
 
+/** Edge event from the native damage callback on this NPC's body. */
+export interface NpcDamageEvent {
+    attackerId: string;
+    attackerName: string;
+    faction: string;
+    pos: NpcPos;
+    direction: { x: number; z: number };
+    damage: number;
+    health: number;
+    maxHealth: number;
+    isPlayer: boolean;
+    isNpc: boolean;
+    isTamed: boolean;
+}
+
+/** What one target object supports for a scripted body. */
+export interface NpcAffordances {
+    id: string;
+    kind: string;
+    name: string;
+    hoverName: string | null;
+    hoverText: string | null;
+    supported: boolean;
+    /** The interaction needs a player/UI; the NPC cannot perform it. */
+    playerOnly: boolean;
+    reason: string | null;
+    verbs: string[];
+    distance: number;
+    inRange: boolean;
+}
+
+export interface NpcInteractionResult {
+    ok: boolean;
+    reason: string | null;
+    verb: string;
+    count: number;
+}
+
+export interface NpcInteractOptions {
+    verb?: "pick" | "use" | "open" | "close" | "toggle" | "store" | "take" | "addOre" | "addFuel" | string;
+    prefab?: string;
+    name?: string;
+    slot?: { x: number; y: number };
+    count?: number;
+    repeat?: boolean;
+    alt?: boolean;
+}
+
 /** Filter accepted by `npc.sensed`. `dir` defaults to the NPC's facing. */
 export interface NpcSenseFilter {
     id?: string;
@@ -272,6 +324,7 @@ export interface NpcSenseFilter {
     /** Tokens: player, npc, creature, tamed, enemy, dead, or an exact kind/prefab. */
     kinds?: string[];
     visible?: boolean;
+    audible?: boolean;
     enemy?: boolean;
     players?: boolean;
     /** Include entries remembered after leaving range. */
@@ -281,6 +334,8 @@ export interface NpcSenseFilter {
 
 export interface NpcPerceptionOptions {
     radius?: number;
+    /** Hearing radius; 0 uses `radius`. */
+    hearing?: number;
     max?: number;
     viewRange?: number;
     /** Half-angle in degrees; 90 is the game's front hemisphere. */

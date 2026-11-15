@@ -46,6 +46,8 @@ internal sealed class NpcBindings : JsBindings
         internal JsCallback? OnRehydrate;
         internal JsCallback? OnDespawn;
         internal JsCallback? OnSensed;
+        internal JsCallback? OnHeard;
+        internal JsCallback? OnDamaged;
         internal JsCallback? OnAction;
         internal readonly Dictionary<string, int> Failures = new(StringComparer.Ordinal);
         internal readonly HashSet<string> DisabledHooks = new(StringComparer.Ordinal);
@@ -77,12 +79,15 @@ internal sealed class NpcBindings : JsBindings
 
             var entity = WorldManager.Instance.Resolve(types.CurrentPlugin, handle)
                 ?? throw new InvalidOperationException($"npc: unknown handle '{handle}'");
-            return new BaseNPC(types.CurrentPlugin, entity.Id, entity.Kind, entity.Name,
+            var plugin = types.CurrentPlugin;
+            return new BaseNPC(plugin, entity.Id, entity.Kind, entity.Name,
                 result => JsPayload.FromPlain(Engine, new Dictionary<string, object?>
                 {
                     ["ok"] = result.Ok,
                     ["reason"] = result.Reason
-                }));
+                }),
+                (target, options) => InteractHandle(plugin, handle, target, options),
+                target => AffordancesHandle(plugin, handle, target));
         });
     }
 
@@ -166,6 +171,29 @@ internal sealed class NpcBindings : JsBindings
             ["ok"] = result.Ok,
             ["reason"] = result.Reason
         });
+    }
+
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "NpcAffordances",
+        Description = "Inspects what a target object supports for one of this plugin's NPCs.")]
+    public JsValue Affordances(string plugin, JsValue entity, string target)
+    {
+        var handle = HandleOf(entity);
+        return handle == null
+            ? JsPayload.FromPlain(Engine, new Dictionary<string, object?>
+            {
+                ["id"] = target,
+                ["supported"] = false,
+                ["reason"] = "unknown-handle"
+            })
+            : AffordancesHandle(plugin, handle, target);
+    }
+
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "NpcInteractionResult",
+        Description = "Performs one supported interaction (pick/use/store/take/addOre/addFuel).")]
+    public JsValue Interact(string plugin, JsValue entity, string target, JsValue options)
+    {
+        var handle = HandleOf(entity);
+        return InteractHandle(plugin, handle, target, options);
     }
 
     [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "unknown",
@@ -579,6 +607,32 @@ internal sealed class NpcBindings : JsBindings
                     JsPayload.FromPlain(Engine, entry.ToPlain(obj.Position.x, obj.Position.y, obj.Position.z, obj.Yaw, now)));
             }
 
+            foreach (var entry in manager.TakeHeard(blueprint.Plugin, instance.Handle))
+            {
+                if (_debug.Contains(blueprint.Plugin))
+                {
+                    LogInfo(
+                        $"[{blueprint.Plugin}] [npc] {blueprint.Kind} {instance.Handle} heard " +
+                        $"{entry.Name} noise={entry.Noise:0.0} distance={entry.Distance:0.0}");
+                }
+
+                Invoke(blueprint, instance, instance.OnHeard, "onHeard",
+                    JsPayload.FromPlain(Engine, entry.ToPlain(obj.Position.x, obj.Position.y, obj.Position.z, obj.Yaw, now)));
+            }
+
+            foreach (var damage in manager.TakeDamage(blueprint.Plugin, instance.Handle))
+            {
+                if (_debug.Contains(blueprint.Plugin))
+                {
+                    LogInfo(
+                        $"[{blueprint.Plugin}] [npc] {blueprint.Kind} {instance.Handle} damaged " +
+                        $"{damage.Damage:0.0} by {damage.AttackerName} ({damage.AttackerId})");
+                }
+
+                Invoke(blueprint, instance, instance.OnDamaged, "onDamaged",
+                    JsPayload.FromPlain(Engine, damage.ToPlain()));
+            }
+
             ReportSettlements(blueprint, instance, perception, obj.Yaw);
 
             var view = Payload(perception, obj.Yaw);
@@ -650,6 +704,8 @@ internal sealed class NpcBindings : JsBindings
                 OnRehydrate = Hook(target, "onRehydrate", blueprint.Kind),
                 OnDespawn = Hook(target, "onDespawn", blueprint.Kind),
                 OnSensed = Hook(target, "onSensed", blueprint.Kind),
+                OnHeard = Hook(target, "onHeard", blueprint.Kind),
+                OnDamaged = Hook(target, "onDamaged", blueprint.Kind),
                 OnAction = Hook(target, "onAction", blueprint.Kind)
             };
         }
@@ -775,6 +831,7 @@ internal sealed class NpcBindings : JsBindings
         return new NpcSensors
         {
             Radius = (float)Number(perception, "radius", defaults.Radius),
+            Hearing = (float)Number(perception, "hearing", defaults.Hearing),
             Max = (int)Number(perception, "max", defaults.Max),
             ViewRange = (float)Number(perception, "viewRange", defaults.ViewRange),
             ViewAngle = (float)Number(perception, "viewAngle", defaults.ViewAngle),
@@ -832,6 +889,7 @@ internal sealed class NpcBindings : JsBindings
         }
 
         query.VisibleOnly = Bool(obj, "visible", query.VisibleOnly);
+        query.AudibleOnly = Bool(obj, "audible", query.AudibleOnly);
         query.EnemyOnly = Bool(obj, "enemy", query.EnemyOnly);
         query.PlayersOnly = Bool(obj, "players", query.PlayersOnly);
         query.IncludeRemembered = Bool(obj, "remembered", query.IncludeRemembered);
@@ -920,6 +978,53 @@ internal sealed class NpcBindings : JsBindings
         }
 
         return value.IsBoolean() ? value.AsBoolean() : throw new ArgumentException($"npc: '{name}' must be a boolean");
+    }
+
+    private JsValue AffordancesHandle(string plugin, string? handle, string target)
+    {
+        var obj = handle != null ? WorldManager.Instance?.Resolve(plugin, handle) : null;
+        return obj == null
+            ? JsPayload.FromPlain(Engine, new Dictionary<string, object?>
+            {
+                ["id"] = target,
+                ["supported"] = false,
+                ["reason"] = "unknown-handle"
+            })
+            : JsPayload.FromPlain(Engine, NpcInteraction.Inspect(obj, target).ToPlain());
+    }
+
+    private JsValue InteractHandle(string plugin, string? handle, string target, JsValue options)
+    {
+        var obj = handle != null ? WorldManager.Instance?.Resolve(plugin, handle) : null;
+        var result = obj == null
+            ? NpcInteractionResult.Fail("unknown-handle")
+            : NpcInteraction.Interact(obj, target, InteractOptions(options));
+        return JsPayload.FromPlain(Engine, result.ToPlain());
+    }
+
+    private static NpcInteractOptions InteractOptions(JsValue value)
+    {
+        var options = new NpcInteractOptions();
+        if (value is not ObjectInstance obj)
+        {
+            return options;
+        }
+
+        options.Verb = OptionalString(obj, "verb");
+        options.Prefab = OptionalString(obj, "prefab");
+        options.Name = OptionalString(obj, "name");
+        if (obj.Get("slot") is ObjectInstance slot)
+        {
+            var x = OptionalNumber(slot, "x");
+            var y = OptionalNumber(slot, "y");
+            if (x.HasValue) options.X = (int)Math.Round(x.Value);
+            if (y.HasValue) options.Y = (int)Math.Round(y.Value);
+        }
+
+        options.Count = Math.Max(1, (int)Math.Round(Number(obj, "count", 1d)));
+        options.Repeat = Bool(obj, "repeat", false);
+        options.Alt = Bool(obj, "alt", false);
+        return options;
     }
 
     private Dictionary<string, Blueprint> Kinds(string plugin)
