@@ -133,6 +133,7 @@ interface NpcView {
     health: number; maxHealth: number; isAlive: boolean;
     faction: string; isTamed: boolean; level: number;
     home: { x: number; y: number; z: number };
+    swimming: boolean;
     combat: { engaged: boolean; threatId: string | null };
     self: NpcStats | null;       // live body stats; null while the body is culled
     action: NpcAction | null;    // current native action
@@ -328,6 +329,43 @@ crafting stations, cooking stations, portals and traders. `Bed.Interact`,
 Interactions run server-side, require 3.5 m range and claim ZDO ownership first. Failures carry a
 reason: `out-of-range`, `not-loaded`, `no-access`, `rejected`, `no-item`, `no-room`,
 `verb-required`.
+
+### Crafting (standard recipes)
+
+Standard `Recipe` crafting only: weapons, tools, armor and station food. CookingStation
+conversions, smelting and building are separate systems with their own station logistics.
+
+Native checks: recipe exists and is enabled, station type and level, ingredients. Output goes
+into the NPC inventory; if it does not fit it is dropped at the NPC's feet, exactly like vanilla.
+The call reports success only when the full output count was added or spawned.
+
+```ts
+npc.defineRecipe("club", {
+    recipe: "Club",
+    conditions: [
+        { condition: "notSwimming" },
+        { condition: "atHome", radius: 8 },
+        { condition: "missingItem", item: "Club" }
+    ]
+});
+
+const check = npc.canCraft(this, "club");
+// { ok: false, reasons: [{ code: "missing-ingredient", item: "$item_wood", need: 6, have: 2 }] }
+const result = npc.craft(this, "club");   // { ok: true, count: 1 }
+```
+
+Native reasons: `recipe-missing`, `recipe-disabled`, `unsupported`, `upgrade-only`,
+`station-missing`, `station-level`, `missing-ingredient`, `body-lost`, `no-inventory`.
+Condition failures use the condition name or an explicit `{ code, ... }` reason.
+Built-ins: `notSwimming`, `atHome`, `hasItem`, `missingItem`; custom conditions are registered
+with `npc.registerCondition(name, handler)` and must be pure.
+
+`atHome` is a plugin-provided condition, not a Valheim recipe rule. Native station/ingredient
+constraints stay authoritative. A plan step uses the same check:
+
+```ts
+ctx.run([{ craft: "club" }], { craft: recipe => npc.craft(this, recipe) });
+```
 
 ### Core blackboard
 

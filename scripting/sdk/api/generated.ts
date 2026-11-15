@@ -3,7 +3,7 @@
 // Do not edit by hand; run `task declarations:check` to verify drift.
 // </auto-generated>
 
-import type { Account, ActionResult, AiTickResult, ChatCommandDefinition, GameSnapshot, InventoryItem, KeyState, NpcAction, NpcAffordances, NpcEquipment, NpcInteractionResult, NpcSensed, NpcStats, NpcView, PeerInfo, SyncEntity, WorldCharacter, WorldContainer } from "./types";
+import type { Account, ActionResult, AiTickResult, ChatCommandDefinition, CraftCheck, CraftResult, GameSnapshot, InventoryItem, KeyState, NpcAction, NpcAffordances, NpcEquipment, NpcInteractionResult, NpcSensed, NpcStats, NpcView, PeerInfo, SyncEntity, WorldCharacter, WorldContainer } from "./types";
 
 /**
  * A ZDO-backed scripted NPC.
@@ -486,6 +486,14 @@ export interface NpcApi {
      * Generic inventory accessor for a world container.
      */
     container(handle: string): Inventory;
+    /**
+     * Crafts one native recipe: consumes ingredients and adds or drops the output.
+     */
+    craft(entity: unknown, recipe: string): CraftResult;
+    /**
+     * Native recipe requirements for one recipe (no plugin conditions).
+     */
+    craftCheck(entity: unknown, recipe: string): CraftCheck;
     /**
      * Enables host-side NPC tracing: lifecycle, perception and settled intents.
      */

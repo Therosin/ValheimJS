@@ -74,6 +74,14 @@ export {
     type StepOutcome,
     type Vec3Like
 } from "./planning";
+export type { CraftCheck, CraftReason, CraftResult } from "./api/types";
+export type {
+    ConditionRef,
+    CraftCondition,
+    CraftConditionContext,
+    CraftConditionResult,
+    RecipeDefinition
+} from "./crafting";
 export { ui, type UiDefineOptions, type UiOpenOptions } from "./ui";
 export { draw, type DrawOptions, type DrawPoint } from "./draw";
 export { all, any, cooldown, delay, never, not, once, predicates, stable, type Predicate } from "./predicates";

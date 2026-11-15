@@ -204,6 +204,55 @@ internal sealed class NpcBindings : JsBindings
         });
     }
 
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "CraftCheck",
+        Description = "Native recipe requirements for one recipe (no plugin conditions).")]
+    public JsValue CraftCheck(string plugin, JsValue entity, string recipe)
+    {
+        var handle = HandleOf(entity);
+        var obj = handle != null ? WorldManager.Instance?.Resolve(plugin, handle) : null;
+        if (obj == null)
+        {
+            return JsPayload.FromPlain(Engine, new Dictionary<string, object?>
+            {
+                ["ok"] = false,
+                ["reasons"] = new List<object?> { new Dictionary<string, object?> { ["code"] = "unknown-handle" } }
+            });
+        }
+
+        return JsPayload.FromPlain(Engine, NpcCrafting.Check(obj, recipe).ToPlain());
+    }
+
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "CraftResult",
+        Description = "Crafts one native recipe: consumes ingredients and adds or drops the output.")]
+    public JsValue Craft(string plugin, JsValue entity, string recipe)
+    {
+        var handle = HandleOf(entity);
+        var obj = handle != null ? WorldManager.Instance?.Resolve(plugin, handle) : null;
+        if (obj == null)
+        {
+            return JsPayload.FromPlain(Engine, new Dictionary<string, object?>
+            {
+                ["ok"] = false,
+                ["reason"] = "unknown-handle",
+                ["count"] = 0,
+                ["reasons"] = new List<object?>()
+            });
+        }
+
+        if (!GameEnvironment.IsServer())
+        {
+            return JsPayload.FromPlain(Engine, new Dictionary<string, object?>
+            {
+                ["ok"] = false,
+                ["reason"] = "not-authority",
+                ["count"] = 0,
+                ["reasons"] = new List<object?>()
+            });
+        }
+
+        return JsPayload.FromPlain(Engine, NpcCrafting.Craft(obj, recipe).ToPlain());
+    }
+
     [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "NpcAffordances",
         Description = "Inspects what a target object supports for one of this plugin's NPCs.")]
     public JsValue Affordances(string plugin, JsValue entity, string target)

@@ -605,6 +605,7 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
             HomeY = obj.Home.y,
             HomeZ = obj.Home.z,
             Ready = obj.BodyReady,
+            Swimming = obj.Character != null && obj.Character.IsSwimming(),
             Engaged = obj.AI?.Engaged == true,
             ThreatId = obj.AI?.ThreatId,
             Self = stats?.GetView(),

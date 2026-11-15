@@ -520,6 +520,7 @@ internal sealed class NpcPerception
     internal bool Ready { get; init; }
     internal bool Engaged { get; init; }
     internal string? ThreatId { get; init; }
+    internal bool Swimming { get; init; }
     internal Dictionary<string, object?>? Self { get; init; }
     internal NpcActionView? Action { get; init; }
     internal NpcEnvironment? Environment { get; init; }
@@ -562,6 +563,7 @@ internal sealed class NpcPerception
             ["level"] = Level,
             ["home"] = new Dictionary<string, object?> { ["x"] = HomeX, ["y"] = HomeY, ["z"] = HomeZ },
             ["ready"] = Ready,
+            ["swimming"] = Swimming,
             ["combat"] = new Dictionary<string, object?>
             {
                 ["engaged"] = Engaged,

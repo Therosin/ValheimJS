@@ -10,7 +10,7 @@ import {
     type PlannerActor,
     type Vec3Like
 } from "./actions";
-import type { NpcAffordances, NpcInteractOptions, NpcInteractionResult, NpcSensed, NpcView } from "./api/types";
+import type { CraftResult, NpcAffordances, NpcInteractOptions, NpcInteractionResult, NpcSensed, NpcView } from "./api/types";
 
 export { ActionRegistry, actions, registerAction } from "./actions";
 export type {
@@ -333,6 +333,8 @@ export interface PlanOptions {
     pauseGraceMs?: number;
     /** Inventory used by `equip`/`unequip`/`consume`/`drop` steps. */
     inventory?: InventoryActions;
+    /** Crafting used by `craft` steps; pass `recipe => npc.craft(this, recipe)`. */
+    craft?: (recipe: string) => CraftResult;
     log?: (message: string) => void;
 }
 
@@ -360,6 +362,7 @@ export type Step = StepBase &
         | { unequip: unknown }
         | { consume: unknown }
         | { drop: unknown; count?: number }
+        | { craft: string }
         | { follow: { target: string; distance?: number; run?: boolean } }
         | { until: (context: ActionContext) => boolean }
         | { call: (context: ActionContext) => ActionOutcome | void }
@@ -525,6 +528,7 @@ export class Plan {
             state: this.state,
             local: this.local,
             inventory: this.options.inventory ?? null,
+            craft: this.options.craft ?? null,
             get awaiting() {
                 return plan.awaiting !== null;
             },

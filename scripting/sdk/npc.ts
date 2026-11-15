@@ -1,7 +1,20 @@
 import { context } from "./runtime";
 import type { Inventory, ValheimBaseNPC } from "./api/generated";
+import {
+    canCraft as checkCraft,
+    craft as runCraft,
+    defineRecipe as registerRecipe,
+    registerCondition as addCondition,
+    type ConditionRef,
+    type CraftCondition,
+    type CraftConditionContext,
+    type CraftConditionResult,
+    type RecipeDefinition
+} from "./crafting";
 import type {
     ActionResult,
+    CraftCheck,
+    CraftResult,
     FoodSlot,
     InventoryItem,
     NpcAction,
@@ -21,6 +34,9 @@ import type {
 
 export type {
     ActionResult,
+    CraftCheck,
+    CraftReason,
+    CraftResult,
     FoodSlot,
     InventoryItem,
     NpcAction,
@@ -39,6 +55,13 @@ export type {
     NpcView,
     StatusEffect
 } from "./api/types";
+export type {
+    ConditionRef,
+    CraftCondition,
+    CraftConditionContext,
+    CraftConditionResult,
+    RecipeDefinition
+} from "./crafting";
 
 export interface NpcRegistration {
     /** Lowercase kind, `^[a-z0-9_-]{1,32}$`; also the prefab suffix. */
@@ -150,6 +173,22 @@ export const npc = {
     /** Jumps once. */
     jump(entity: ValheimBaseNPC): ActionResult {
         return context().host.api.npc.jump(entity);
+    },
+    /** Registers a recipe alias and its plugin conditions. */
+    defineRecipe(id: string, definition: RecipeDefinition = {}): void {
+        registerRecipe(id, definition);
+    },
+    /** Registers a pure condition predicate used by recipe definitions. */
+    registerCondition(name: string, handler: CraftCondition): void {
+        addCondition(name, handler);
+    },
+    /** Native recipe requirements plus registered plugin conditions. */
+    canCraft(entity: ValheimBaseNPC, recipe: string): CraftCheck {
+        return checkCraft(entity, recipe);
+    },
+    /** Craft one recipe: checks, consumes and produces into inventory or on the ground. */
+    craft(entity: ValheimBaseNPC, recipe: string): CraftResult {
+        return runCraft(entity, recipe);
     },
     /** Reads one core-owned per-NPC board value. */
     boardGet(entity: ValheimBaseNPC, key: string): unknown {

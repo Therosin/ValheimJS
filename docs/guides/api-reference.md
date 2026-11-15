@@ -176,6 +176,10 @@ npc.affordances(entity, target): NpcAffordances // verbs/support for one target 
 npc.interact(entity, target, options?): NpcInteractionResult
 npc.attack(entity, target, secondary?): ActionResult
 npc.jump(entity): ActionResult
+npc.defineRecipe(id, { recipe?, conditions? }): void
+npc.registerCondition(name, handler): void
+npc.canCraft(entity, recipe): CraftCheck
+npc.craft(entity, recipe): CraftResult
 npc.memory(entity): Record<string, unknown>     // durable plugin-owned memory
 npc.setMemory(entity, value): boolean
 npcBase(): new (handle: string) => ValheimBaseNPC
@@ -265,6 +269,7 @@ interface NpcView {
     health: number; maxHealth: number; isAlive: boolean;
     faction: string; isTamed: boolean; level: number;
     home: { x: number; y: number; z: number };
+    swimming: boolean;
     combat: { engaged: boolean; threatId: string | null };
     action: NpcAction | null;    // { seq, kind, status, reason, target, targetId, progress }
     environment: { day: number; isDay: boolean; biome: string; weather: string | null } | null;

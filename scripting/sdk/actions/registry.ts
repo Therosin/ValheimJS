@@ -1,4 +1,4 @@
-import type { NpcAffordances, NpcInteractOptions, NpcInteractionResult, NpcSensed, NpcView } from "../api/types";
+import type { CraftResult, NpcAffordances, NpcInteractOptions, NpcInteractionResult, NpcSensed, NpcView } from "../api/types";
 
 /**
  * Action registry for `Plan` steps.
@@ -63,6 +63,8 @@ export interface ActionContext {
     readonly local: Record<string, unknown>;
     /** Inventory supplied to the plan, or null. */
     readonly inventory: InventoryActions | null;
+    /** Crafting function supplied to the plan, or null. */
+    readonly craft: ((recipe: string) => CraftResult) | null;
     /** True while a native action issued through `issue` has not settled. */
     readonly awaiting: boolean;
     log(message: string): void;

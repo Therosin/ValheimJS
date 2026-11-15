@@ -121,6 +121,8 @@ export interface NpcView {
     level: number;
     home: NpcPos;
     ready: boolean;
+    /** True while the body is in water/swimming. */
+    swimming: boolean;
     /** Native auto-combat state; engaged bodies report `paused`/`combat` for their intent. */
     combat: { engaged: boolean; threatId: string | null };
     self: NpcStats | null;
@@ -302,6 +304,27 @@ export interface NpcInteractionResult {
     reason: string | null;
     verb: string;
     count: number;
+}
+
+/** One reason a native recipe cannot be crafted right now. */
+export interface CraftReason {
+    code: string;
+    item?: string;
+    need?: number;
+    have?: number;
+    station?: string;
+    level?: number;
+    condition?: string;
+}
+
+export interface CraftCheck {
+    ok: boolean;
+    reasons: CraftReason[];
+}
+
+export interface CraftResult extends CraftCheck {
+    reason?: string | null;
+    count?: number;
 }
 
 export interface NpcInteractOptions {

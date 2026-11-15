@@ -17,6 +17,7 @@ function view(): NpcView {
         level: 1,
         home: { x: 0, y: 0, z: 0 },
         ready: true,
+        swimming: false,
         combat: { engaged: false, threatId: null },
         self: null,
         action: null,
@@ -371,6 +372,11 @@ describe("plan", () => {
 
         const missing = new Plan(actor(), [{ equip: "Club" }]);
         expect(missing.tick(view, 0)).toBe("failure");
+
+        const crafted = new Plan(actor(), [{ craft: "Club" }], {
+            craft: () => ({ ok: true, reasons: [], count: 1 })
+        });
+        expect(crafted.tick(view, 0)).toBe("success");
     });
 });
 
