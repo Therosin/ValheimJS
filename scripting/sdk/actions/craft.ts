@@ -11,7 +11,7 @@ registerAction<{ craft: string }>("craft", {
             ? "success"
             : {
                 status: "failure",
-                reason: result.reason ?? result.reasons[0]?.code ?? "craft-failed"
+                reason: result.blockedBy[0]?.code ?? "craft-failed"
             };
     }
 });

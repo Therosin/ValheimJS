@@ -350,13 +350,28 @@ npc.defineRecipe("club", {
 });
 
 const check = npc.canCraft(this, "club");
-// { ok: false, reasons: [{ code: "missing-ingredient", item: "$item_wood", need: 6, have: 2 }] }
+// {
+//   ok: false,
+//   missing: {
+//     ingredients: [{ item: "$item_wood", amount: 4 }],
+//     station: { prefab: "forge", requiredLevel: 2 }
+//   },
+//   blockedBy: [
+//     { code: "missing-ingredient", item: "$item_wood", need: 6, have: 2 },
+//     { code: "station-level", prefab: "forge", requiredLevel: 2, haveLevel: 1 },
+//     { code: "swimming" }
+//   ]
+// }
 const result = npc.craft(this, "club");   // { ok: true, count: 1 }
 ```
 
-Native reasons: `recipe-missing`, `recipe-disabled`, `unsupported`, `upgrade-only`,
+`missing` is the planner's shopping list: ingredient shortfalls and the station requirement.
+`blockedBy` is the diagnosis. Conditions can contribute to both. The planner sources, walks to a
+station, leaves the water or abandons; the crafting system never chooses for it.
+
+Native blockers: `recipe-missing`, `recipe-disabled`, `unsupported`, `upgrade-only`,
 `station-missing`, `station-level`, `missing-ingredient`, `body-lost`, `no-inventory`.
-Condition failures use the condition name or an explicit `{ code, ... }` reason.
+Conditions add their own `blockedBy` entries (and optionally `missing` shortfalls).
 Built-ins: `notSwimming`, `atHome`, `hasItem`, `missingItem`; custom conditions are registered
 with `npc.registerCondition(name, handler)` and must be pure.
 

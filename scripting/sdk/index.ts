@@ -74,7 +74,7 @@ export {
     type StepOutcome,
     type Vec3Like
 } from "./planning";
-export type { CraftCheck, CraftReason, CraftResult } from "./api/types";
+export type { CraftBlock, CraftCheck, CraftResult } from "./api/types";
 export type {
     ConditionRef,
     CraftCondition,

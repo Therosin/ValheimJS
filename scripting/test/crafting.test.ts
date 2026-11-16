@@ -1,9 +1,21 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { canCraft, craft, defineRecipe, registerCondition } from "../sdk/crafting";
-import type { CraftCheck, CraftResult, NpcView } from "../sdk/api/types";
+import type { CraftBlock, CraftCheck, CraftMissing, CraftResult, NpcView } from "../sdk/api/types";
 import type { Inventory, ValheimBaseNPC } from "../sdk/api/generated";
 
-function install(recipeChecks: Record<string, CraftCheck>, view: NpcView | null, counts: Record<string, number>): string[] {
+function check(ok: boolean, blockedBy: CraftBlock[] = [], missing: Partial<CraftMissing> = {}): CraftCheck {
+    return {
+        ok,
+        blockedBy,
+        missing: { ingredients: [], station: null, ...missing }
+    };
+}
+
+function install(
+    recipeChecks: Record<string, CraftCheck>,
+    view: NpcView | null,
+    counts: Record<string, number>
+): string[] {
     const craftCalls: string[] = [];
     const inventory = {
         count: (name: string) => counts[name] ?? 0,
@@ -16,10 +28,15 @@ function install(recipeChecks: Record<string, CraftCheck>, view: NpcView | null,
                 api: {
                     npc: {
                         craftCheck: (_entity: unknown, recipe: string) =>
-                            recipeChecks[recipe] ?? { ok: true, reasons: [] },
+                            recipeChecks[recipe] ?? check(true),
                         craft: (_entity: unknown, recipe: string) => {
                             craftCalls.push(recipe);
-                            return { ok: true, reasons: [], count: 1 } as CraftResult;
+                            return {
+                                ok: true,
+                                missing: { ingredients: [], station: null },
+                                blockedBy: [],
+                                count: 1
+                            } as CraftResult;
                         },
                         perception: () => view,
                         inventory: () => inventory as unknown as Inventory
@@ -62,50 +79,64 @@ function view(home: { x: number; z: number }, at: { x: number; z: number }, swim
     };
 }
 
+afterEach(() => {
+    Reflect.deleteProperty(globalThis, "__vjs_context");
+});
+
 describe("crafting", () => {
-    test("merges native reasons and plugin conditions", () => {
-        install({ Club: { ok: false, reasons: [{ code: "missing-ingredient", item: "Wood", need: 2, have: 1 }] } }, view({ x: 0, z: 0 }, { x: 20, z: 0 }), {});
+    test("merges native blockedBy and missing with plugin conditions", () => {
+        install(
+            {
+                Club: check(
+                    false,
+                    [{ code: "missing-ingredient", item: "Wood", need: 2, have: 1 }],
+                    { ingredients: [{ item: "Wood", amount: 1 }] }
+                )
+            },
+            view({ x: 0, z: 0 }, { x: 20, z: 0 }),
+            {}
+        );
         defineRecipe("club-native", { recipe: "Club", conditions: [{ condition: "atHome" }] });
 
-        const check = canCraft(npc(), "club-native");
-        expect(check.ok).toBe(false);
-        expect(check.reasons.map(reason => reason.code)).toEqual(["missing-ingredient", "not-at-home"]);
+        const result = canCraft(npc(), "club-native");
+        expect(result.ok).toBe(false);
+        expect(result.blockedBy.map(block => block.code)).toEqual(["missing-ingredient", "not-at-home"]);
+        expect(result.missing.ingredients).toEqual([{ item: "Wood", amount: 1 }]);
     });
 
-    test("built-in conditions read native facts", () => {
-        install({ Club: { ok: true, reasons: [] } }, view({ x: 0, z: 0 }, { x: 0, z: 0 }, true), { Wood: 3 });
+    test("built-in conditions read native facts and contribute missing items", () => {
+        install({ Club: check(true) }, view({ x: 0, z: 0 }, { x: 0, z: 0 }, true), { Wood: 3 });
         defineRecipe("club-swim", { recipe: "Club", conditions: [{ condition: "notSwimming" }] });
         defineRecipe("club-wood", { recipe: "Club", conditions: [{ condition: "hasItem", item: "Wood", count: 2 }] });
         defineRecipe("club-no-wood", { recipe: "Club", conditions: [{ condition: "hasItem", item: "Wood", count: 5 }] });
 
-        expect(canCraft(npc(), "club-swim").reasons.map(reason => reason.code)).toEqual(["swimming"]);
+        expect(canCraft(npc(), "club-swim").blockedBy.map(block => block.code)).toEqual(["swimming"]);
         expect(canCraft(npc(), "club-wood").ok).toBe(true);
-        expect(canCraft(npc(), "club-no-wood").reasons[0]?.code).toBe("missing-item");
+        const missing = canCraft(npc(), "club-no-wood");
+        expect(missing.blockedBy[0]?.code).toBe("missing-item");
+        expect(missing.missing.ingredients).toEqual([{ item: "Wood", amount: 2 }]);
     });
 
-    test("custom conditions run and failures are reported", () => {
-        install({ Club: { ok: true, reasons: [] } }, view({ x: 0, z: 0 }, { x: 0, z: 0 }), {});
+    test("custom condition failures are reported", () => {
+        install({ Club: check(true) }, view({ x: 0, z: 0 }, { x: 0, z: 0 }), {});
         registerCondition("inPool", () => false);
         defineRecipe("club-pool", { recipe: "Club", conditions: [{ condition: "inPool" }] });
 
-        expect(canCraft(npc(), "club-pool").reasons[0]?.code).toBe("inPool");
+        expect(canCraft(npc(), "club-pool").blockedBy[0]?.code).toBe("inPool");
     });
 
     test("craft only reaches native after checks pass", () => {
-        const calls = install({ Club: { ok: true, reasons: [] } }, view({ x: 0, z: 0 }, { x: 0, z: 0 }), {});
+        const calls = install({ Club: check(true) }, view({ x: 0, z: 0 }, { x: 0, z: 0 }), {});
         defineRecipe("club-craft", { recipe: "Club" });
 
         const result = craft(npc(), "club-craft");
         expect(result.ok).toBe(true);
+        expect(result.count).toBe(1);
         expect(calls).toEqual(["Club"]);
 
-        install({ Club: { ok: false, reasons: [{ code: "recipe-missing" }] } }, null, {});
+        install({ Club: check(false, [{ code: "recipe-missing" }]) }, null, {});
         const blocked = craft(npc(), "club-craft");
         expect(blocked.ok).toBe(false);
-        expect(blocked.reason).toBe("recipe-missing");
+        expect(blocked.blockedBy[0]?.code).toBe("recipe-missing");
     });
-});
-
-afterEach(() => {
-    Reflect.deleteProperty(globalThis, "__vjs_context");
 });

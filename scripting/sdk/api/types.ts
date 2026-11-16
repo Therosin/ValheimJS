@@ -306,25 +306,43 @@ export interface NpcInteractionResult {
     count: number;
 }
 
-/** One reason a native recipe cannot be crafted right now. */
-export interface CraftReason {
+/** One reason a recipe cannot be crafted right now. */
+export interface CraftBlock {
     code: string;
     item?: string;
     need?: number;
     have?: number;
-    station?: string;
-    level?: number;
-    condition?: string;
+    prefab?: string;
+    requiredLevel?: number;
+    haveLevel?: number;
+}
+
+export interface CraftMissingItem {
+    item: string;
+    /** Shortfall to source. */
+    amount: number;
+}
+
+export interface CraftMissingStation {
+    prefab: string;
+    requiredLevel: number;
+}
+
+export interface CraftMissing {
+    ingredients: CraftMissingItem[];
+    station: CraftMissingStation | null;
 }
 
 export interface CraftCheck {
     ok: boolean;
-    reasons: CraftReason[];
+    /** Sourceable shortfalls and station requirement. */
+    missing: CraftMissing;
+    /** Why the recipe is currently blocked. */
+    blockedBy: CraftBlock[];
 }
 
 export interface CraftResult extends CraftCheck {
-    reason?: string | null;
-    count?: number;
+    count: number;
 }
 
 export interface NpcInteractOptions {

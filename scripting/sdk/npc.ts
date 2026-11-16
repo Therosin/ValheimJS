@@ -35,7 +35,7 @@ import type {
 export type {
     ActionResult,
     CraftCheck,
-    CraftReason,
+    CraftBlock,
     CraftResult,
     FoodSlot,
     InventoryItem,

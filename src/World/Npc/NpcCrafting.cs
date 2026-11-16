@@ -4,16 +4,54 @@ using UnityEngine;
 
 namespace ValheimJS.World;
 
+/// <summary>One ingredient still needed, as a sourceable amount.</summary>
+internal sealed class CraftMissingItem
+{
+    internal string Item = "";
+    internal int Amount;
+
+    internal Dictionary<string, object?> ToPlain() => new()
+    {
+        ["item"] = Item,
+        ["amount"] = Amount
+    };
+}
+
+/// <summary>Station requirement state, when the recipe needs a station.</summary>
+internal sealed class CraftMissingStation
+{
+    internal string Prefab = "";
+    internal int RequiredLevel;
+
+    internal Dictionary<string, object?> ToPlain() => new()
+    {
+        ["prefab"] = Prefab,
+        ["requiredLevel"] = RequiredLevel
+    };
+}
+
+internal sealed class CraftMissing
+{
+    internal readonly List<CraftMissingItem> Ingredients = new();
+    internal CraftMissingStation? Station;
+
+    internal Dictionary<string, object?> ToPlain() => new()
+    {
+        ["ingredients"] = Ingredients.ConvertAll(item => (object?)item.ToPlain()),
+        ["station"] = Station?.ToPlain()
+    };
+}
+
 /// <summary>One reason a recipe cannot be crafted right now.</summary>
-internal sealed class CraftReason
+internal sealed class CraftBlock
 {
     internal string Code = "";
     internal string? Item;
     internal int Need;
     internal int Have;
-    internal string? Station;
-    internal int Level;
-    internal string? Condition;
+    internal string? Prefab;
+    internal int RequiredLevel;
+    internal int HaveLevel;
 
     internal Dictionary<string, object?> ToPlain()
     {
@@ -21,9 +59,9 @@ internal sealed class CraftReason
         if (Item != null) plain["item"] = Item;
         if (Need > 0) plain["need"] = Need;
         if (Have > 0) plain["have"] = Have;
-        if (Station != null) plain["station"] = Station;
-        if (Level > 0) plain["level"] = Level;
-        if (Condition != null) plain["condition"] = Condition;
+        if (Prefab != null) plain["prefab"] = Prefab;
+        if (RequiredLevel > 0) plain["requiredLevel"] = RequiredLevel;
+        if (HaveLevel > 0) plain["haveLevel"] = HaveLevel;
         return plain;
     }
 }
@@ -31,41 +69,43 @@ internal sealed class CraftReason
 internal sealed class CraftCheck
 {
     internal bool Ok;
-    internal readonly List<CraftReason> Reasons = new();
+    internal readonly List<CraftBlock> BlockedBy = new();
+    internal readonly CraftMissing Missing = new();
     internal Recipe? Recipe;
 
     internal Dictionary<string, object?> ToPlain() => new()
     {
         ["ok"] = Ok,
-        ["reasons"] = Reasons.ConvertAll(reason => (object?)reason.ToPlain())
+        ["missing"] = Missing.ToPlain(),
+        ["blockedBy"] = BlockedBy.ConvertAll(block => (object?)block.ToPlain())
     };
 
-    internal CraftCheck Fail(CraftReason reason)
+    internal CraftCheck Fail(CraftBlock block)
     {
-        Reasons.Add(reason);
+        BlockedBy.Add(block);
         Ok = false;
         return this;
     }
 
     internal void Result()
     {
-        Ok = Reasons.Count == 0;
+        Ok = BlockedBy.Count == 0;
     }
 }
 
 internal sealed class CraftResult
 {
     internal bool Ok;
-    internal string? Reason;
     internal int Count;
-    internal List<CraftReason> Reasons = new();
+    internal List<CraftBlock> BlockedBy = new();
+    internal CraftMissing Missing = new();
 
     internal Dictionary<string, object?> ToPlain() => new()
     {
         ["ok"] = Ok,
-        ["reason"] = Reason,
         ["count"] = Count,
-        ["reasons"] = Reasons.ConvertAll(reason => (object?)reason.ToPlain())
+        ["missing"] = Missing.ToPlain(),
+        ["blockedBy"] = BlockedBy.ConvertAll(block => (object?)block.ToPlain())
     };
 }
 
@@ -85,62 +125,73 @@ internal static class NpcCrafting
         var humanoid = obj.Character as Humanoid;
         if (humanoid == null)
         {
-            return check.Fail(new CraftReason { Code = "body-lost" });
+            return check.Fail(new CraftBlock { Code = "body-lost" });
         }
 
         var inventory = humanoid.GetInventory();
         if (inventory == null)
         {
-            return check.Fail(new CraftReason { Code = "no-inventory" });
+            return check.Fail(new CraftBlock { Code = "no-inventory" });
         }
 
         var recipe = FindRecipe(recipeName);
         if (recipe == null)
         {
-            return check.Fail(new CraftReason { Code = "recipe-missing" });
+            return check.Fail(new CraftBlock { Code = "recipe-missing" });
         }
 
         check.Recipe = recipe;
         if (!recipe.m_enabled)
         {
-            check.Fail(new CraftReason { Code = "recipe-disabled" });
+            check.Fail(new CraftBlock { Code = "recipe-disabled" });
         }
 
         if (recipe.m_noCraftOnlyUpgrade)
         {
-            check.Fail(new CraftReason { Code = "upgrade-only" });
+            check.Fail(new CraftBlock { Code = "upgrade-only" });
         }
 
         if (recipe.m_requireOnlyOneIngredient)
         {
-            check.Fail(new CraftReason { Code = "unsupported" });
+            check.Fail(new CraftBlock { Code = "unsupported" });
         }
 
         if (recipe.m_item == null)
         {
-            check.Fail(new CraftReason { Code = "invalid-recipe" });
+            check.Fail(new CraftBlock { Code = "invalid-recipe" });
         }
 
         if (recipe.m_craftingStation != null)
         {
+            var prefab = PrefabName(recipe.m_craftingStation.gameObject);
             var station = FindStation(recipe.m_craftingStation, humanoid, out var level);
             if (station == null)
             {
-                check.Fail(new CraftReason
+                check.Missing.Station = new CraftMissingStation
+                {
+                    Prefab = prefab,
+                    RequiredLevel = recipe.m_minStationLevel
+                };
+                check.Fail(new CraftBlock
                 {
                     Code = "station-missing",
-                    Station = PrefabName(recipe.m_craftingStation.gameObject)
+                    Prefab = prefab,
+                    RequiredLevel = recipe.m_minStationLevel
                 });
             }
             else if (level < recipe.m_minStationLevel)
             {
-                check.Fail(new CraftReason
+                check.Missing.Station = new CraftMissingStation
+                {
+                    Prefab = prefab,
+                    RequiredLevel = recipe.m_minStationLevel
+                };
+                check.Fail(new CraftBlock
                 {
                     Code = "station-level",
-                    Station = PrefabName(recipe.m_craftingStation.gameObject),
-                    Level = recipe.m_minStationLevel,
-                    Need = recipe.m_minStationLevel,
-                    Have = level
+                    Prefab = prefab,
+                    RequiredLevel = recipe.m_minStationLevel,
+                    HaveLevel = level
                 });
             }
         }
@@ -157,7 +208,12 @@ internal static class NpcCrafting
             var have = inventory.CountItems(name);
             if (have < amount)
             {
-                check.Fail(new CraftReason
+                check.Missing.Ingredients.Add(new CraftMissingItem
+                {
+                    Item = name,
+                    Amount = amount - have
+                });
+                check.Fail(new CraftBlock
                 {
                     Code = "missing-ingredient",
                     Item = name,
@@ -179,8 +235,8 @@ internal static class NpcCrafting
             return new CraftResult
             {
                 Ok = false,
-                Reason = check.Reasons.Count > 0 ? check.Reasons[0].Code : "invalid",
-                Reasons = check.Reasons
+                BlockedBy = check.BlockedBy,
+                Missing = check.Missing
             };
         }
 
@@ -189,7 +245,11 @@ internal static class NpcCrafting
         var inventory = humanoid?.GetInventory();
         if (humanoid == null || inventory == null)
         {
-            return new CraftResult { Ok = false, Reason = "body-lost" };
+            return new CraftResult
+            {
+                Ok = false,
+                BlockedBy = new List<CraftBlock> { new() { Code = "body-lost" } }
+            };
         }
 
         var consumed = new List<(Piece.Requirement Requirement, int Amount)>();
@@ -205,7 +265,11 @@ internal static class NpcCrafting
             if (!Consume(inventory, name, need))
             {
                 Refund(inventory, humanoid, consumed);
-                return new CraftResult { Ok = false, Reason = "missing-ingredient" };
+                return new CraftResult
+                {
+                    Ok = false,
+                    BlockedBy = new List<CraftBlock> { new() { Code = "missing-ingredient" } }
+                };
             }
 
             consumed.Add((requirement, need));
@@ -241,8 +305,11 @@ internal static class NpcCrafting
                 return new CraftResult
                 {
                     Ok = false,
-                    Reason = added == 0 ? "output-failed" : "output-partial",
-                    Count = added
+                    Count = added,
+                    BlockedBy = new List<CraftBlock>
+                    {
+                        new() { Code = added == 0 ? "output-failed" : "output-partial" }
+                    }
                 };
             }
         }

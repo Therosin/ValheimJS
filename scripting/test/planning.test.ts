@@ -374,7 +374,7 @@ describe("plan", () => {
         expect(missing.tick(view, 0)).toBe("failure");
 
         const crafted = new Plan(actor(), [{ craft: "Club" }], {
-            craft: () => ({ ok: true, reasons: [], count: 1 })
+            craft: () => ({ ok: true, missing: { ingredients: [], station: null }, blockedBy: [], count: 1 })
         });
         expect(crafted.tick(view, 0)).toBe("success");
     });

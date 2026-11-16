@@ -1,14 +1,12 @@
 import { context } from "./runtime";
 import type { Inventory, ValheimBaseNPC } from "./api/generated";
-import type { CraftCheck, CraftReason, CraftResult, NpcView } from "./api/types";
+import type { CraftBlock, CraftCheck, CraftMissing, CraftResult, NpcView } from "./api/types";
 
 /**
  * Standard equipment crafting: native ObjectDB recipes plus plugin-defined conditions.
  *
- * The native executor validates the recipe, station/level and ingredients, then consumes and
- * produces the output (into the inventory or on the ground). Plugin conditions are evaluated
- * here, before the native transaction, and only describe whether this recipe is valid for this
- * NPC. They never decide whether the NPC wants to craft.
+ * `missing` is the sourceable shortfall; `blockedBy` is why the recipe is currently blocked.
+ * Conditions may contribute to both. They never decide whether the NPC wants to craft.
  */
 
 export interface ConditionRef {
@@ -35,7 +33,11 @@ export interface CraftConditionContext {
 
 export type CraftConditionResult =
     | boolean
-    | { ok: boolean; reasons?: CraftReason[] };
+    | {
+        ok: boolean;
+        blockedBy?: CraftBlock[];
+        missing?: Partial<CraftMissing>;
+    };
 
 export type CraftCondition = (
     context: CraftConditionContext,
@@ -57,42 +59,57 @@ export function canCraft(entity: ValheimBaseNPC, recipe: string): CraftCheck {
     const definition = recipes.get(recipe);
     const nativeName = definition?.recipe ?? recipe;
     const api = context().host.api.npc;
-    const reasons: CraftReason[] = [];
 
     const native = api.craftCheck(entity, nativeName) as CraftCheck | undefined;
+    const blockedBy: CraftBlock[] = [...(native?.blockedBy ?? [])];
+    const missing: CraftMissing = {
+        ingredients: [...(native?.missing?.ingredients ?? [])],
+        station: native?.missing?.station ?? null
+    };
+
     if (native === undefined) {
-        reasons.push({ code: "native-unavailable" });
-    } else {
-        reasons.push(...(native.reasons ?? []));
+        blockedBy.push({ code: "native-unavailable" });
     }
 
-    if (definition?.conditions !== undefined) {
-        const view = api.perception(entity) as NpcView | null;
-        const inventory = api.inventory(entity) as Inventory;
-        for (const ref of definition.conditions) {
-            const handler = conditions.get(ref.condition);
-            if (handler === undefined) {
-                reasons.push({ code: "condition-missing", condition: ref.condition });
-                continue;
+    for (const ref of definition?.conditions ?? []) {
+        const handler = conditions.get(ref.condition);
+        if (handler === undefined) {
+            blockedBy.push({ code: "condition-missing" });
+            continue;
+        }
+
+        let result: CraftConditionResult;
+        try {
+            result = handler(
+                {
+                    actor: entity,
+                    view: api.perception(entity) as NpcView | null,
+                    recipe,
+                    inventory: api.inventory(entity) as Inventory,
+                    now: Date.now()
+                },
+                ref
+            );
+        } catch {
+            blockedBy.push({ code: "condition-failed" });
+            continue;
+        }
+
+        if (result === false) {
+            blockedBy.push({ code: ref.condition });
+        } else if (typeof result === "object" && !result.ok) {
+            blockedBy.push(...(result.blockedBy ?? [{ code: ref.condition }]));
+            if (result.missing?.ingredients !== undefined) {
+                missing.ingredients.push(...result.missing.ingredients);
             }
 
-            let result: CraftConditionResult;
-            try {
-                result = handler({ actor: entity, view, recipe, inventory, now: Date.now() }, ref);
-            } catch {
-                reasons.push({ code: "condition-failed", condition: ref.condition });
-                continue;
-            }
-
-            if (result === false) {
-                reasons.push({ code: ref.condition });
-            } else if (typeof result === "object" && !result.ok) {
-                reasons.push(...(result.reasons ?? [{ code: ref.condition }]));
+            if (result.missing?.station !== undefined && missing.station === null) {
+                missing.station = result.missing.station;
             }
         }
     }
 
-    return { ok: reasons.length === 0, reasons };
+    return { ok: blockedBy.length === 0, missing, blockedBy };
 }
 
 export function craft(entity: ValheimBaseNPC, recipe: string): CraftResult {
@@ -100,26 +117,26 @@ export function craft(entity: ValheimBaseNPC, recipe: string): CraftResult {
     const nativeName = definition?.recipe ?? recipe;
     const check = canCraft(entity, recipe);
     if (!check.ok) {
-        return {
-            ok: false,
-            reason: check.reasons[0]?.code ?? "invalid",
-            reasons: check.reasons,
-            count: 0
-        };
+        return { ...check, count: 0 };
     }
 
     const result = context().host.api.npc.craft(entity, nativeName) as CraftResult | undefined;
-    return result ?? { ok: false, reason: "native-unavailable", reasons: [], count: 0 };
+    return result ?? {
+        ok: false,
+        missing: check.missing,
+        blockedBy: [{ code: "native-unavailable" }],
+        count: 0
+    };
 }
 
 registerCondition("notSwimming", ({ view }) =>
     view?.swimming === true
-        ? { ok: false, reasons: [{ code: "swimming" }] }
+        ? { ok: false, blockedBy: [{ code: "swimming" }] }
         : true);
 
 registerCondition("atHome", ({ view }, ref) => {
     if (view === null) {
-        return { ok: false, reasons: [{ code: "no-body" }] };
+        return { ok: false, blockedBy: [{ code: "no-body" }] };
     }
 
     const radius = typeof ref.radius === "number" ? ref.radius : 5;
@@ -127,16 +144,22 @@ registerCondition("atHome", ({ view }, ref) => {
     const dz = view.z - view.home.z;
     return Math.hypot(dx, dz) <= radius
         ? true
-        : { ok: false, reasons: [{ code: "not-at-home" }] };
+        : { ok: false, blockedBy: [{ code: "not-at-home" }] };
 });
 
 registerCondition("hasItem", ({ inventory }, ref) => {
     const item = typeof ref.item === "string" ? ref.item : "";
     const need = typeof ref.count === "number" ? ref.count : 1;
     const have = inventory.count(item);
-    return have >= need
-        ? true
-        : { ok: false, reasons: [{ code: "missing-item", item, need, have }] };
+    if (have >= need) {
+        return true;
+    }
+
+    return {
+        ok: false,
+        blockedBy: [{ code: "missing-item", item, need, have }],
+        missing: { ingredients: [{ item, amount: need - have }] }
+    };
 });
 
 registerCondition("missingItem", ({ inventory }, ref) => {
@@ -144,5 +167,5 @@ registerCondition("missingItem", ({ inventory }, ref) => {
     const have = inventory.count(item);
     return have === 0
         ? true
-        : { ok: false, reasons: [{ code: "already-owned", item, have }] };
+        : { ok: false, blockedBy: [{ code: "already-owned", item, have }] };
 });
