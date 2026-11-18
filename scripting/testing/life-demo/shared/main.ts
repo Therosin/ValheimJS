@@ -8,20 +8,23 @@ import {
     type BoardMembership,
     type BoardScope,
     type NpcAction,
+    type NpcDamageEvent,
     type NpcPos,
+    type NpcSensed,
     type NpcStats,
-    type NpcView
+    type NpcView,
+    type UtilityAI,
+    type UtilityStatsStore
 } from "../../../sdk/index";
 import type { Inventory } from "../../../sdk/api/generated";
 import { compileBehaviours } from "../lib/behaviours";
+import type { BehaviorOutcome, BehaviorRuntime } from "../lib/behaviour";
+import { VillagerRuntime } from "../lib/villager";
 import {
-    VillagerBrain,
-    type BehaviorOutcome,
-    type BehaviorRuntime,
+    createVillagerAI,
+    profileFor,
     type VillagerActivity
-} from "../lib/brain";
-
-const NAMES = ["Astrid", "Bjorn", "Freya", "Leif", "Runa", "Sigrid", "Torsten", "Ylva"];
+} from "../definitions";
 
 const runtime: BehaviorRuntime = {
     instantiate: (treeId, options) => ai.instantiate(treeId, options),
@@ -31,7 +34,7 @@ const runtime: BehaviorRuntime = {
     }
 };
 
-/** `home=x,y,z` keeps the villager alive on a dedicated server with no players. */
+/** `home=x,y,z` keeps the villagers alive on a dedicated server with no players. */
 function configuredHome(config: (key: string) => string | null): NpcPos | null {
     const raw = config("home");
     if (!raw) return null;
@@ -40,10 +43,77 @@ function configuredHome(config: (key: string) => string | null): NpcPos | null {
     return { x: parts[0], y: parts[1], z: parts[2] };
 }
 
-function makeVillager(trees: Record<VillagerActivity, string>) {
+const VILLAGERS = [
+    { name: "Bob", offset: { x: -2, z: 0 } },
+    { name: "Astrid", offset: { x: 2, z: 0 } }
+] as const;
+
+const VILLAGER_NAMES = new Set<string>(VILLAGERS.map(entry => entry.name));
+
+function formatNeeds(needs: { energy: number; social: number; curiosity: number }): string {
+    return `e=${needs.energy.toFixed(2)} s=${needs.social.toFixed(2)} c=${needs.curiosity.toFixed(2)}`;
+}
+
+function isPosition(value: unknown): value is NpcPos {
+    if (!value || typeof value !== "object") return false;
+    const pos = value as Partial<NpcPos>;
+    return Number.isFinite(pos.x) && Number.isFinite(pos.y) && Number.isFinite(pos.z);
+}
+
+function distanceTo(left: NpcPos, right: NpcPos): number {
+    return Math.hypot(left.x - right.x, left.z - right.z);
+}
+
+/** Move persisted villagers when the configured home points somewhere else. */
+function migrateVillagers(
+    entities: ReturnType<typeof npc.handles>,
+    home: NpcPos
+): number {
+    let moved = 0;
+    for (const entity of entities) {
+        if (!VILLAGER_NAMES.has(entity.name)) continue;
+        const view = npc.perception(entity);
+        const memory = npc.memory(entity);
+        const knownHome = isPosition(memory.home)
+            ? memory.home
+            : view?.home ?? { x: entity.x, y: entity.y, z: entity.z };
+        if (distanceTo(knownHome, home) <= 8) continue;
+
+        const profile = VILLAGERS.find(candidate => candidate.name === entity.name);
+        if (!profile) continue;
+        const position: NpcPos = {
+            x: home.x + profile.offset.x,
+            y: home.y,
+            z: home.z + profile.offset.z
+        };
+        const spawned = npc.spawn("villager", { position, name: entity.name });
+        if (!spawned) {
+            log(`[${entity.name}] move failed: spawn refused at ${Math.round(home.x)}, ${Math.round(home.z)}`);
+            continue;
+        }
+
+        const nextMemory: Record<string, unknown> = {
+            ...memory,
+            home: position
+        };
+        delete nextMemory.shelter;
+        npc.setMemory(spawned, nextMemory);
+        npc.despawn(entity);
+        moved++;
+        log(
+            `moved ${entity.name} from ${Math.round(knownHome.x)}, ${Math.round(knownHome.z)} ` +
+                `to ${Math.round(position.x)}, ${Math.round(position.z)}`
+        );
+    }
+    return moved;
+}
+
+function makeVillager(trees: Record<VillagerActivity, string>, debug: boolean) {
     const Base = npcBase();
     return class Villager extends Base {
-        private brain: VillagerBrain | null = null;
+        private readonly debugEnabled = debug;
+        private runtime: VillagerRuntime | null = null;
+        private utility: UtilityAI | null = null;
         private lastSave = 0;
         private board: BoardScope | null = null;
         private membership: BoardMembership | null = null;
@@ -73,6 +143,10 @@ function makeVillager(trees: Record<VillagerActivity, string>) {
             return npc.inventory(this);
         }
 
+        crouch(crouched: boolean) {
+            return npc.crouch(this, crouched);
+        }
+
         onAction(_view: NpcView, action: NpcAction) {
             if (action.status !== "failed" && action.status !== "cancelled") return;
             const target = action.target
@@ -84,35 +158,54 @@ function makeVillager(trees: Record<VillagerActivity, string>) {
             );
         }
 
+        onDamaged(hit: NpcDamageEvent) {
+            this.utility?.record("damaged", hit, npc.perception(this) ?? undefined);
+        }
+
+        onHeard(entry: NpcSensed) {
+            this.utility?.record("heard", entry, npc.perception(this) ?? undefined);
+        }
+
         onDespawn() {
-            this.brain?.dispose();
-            this.brain = null;
+            this.utility?.dispose();
+            this.utility = null;
+            this.runtime?.dispose();
+            this.runtime = null;
             this.closeBoard();
         }
 
         onSpawn(view: NpcView) {
-            if (!this.brain) this.attach(view);
+            if (!this.runtime) this.attach(view);
         }
 
         onRehydrate(view: NpcView) {
-            if (!this.brain) this.attach(view);
+            if (!this.runtime) this.attach(view);
         }
 
         onTick(view: NpcView) {
-            if (!this.brain) this.attach(view);
-            const brain = this.brain;
-            if (!brain) return;
+            if (!this.runtime || !this.utility) this.attach(view);
+            const runtime = this.runtime;
+            const utility = this.utility;
+            if (!runtime || !utility) return;
 
-            brain.tick(view);
-            if (brain.isDirty && Date.now() - this.lastSave >= 5000) {
-                npc.setMemory(this, brain.snapshotMemory());
-                brain.clearDirty();
+            runtime.tick(view);
+            utility.tick(view);
+            if (runtime.isDirty && Date.now() - this.lastSave >= 5000) {
+                npc.setMemory(this, runtime.snapshotMemory());
+                runtime.clearDirty();
                 this.lastSave = Date.now();
+                if (this.debugEnabled) {
+                    log(
+                        `[${this.name}] [memory] save activity=${runtime.currentActivity ?? "idle"} ` +
+                            `needs=${formatNeeds(runtime.needs)} visited=${runtime.visited.size}`
+                    );
+                }
             }
         }
 
         private attach(view: NpcView) {
-            this.brain?.dispose();
+            this.utility?.dispose();
+            this.runtime?.dispose();
             this.closeBoard();
 
             const local = ai.board.local(`npc:${view.id}`);
@@ -137,23 +230,50 @@ function makeVillager(trees: Record<VillagerActivity, string>) {
             this.memberId = view.id;
             village.emit("villager:online", { id: view.id, name: this.name });
 
-            const brain = new VillagerBrain({
+            const profile = profileFor(this.name);
+            const villager = new VillagerRuntime({
                 actor: this,
                 runtime,
-                behaviors: trees,
                 home: view.home,
                 memory: npc.memory(this),
+                needs: profile.needs,
                 board: local,
+                debug: this.debugEnabled ? message => log(`[${this.name}] ${message}`) : undefined,
                 log: message => log(`[${this.name}] ${message}`)
             });
-            this.brain = brain;
+            this.runtime = villager;
+            this.utility = createVillagerAI({
+                context: villager,
+                name: this.name,
+                trees,
+                store: this.store(),
+                debug: this.debugEnabled,
+                log: message => log(`[${this.name}] ${message}`)
+            });
             this.lastSave = Date.now();
-            npc.setMemory(this, brain.snapshotMemory());
-            const home = brain.homePosition;
+            npc.setMemory(this, villager.snapshotMemory());
+
+            const home = villager.homePosition;
             log(
                 `[${this.name}] started at ${Math.round(view.x)}, ${Math.round(view.z)}; ` +
-                    `home ${Math.round(home.x)}, ${Math.round(home.z)}${brain.isSheltered ? " (shelter)" : ""}`
+                    `home ${Math.round(home.x)}, ${Math.round(home.z)}${villager.isSheltered ? " (shelter)" : ""}`
             );
+        }
+
+        private store(): UtilityStatsStore {
+            return {
+                load: () => {
+                    const value = npc.memory(this).utility;
+                    return value && typeof value === "object" ? (value as Partial<Record<string, number>>) : undefined;
+                },
+                save: stats => {
+                    const memory = npc.memory(this);
+                    memory.utility = stats;
+                    npc.setMemory(this, memory);
+                    if (this.runtime) this.runtime.memory.utility = stats;
+                    if (this.debugEnabled) log(`[${this.name}] [memory] utility saved`);
+                }
+            };
         }
 
         private closeBoard() {
@@ -184,16 +304,18 @@ export default definePlugin({
             npc.debug(true);
             log("debug tracing enabled for ai/npc");
         }
-        npc.register(makeVillager(compileBehaviours()), {
+
+        const debug = ctx.host.config("debug") === "true";
+        npc.register(makeVillager(compileBehaviours(), debug), {
             kind: "villager",
             body: "human",
             tickMs: 500,
             faction: "Players",
             items: ["Club", "Raspberry", "Raspberry"],
             perception: {
-                radius: 24,
-                max: 12,
-                viewRange: 24,
+                radius: 30,
+                max: 16,
+                viewRange: 30,
                 viewAngle: 120,
                 lineOfSight: true,
                 includePlayers: true,
@@ -201,29 +323,40 @@ export default definePlugin({
                 includeTamed: true,
                 includeNpcs: true,
                 includeDead: false,
-                objectRadius: 14,
-                objectMax: 10
+                objectRadius: 48,
+                objectMax: 48
             }
         });
     },
 
     onServerTick: authorityHandler(ctx => {
         if (!npc.available()) return;
+
+        const home = configuredHome(key => ctx.host.config(key));
         const existing = npc.handles("villager");
-        if (existing.length > 0) {
+        if (home !== null && migrateVillagers(existing, home) > 0) return;
+
+        const kept = new Map<string, (typeof existing)[number]>();
+        for (const entity of existing) {
+            if (VILLAGER_NAMES.has(entity.name) && !kept.has(entity.name)) {
+                kept.set(entity.name, entity);
+            } else {
+                npc.despawn(entity);
+            }
+        }
+
+        if (kept.size === VILLAGERS.length) {
             ctx.state.spawned = true;
-            for (const duplicate of existing.slice(1)) npc.despawn(duplicate);
             return;
         }
 
-        // Let WorldManager's 10 s rehydrate pass adopt older NPCs before spawning a new one.
+        // Let WorldManager's 10 s rehydrate pass adopt older NPCs before spawning new ones.
         const spawnAt = typeof ctx.state.spawnAt === "number" ? ctx.state.spawnAt : 0;
         if (spawnAt === 0) ctx.state.spawnAt = Date.now() + 12_000;
         if (spawnAt === 0 || Date.now() < spawnAt) return;
 
-        const home = configuredHome(key => ctx.host.config(key));
-        let position: NpcPos | null = home;
-        if (!position) {
+        let base: NpcPos | null = home;
+        if (!base) {
             const api = ctx.host.api;
             const online = "players" in api && "online" in api.players ? api.players.online() : [];
             const local = "players" in api && "local" in api.players ? api.players.local() : null;
@@ -231,24 +364,29 @@ export default definePlugin({
             if (!player) {
                 if (!ctx.state.waiting) {
                     ctx.state.waiting = true;
-                    log("waiting for a player or home=x,y,z before spawning the villager");
+                    log("waiting for a player or home=x,y,z before spawning Bob and Astrid");
                 }
                 return;
             }
-
-            const angle = Math.random() * Math.PI * 2;
-            const radius = 4 + Math.random() * 4;
-            position = {
-                x: player.x + Math.cos(angle) * radius,
-                y: player.y,
-                z: player.z + Math.sin(angle) * radius
-            };
+            base = { x: player.x, y: player.y, z: player.z };
         }
 
-        const name = NAMES[Math.floor(Math.random() * NAMES.length)];
-        const entity = npc.spawn("villager", { position, name });
-        if (!entity) return;
-        ctx.state.spawned = true;
-        log(`spawned ${name} ${entity.id} at ${Math.round(position.x)}, ${Math.round(position.z)}`);
+        for (const villager of VILLAGERS) {
+            if (kept.has(villager.name)) continue;
+            const position = {
+                x: base.x + villager.offset.x,
+                y: base.y,
+                z: base.z + villager.offset.z
+            };
+            const entity = npc.spawn("villager", { position, name: villager.name });
+            if (entity) {
+                log(
+                    `spawned ${villager.name} ${entity.id} at ` +
+                        `${Math.round(position.x)}, ${Math.round(position.z)}`
+                );
+            }
+        }
+
+        ctx.state.spawned = kept.size === VILLAGERS.length || npc.handles("villager").length >= VILLAGERS.length;
     })
 });

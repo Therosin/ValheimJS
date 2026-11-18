@@ -45,6 +45,7 @@ export type {
     NpcDamageEvent,
     NpcEnvironment,
     NpcEquipment,
+    NpcFindQuery,
     NpcInteractOptions,
     NpcInteractionResult,
     NpcObject,
@@ -175,6 +176,21 @@ export const npc = {
     jump(entity: ValheimBaseNPC): ActionResult {
         return context().host.api.npc.jump(entity);
     },
+
+    /** Sets the native crouch/sneak state. */
+    crouch(entity: ValheimBaseNPC, crouched: boolean): ActionResult {
+        return context().host.api.npc.crouch(entity, crouched);
+    },
+
+    /** Reserves a resource handle for one actor; intention only. */
+    reserve(handle: string, owner: string, ttlMs = 5_000): boolean {
+        return context().host.api.npc.reserveResource(handle, owner, ttlMs);
+    },
+
+    /** Releases a resource reservation owned by one actor. */
+    release(handle: string, owner: string): void {
+        context().host.api.npc.releaseResource(handle, owner);
+    },
     /** Registers a recipe alias and its plugin conditions. */
     defineRecipe(id: string, definition: RecipeDefinition = {}): void {
         registerRecipe(id, definition);
@@ -217,6 +233,14 @@ export const npc = {
      */
     sensed(entity: ValheimBaseNPC, filter: NpcSenseFilter = {}): NpcSensed[] {
         return context().host.api.npc.sensed(entity, filter) as NpcSensed[];
+    },
+    /** Nearest perceived target matching a declarative query. */
+    findObject(entity: ValheimBaseNPC, kind: string, query: NpcFindQuery = {}): NpcSensed | null {
+        return context().host.api.npc.findObject(entity, kind, query) as NpcSensed | null;
+    },
+    /** Perceived targets matching a declarative query, nearest first. */
+    findObjects(entity: ValheimBaseNPC, kind: string, query: NpcFindQuery = {}): NpcSensed[] {
+        return context().host.api.npc.findObjects(entity, kind, query) as NpcSensed[];
     },
     /** Persistent plugin-owned data for one NPC (survives restarts). */
     memory(entity: ValheimBaseNPC): Record<string, unknown> {

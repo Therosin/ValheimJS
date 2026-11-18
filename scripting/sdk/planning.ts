@@ -43,6 +43,7 @@ export interface GoalContext {
     readonly now: number;
     readonly goal: string;
     readonly planStatus: PlanStatus | null;
+    readonly planReason: string | null;
     log(message: string): void;
     moveTo(x: number, y: number, z: number, run?: boolean): ActionResultLike;
     wait(seconds: number): ActionResultLike;
@@ -57,11 +58,40 @@ export interface GoalContext {
     sense(id: string): NpcSensed | null;
 }
 
+export interface GoalDescriptionContext {
+    readonly view: NpcView;
+    readonly now: number;
+    readonly stats: Readonly<Record<string, number>>;
+}
+
+/**
+ * Contextual facts about a goal, evaluated before selection. Factors are facts, not utility
+ * deltas; a selection policy decides how they matter. Requirements and provisions are capability
+ * metadata used by prerequisite resolvers.
+ */
+export interface GoalDescription {
+    readonly base?: number;
+    readonly factors?: Readonly<Record<string, number>>;
+    readonly requires?: readonly string[];
+    readonly provides?: readonly string[];
+    /** Expected effects the activity claims to deliver. The runtime still has to apply them. */
+    readonly satisfies?: Readonly<Record<string, number>>;
+}
+
 export interface Goal {
     /** Stable plugin-defined id. */
     readonly id: string;
-    /** Higher wins; <= 0 means ineligible. Called on the replan cadence. */
+    /**
+     * Existing score when no `describe` is present. A selection policy may replace this with a
+     * contextual evaluation when `describe` exists; the Planner itself only uses the score.
+     */
     score(view: NpcView): number;
+    /**
+     * Optional contextual description for selection policies. The Planner ignores this. When a
+     * policy consumes it, the description replaces `score`; a goal that wants to retain its old
+     * urgency can return it as `base`.
+     */
+    describe?(context: GoalDescriptionContext): GoalDescription | void;
     /** Optional hard gate evaluated before `score`. */
     eligible?(view: NpcView): boolean;
     enter?(ctx: GoalContext): void;
@@ -72,6 +102,16 @@ export interface Goal {
     cooldownMs?: number;
     /** Required score margin to preempt this goal. Default 0. */
     hysteresis?: number;
+    /** Minimum time this goal may stay active before normal preemption. */
+    commitMs?: number;
+    /** May preempt a committed goal (survival/urgent needs). */
+    urgent?: boolean;
+}
+
+/** One scored goal that survived eligibility, cooldown and the score threshold. */
+export interface GoalCandidate {
+    readonly goal: Goal;
+    readonly score: number;
 }
 
 export interface PlannerOptions {
@@ -82,6 +122,15 @@ export interface PlannerOptions {
     /** Clock used for cooldowns/requests; defaults to `Date.now`. */
     now?: () => number;
     log?: (message: string) => void;
+    /** Gated selection/preemption diagnostics. */
+    debug?: (message: string) => void;
+    /**
+     * Chooses among goal candidates when no goal is active. Defaults to the highest score.
+     * Preemption still compares against the highest score, so a policy cannot make the active
+     * goal unstable. Return a candidate from the supplied list, or null to stay idle. A candidate
+     * that is not in the supplied list is treated as null.
+     */
+    select?: (candidates: readonly GoalCandidate[], view: NpcView, now: number) => GoalCandidate | null;
 }
 
 export class Planner {
@@ -90,6 +139,8 @@ export class Planner {
     private readonly replanMs: number;
     private readonly clock: () => number;
     private readonly log?: (message: string) => void;
+    private readonly debug?: (message: string) => void;
+    private readonly selectPolicy?: PlannerOptions["select"];
     private readonly cooldownUntil = new Map<string, number>();
     private goals: Goal[] = [];
     private active: Goal | null = null;
@@ -105,6 +156,8 @@ export class Planner {
         this.replanMs = options.replanMs ?? 500;
         this.clock = options.now ?? (() => Date.now());
         this.log = options.log;
+        this.debug = options.debug;
+        this.selectPolicy = options.select;
     }
 
     get current(): string | null {
@@ -181,8 +234,17 @@ export class Planner {
             return;
         }
 
+        if (now - this.activeSince < (current.commitMs ?? 0) && candidate.goal.urgent !== true) {
+            return;
+        }
+
         const margin = current.hysteresis ?? 0;
-        if (candidate.score > current.score(view) + margin) {
+        const currentScore = current.score(view);
+        if (candidate.score > currentScore + margin) {
+            this.debug?.(
+                `preempt ${current.id}=${currentScore.toFixed(1)} -> ` +
+                    `${candidate.goal.id}=${candidate.score.toFixed(1)}`
+            );
             this.finish("preempted", now);
         }
     }
@@ -201,7 +263,7 @@ export class Planner {
             }
         }
 
-        const candidate = this.best(view, now, null);
+        const candidate = this.choose(view, now);
         if (candidate === null) {
             return;
         }
@@ -209,8 +271,34 @@ export class Planner {
         this.start(candidate.goal, view, now);
     }
 
-    private best(view: NpcView, now: number, exclude: string | null): { goal: Goal; score: number } | null {
-        let best: { goal: Goal; score: number } | null = null;
+    /**
+     * Scored goals that currently pass eligibility, cooldown and the plugin threshold. This is the
+     * central "what can be done now" view; it never mutates selection state.
+     */
+    candidates(view: NpcView, now = this.clock()): readonly GoalCandidate[] {
+        return this.collectCandidates(view, now, null);
+    }
+
+    private choose(view: NpcView, now: number): GoalCandidate | null {
+        const candidates = this.collectCandidates(view, now, null);
+        if (candidates.length === 0) {
+            return null;
+        }
+
+        if (this.selectPolicy !== undefined) {
+            const selected = this.selectPolicy(candidates, view, now);
+            if (selected === null) {
+                return null;
+            }
+
+            return candidates.find(candidate => candidate.goal === selected.goal) ?? null;
+        }
+
+        return this.highest(candidates);
+    }
+
+    private collectCandidates(view: NpcView, now: number, exclude: string | null): GoalCandidate[] {
+        const candidates: GoalCandidate[] = [];
         for (const goal of this.goals) {
             if (goal.id === exclude) continue;
             if ((this.cooldownUntil.get(goal.id) ?? 0) > now) continue;
@@ -218,8 +306,21 @@ export class Planner {
 
             const score = goal.score(view);
             if (!Number.isFinite(score) || score <= this.threshold) continue;
-            if (best === null || score > best.score) {
-                best = { goal, score };
+            candidates.push({ goal, score });
+        }
+
+        return candidates;
+    }
+
+    private best(view: NpcView, now: number, exclude: string | null): GoalCandidate | null {
+        return this.highest(this.collectCandidates(view, now, exclude));
+    }
+
+    private highest(candidates: readonly GoalCandidate[]): GoalCandidate | null {
+        let best: GoalCandidate | null = null;
+        for (const candidate of candidates) {
+            if (best === null || candidate.score > best.score) {
+                best = candidate;
             }
         }
 
@@ -276,6 +377,9 @@ export class Planner {
             get planStatus() {
                 return planner.plan?.planStatus ?? null;
             },
+            get planReason() {
+                return planner.plan?.reason ?? null;
+            },
             log: message => this.log?.(`[${goal.id}] ${message}`),
             moveTo: (x, y, z, run = false) => actor.moveTo(x, y, z, run),
             wait: seconds => actor.wait(seconds),
@@ -300,6 +404,9 @@ export class Planner {
                         playerOnly: false,
                         reason: "unsupported",
                         verbs: [],
+                        gives: [],
+                        requires: [],
+                        toolTier: 0,
                         distance: 0,
                         inRange: false
                     };
@@ -346,6 +453,11 @@ export interface InteractStep extends NpcInteractOptions {
 
 type StepBase = { timeoutMs?: number; retry?: RetryOptions };
 
+export interface HarvestStep {
+    target: string;
+    approach?: boolean | { distance?: number; run?: boolean };
+}
+
 export type Step = StepBase &
     (
         | { moveTo: Vec3Like; run?: boolean }
@@ -353,6 +465,7 @@ export type Step = StepBase &
         | { lookAt: Vec3Like }
         | { face: string | Vec3Like }
         | { pick: string }
+        | { harvest: HarvestStep }
         | { stop: true }
         | { idle: true }
         | { attack: { target: string; secondary?: boolean } }

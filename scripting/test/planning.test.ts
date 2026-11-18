@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Plan, Planner, registerAction, type Goal, type PlannerActor } from "../sdk/planning";
-import type { NpcView } from "../sdk/api/types";
+import type { NpcAffordances, NpcView } from "../sdk/api/types";
 
 function view(): NpcView {
     return {
@@ -64,6 +64,29 @@ describe("planner", () => {
         ]);
 
         expect(planner.tick(view())).toBe("high");
+    });
+
+    test("exposes candidates and lets a policy choose differently", () => {
+        const planner = new Planner(actor(), {
+            now: () => 0,
+            select: candidates => candidates.find(candidate => candidate.goal.id === "low") ?? null
+        });
+        planner.setGoals([
+            goal("high", 10),
+            goal("low", 1),
+            goal("blocked", 100, { eligible: () => false })
+        ]);
+
+        expect(planner.candidates(view()).map(candidate => candidate.goal.id)).toEqual(["high", "low"]);
+        expect(planner.tick(view())).toBe("low");
+    });
+
+    test("a null policy keeps the planner idle", () => {
+        const planner = new Planner(actor(), { now: () => 0, select: () => null });
+        planner.setGoals([goal("high", 10)]);
+
+        expect(planner.candidates(view()).map(candidate => candidate.goal.id)).toEqual(["high"]);
+        expect(planner.tick(view())).toBeNull();
     });
 
     test("runs callbacks in order and applies plugin cooldowns", () => {
@@ -270,6 +293,42 @@ describe("plan", () => {
         expect(plan.tick(view, 2)).toBe("success");
     });
 
+    test("harvest repeats until the target disappears", () => {
+        const fake = actor();
+        let gone = false;
+        fake.affordances = () =>
+            ({
+                id: "tree",
+                kind: "tree",
+                name: "Tree",
+                hoverName: null,
+                hoverText: null,
+                supported: true,
+                playerOnly: false,
+                reason: null,
+                verbs: ["harvest"],
+                gives: ["wood"],
+                requires: ["chop"],
+                toolTier: 1,
+                distance: 2,
+                inRange: true
+            }) as NpcAffordances;
+        fake.interact = () =>
+            gone
+                ? { ok: false, reason: "target-missing", verb: "harvest", count: 0 }
+                : { ok: true, reason: null, verb: "harvest", count: 1 };
+
+        const current = viewWith();
+        const target = sensed("tree", 2);
+        target.kind = "tree";
+        current.objects = [target];
+        const plan = new Plan(fake, [{ harvest: { target: "tree", approach: false } }]);
+
+        expect(plan.tick(current, 0)).toBe("running");
+        gone = true;
+        expect(plan.tick(current, 1)).toBe("success");
+    });
+
     test("retries a failed step the plugin asked to retry", () => {
         const fake = actor();
         let attempts = 0;
@@ -330,6 +389,36 @@ describe("plan", () => {
         view.action = action("moveTo", "arrived");
         expect(planner.tick(view, 1)).toBe("go");
         expect(planner.tick(view, 2)).toBeNull();
+    });
+
+
+    test("commitMs blocks ordinary preemption but urgent goals bypass it", () => {
+        const fake = actor();
+        let challenger = 10;
+        const planner = new Planner(fake, { now: () => 0, replanMs: 100 });
+        planner.setGoals([
+            goal("work", 100, { commitMs: 1_000, tick: () => "running" }),
+            goal("idle", 0, { score: () => challenger, tick: () => "running" })
+        ]);
+
+        expect(planner.tick(view(), 0)).toBe("work");
+        challenger = 200;
+        expect(planner.tick(view(), 500)).toBe("work");
+        expect(planner.tick(view(), 1_500)).toBe("idle");
+
+        let urgentScore = 10;
+        const urgent = new Planner(fake, { now: () => 0, replanMs: 100 });
+        urgent.setGoals([
+            goal("work", 100, { commitMs: 1_000, tick: () => "running" }),
+            goal("survive", 0, {
+                score: () => urgentScore,
+                urgent: true,
+                tick: () => "running"
+            })
+        ]);
+        expect(urgent.tick(view(), 0)).toBe("work");
+        urgentScore = 200;
+        expect(urgent.tick(view(), 100)).toBe("survive");
     });
 
     test("plugin actions register and run by name", () => {

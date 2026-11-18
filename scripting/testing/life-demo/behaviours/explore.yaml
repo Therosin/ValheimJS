@@ -1,0 +1,20 @@
+id: explore
+description: Walk farther from the current position, look around and pause.
+imports:
+  move: ./micro/move.yaml
+  wait: ./micro/wait.yaml
+  look-around: ./micro/look-around.yaml
+state:
+  waitSeconds: 3
+root:
+  type: sequence
+  children:
+    - action: select-point
+      args:
+        around: self
+        min: 30
+        max: 45
+        run: true
+    - use: move
+    - use: look-around
+    - use: wait

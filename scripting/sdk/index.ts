@@ -35,6 +35,7 @@ export {
     type NpcDamageEvent,
     type NpcEnvironment,
     type NpcEquipment,
+    type NpcFindQuery,
     type NpcInteractOptions,
     type NpcInteractionResult,
     type NpcObject,
@@ -60,9 +61,13 @@ export {
     type ActionOutcome,
     type ActionResultLike,
     type Goal,
+    type GoalCandidate,
     type GoalContext,
+    type GoalDescription,
+    type GoalDescriptionContext,
     type GoalExitReason,
     type GoalStatus,
+    type HarvestStep,
     type InteractStep,
     type InventoryActions,
     type PlanOptions,
@@ -84,6 +89,22 @@ export type {
 } from "./crafting";
 export { ui, type UiDefineOptions, type UiOpenOptions } from "./ui";
 export { draw, type DrawOptions, type DrawPoint } from "./draw";
+export {
+    UtilityAI,
+    defaultUtilityStats,
+    type UtilityAdjustments,
+    type UtilityAIOptions,
+    type UtilityCandidate,
+    type UtilityConsideration,
+    type UtilityConsiderationContext,
+    type UtilityEvent,
+    type UtilityExpectation,
+    type UtilityFeedback,
+    type UtilityFeedbackContext,
+    type UtilityFeedbackRule,
+    type UtilityStats,
+    type UtilityStatsStore
+} from "./utility";
 export { all, any, cooldown, delay, never, not, once, predicates, stable, type Predicate } from "./predicates";
 export { ChatCommand, ChatCommands, type ChatCommandContext, type ChatCommandUser } from "./commands";
 export { AccountService, PermissionService } from "./accounts";

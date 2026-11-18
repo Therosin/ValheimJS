@@ -5,6 +5,7 @@ import "./combat";
 import "./interact";
 import "./inventory";
 import "./craft";
+import "./harvest";
 import "./flow";
 
 export {

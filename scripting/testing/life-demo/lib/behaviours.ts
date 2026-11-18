@@ -1,5 +1,5 @@
 import { ai, importText } from "../../../sdk/index";
-import type { VillagerActivity } from "./brain";
+import type { VillagerActivity } from "../definitions/types";
 
 /**
  * Loads the shipped YAML behaviour library from the plugin folder. Files are copied next to the
@@ -17,6 +17,7 @@ const ACTIVITY_FILES: Record<VillagerActivity, string> = {
     inspect: "inspect.yaml",
     socialize: "socialize.yaml",
     forage: "forage.yaml",
+    explore: "explore.yaml",
     seekHome: "seek-home.yaml",
     return: "return-home.yaml",
     rest: "rest.yaml",

@@ -9,18 +9,24 @@ import type {
     NpcView
 } from "../sdk/api/types";
 import type { Inventory } from "../sdk/api/generated";
+import type { BehaviorActionContext, BehaviorOutcome } from "../testing/life-demo/lib/behaviour";
 import {
-    VillagerBrain,
-    type BehaviorHandlers,
-    type BehaviorOutcome,
-    type BehaviorRuntime,
+    createActionHandler,
+    createConditionHandler,
+    type VillagerActionHost,
     type VillagerActor,
+    type VillagerBoard,
+    type VillagerNeeds
+} from "../testing/life-demo/lib/actions";
+import {
+    createVillagerAI,
+    profileFor,
     type VillagerActivity,
-    type VillagerBoard
-} from "../testing/life-demo/lib/brain";
+    type VillagerContext
+} from "../testing/life-demo/definitions";
+import { VillagerRuntime } from "../testing/life-demo/lib/villager";
 
 const ok: ActionResult = { ok: true, reason: null };
-const fail: ActionResult = { ok: false, reason: "test" };
 
 const emptyStats: NpcStats = {
     health: 100,
@@ -73,35 +79,31 @@ function emptyInventory(): Inventory {
 }
 
 class FakeActor implements VillagerActor {
-    readonly calls: string[] = [];
-
-    moveTo(x: number, y: number, z: number, run: boolean): ActionResult {
-        this.calls.push(`moveTo ${x},${y},${z} run=${run}`);
+    moveTo(): ActionResult {
         return ok;
     }
 
-    wait(seconds: number): ActionResult {
-        this.calls.push(`wait ${seconds}`);
+    stop(): ActionResult {
         return ok;
     }
 
-    lookAt(x: number, y: number, z: number): ActionResult {
-        this.calls.push(`lookAt ${x},${y},${z}`);
+    wait(): ActionResult {
         return ok;
     }
 
-    face(id: string): ActionResult {
-        this.calls.push(`face ${id}`);
+    lookAt(): ActionResult {
+        return ok;
+    }
+
+    face(): ActionResult {
         return ok;
     }
 
     idle(): ActionResult {
-        this.calls.push("idle");
         return ok;
     }
 
-    pick(id: string): ActionResult {
-        this.calls.push(`pick ${id}`);
+    pick(): ActionResult {
         return ok;
     }
 
@@ -127,76 +129,126 @@ class FakeBoard implements VillagerBoard {
     }
 }
 
-class FakeRuntime implements BehaviorRuntime {
-    readonly started: string[] = [];
-    readonly released: string[] = [];
-    status: BehaviorOutcome | "cancelled" = "running";
-    handlers: BehaviorHandlers | null = null;
-    state: Record<string, unknown> = {};
-    private next = 0;
+class FakeContext implements VillagerContext {
+    readonly actor = new FakeActor();
+    readonly needs: VillagerNeeds;
+    readonly board = new FakeBoard();
+    readonly home: NpcPos = { x: 0, y: 0, z: 0 };
+    readonly sheltered = false;
+    readonly homesick = 0;
+    readonly activities: string[] = [];
+    readonly trees: string[] = [];
+    readonly exits: Array<"success" | "failure" | "preempted"> = [];
+    readonly satisfied: Array<Readonly<Record<string, number>>> = [];
+    status: BehaviorOutcome | "cancelled" = "success";
 
-    instantiate(treeId: string, options: BehaviorHandlers & { this?: unknown; state?: Record<string, unknown> }) {
-        this.started.push(treeId);
-        this.handlers = options;
-        this.state = options.state ?? {};
-        return `instance-${++this.next}`;
+    constructor(name: string) {
+        this.needs = { ...profileFor(name).needs } as VillagerNeeds;
     }
 
-    tick(): BehaviorOutcome | "cancelled" {
+    distanceFromHome(view: NpcView): number {
+        return Math.hypot(view.x - this.home.x, view.z - this.home.z);
+    }
+
+    hasFood(): boolean {
+        return false;
+    }
+
+    hasFoodSource(view: NpcView): boolean {
+        return view.objects.some(entry => entry.kind === "pickable" && entry.ready && entry.food);
+    }
+
+    nearbyPlayer(view: NpcView): NpcSensed | null {
+        return view.nearby.find(entry => entry.isPlayer && entry.visible && !entry.isDead) ?? null;
+    }
+
+    unknownObject(view: NpcView): NpcSensed | null {
+        return view.objects.find(entry => entry.visible && !entry.isDead && entry.distance <= 14) ?? null;
+    }
+
+    threat(view: NpcView): NpcSensed | null {
+        return view.nearby.find(entry => entry.enemy && entry.visible && !entry.isDead) ?? null;
+    }
+
+    findShelter(): NpcSensed | null {
+        return null;
+    }
+
+    startActivity(activity: VillagerActivity, treeId: string): void {
+        this.activities.push(activity);
+        this.trees.push(treeId);
+    }
+
+    tickActivity(): BehaviorOutcome | "cancelled" {
         return this.status;
     }
 
-    release(instanceId: string): void {
-        this.released.push(instanceId);
+    endActivity(reason: "success" | "failure" | "preempted"): void {
+        this.exits.push(reason);
     }
 
-    act(name: string, args: Record<string, unknown> = {}, view?: NpcView): BehaviorOutcome {
-        if (!this.handlers) throw new Error("no active behaviour");
-        const state = { ...this.state, ...(view ? { senses: view } : {}) };
-        const result = this.handlers.action(name, {
-            args,
-            state,
-            this: null,
-            deltaTime: 0.5,
-            interrupted: false
-        });
-        this.state = state;
-        return result;
+    satisfy(effects: Readonly<Record<string, number>>): void {
+        this.satisfied.push({ ...effects });
     }
 
-    condition(name: string, view?: NpcView): boolean {
-        if (!this.handlers) throw new Error("no active behaviour");
-        const state = { ...this.state, ...(view ? { senses: view } : {}) };
-        return this.handlers.condition(name, {
-            args: {},
-            state,
-            this: null,
-            deltaTime: 0.5,
-            interrupted: false
-        });
+    publish(): void {}
+}
+
+class FakeActionHost implements VillagerActionHost {
+    readonly actor = new FakeActor();
+    readonly board = new FakeBoard();
+    readonly random = () => 0.5;
+    readonly memory: Record<string, unknown> = {};
+    readonly visited = new Set<string>();
+    readonly blocked = new Map<string, number>();
+    home: NpcPos = { x: 0, y: 10, z: 0 };
+    sheltered = false;
+    activeTarget: NpcSensed | null = null;
+    activeDestination: NpcPos | null = null;
+
+    markDirty(): void {}
+
+    publish(): void {}
+
+    setHome(home: NpcPos, shelterId: string): void {
+        this.home = home;
+        this.sheltered = true;
+        this.memory.shelter = shelterId;
     }
 }
 
-const behaviors: Record<VillagerActivity, string> = {
+function treeContext(current: NpcView, args: Record<string, unknown> = {}): BehaviorActionContext {
+    return {
+        args,
+        state: { senses: current },
+        this: null,
+        deltaTime: 0.5,
+        interrupted: false
+    };
+}
+
+const trees = {
     wander: "wander",
     inspect: "inspect",
     socialize: "socialize",
     forage: "forage",
+    explore: "explore",
     seekHome: "seekHome",
     return: "return",
     rest: "rest",
     flee: "flee",
     eat: "eat"
-};
+} as Record<VillagerActivity, string>;
 
-const idle: NpcAction = {
-    kind: "idle",
-    status: "idle",
-    reason: null,
-    targetId: null,
-    target: null,
-    progress: null
-};
+function ai(name: string, context: FakeContext) {
+    return createVillagerAI({
+        context,
+        name,
+        trees,
+        random: () => 0.5,
+        store: { load: () => undefined, save: () => {} }
+    });
+}
 
 function view(overrides: Partial<NpcView> = {}): NpcView {
     return {
@@ -213,6 +265,7 @@ function view(overrides: Partial<NpcView> = {}): NpcView {
         level: 1,
         home: { x: 0, y: 10, z: 0 },
         ready: true,
+        swimming: false,
         self: emptyStats,
         action: idle,
         environment: { day: 1, isDay: true, biome: "Meadows", weather: null },
@@ -237,6 +290,8 @@ function sensed(overrides: Partial<NpcSensed>): NpcSensed {
         visible: true,
         inRange: true,
         ready: true,
+        noise: 0,
+        audible: false,
         food: false,
         enemy: false,
         isPlayer: false,
@@ -254,157 +309,139 @@ function sensed(overrides: Partial<NpcSensed>): NpcSensed {
     };
 }
 
-function brain(
-    runtime: BehaviorRuntime,
-    options: {
-        memory?: Record<string, unknown>;
-        needs?: { energy?: number; social?: number; curiosity?: number };
-        home?: NpcPos;
-        board?: VillagerBoard;
-    } = {}
-) {
-    return new VillagerBrain({
-        actor: new FakeActor(),
-        runtime,
-        behaviors,
-        home: options.home ?? { x: 0, y: 10, z: 0 },
-        memory: options.memory,
-        needs: { curiosity: 0.4, ...options.needs },
-        board: options.board,
-        random: () => 0.5
-    });
-}
+const idle: NpcAction = {
+    kind: "idle",
+    status: "idle",
+    reason: null,
+    targetId: null,
+    target: null,
+    progress: null
+};
 
-describe("villager brain", () => {
-    test("starts the selected YAML activity", () => {
-        const runtime = new FakeRuntime();
-        const current = brain(runtime);
-        expect(current.tick(view(), 1000)).toBe("wander");
-        expect(runtime.started).toEqual(["wander"]);
-    });
-
-    test("publishes hot state and threat signals to its board", () => {
-        const runtime = new FakeRuntime();
-        const board = new FakeBoard();
-        const current = brain(runtime, { board });
-        const enemy = sensed({ id: "enemy", enemy: true, distance: 4, pos: { x: 4, y: 10, z: 0 } });
-
-        current.tick(view({ nearby: [enemy] }), 1000);
-
-        expect(board.values.activity).toBe("flee");
-        expect(board.values.threat).toMatchObject({ id: "enemy", distance: 4 });
-        expect(board.values.needs).toMatchObject({ energy: expect.any(Number), social: expect.any(Number) });
-        expect(board.signals).toContainEqual({
-            name: "activity:start",
-            data: { activity: "flee", targetId: "enemy" }
+describe("utility-driven villagers", () => {
+    test("Bob socializes while Astrid inspects the same scene", () => {
+        const player = sensed({
+            id: "player-1",
+            name: "Astrid",
+            isPlayer: true,
+            distance: 6,
+            pos: { x: 6, y: 10, z: 0 }
         });
-        expect(board.signals).toContainEqual({ name: "threat:seen", data: expect.objectContaining({ id: "enemy" }) });
-    });
-
-    test("flees a visible enemy", () => {
-        const runtime = new FakeRuntime();
-        const current = brain(runtime);
-        const enemy = sensed({ id: "enemy", enemy: true, distance: 4, pos: { x: 4, y: 10, z: 0 } });
-        current.tick(view({ nearby: [enemy] }), 1000);
-        expect(runtime.started).toEqual(["flee"]);
-        expect(runtime.act("select-flee-point", {}, view({ nearby: [enemy] }))).toBe("success");
-        expect(runtime.state.run).toBe(true);
-    });
-
-    test("rests at night and lets the activity set the wait duration", () => {
-        const runtime = new FakeRuntime();
-        const current = brain(runtime, { needs: { energy: 0.2 } });
-        const night = view({ environment: { day: 1, isDay: false, biome: "Meadows", weather: null } });
-        current.tick(night, 1000);
-        expect(runtime.started).toEqual(["rest"]);
-        expect(typeof runtime.state.waitSeconds).toBe("number");
-        expect(current.needs.energy).toBeGreaterThan(0);
-    });
-
-    test("socializes with a nearby player", () => {
-        const runtime = new FakeRuntime();
-        const current = brain(runtime, { needs: { social: 0.9, curiosity: 0.1 } });
-        const player = sensed({ id: "player-1", name: "Astrid", isPlayer: true, distance: 6, pos: { x: 6, y: 10, z: 0 } });
-        current.tick(view({ nearby: [player] }), 1000);
-        expect(runtime.started).toEqual(["socialize"]);
-        expect(runtime.act("select-target", { kind: "player", maxDistance: 18 }, view({ nearby: [player] }))).toBe("success");
-        expect((runtime.state.target as NpcSensed).id).toBe("player-1");
-        expect(runtime.act("remember-meeting")).toBe("success");
-        expect(current.snapshotMemory().lastMet).toMatchObject({ id: "player-1", name: "Astrid" });
-    });
-
-    test("inspects an unknown object and marks it visited", () => {
-        const runtime = new FakeRuntime();
-        const current = brain(runtime, { needs: { social: 0.1, curiosity: 0.9 } });
-        const chest = sensed({ id: "chest-1", name: "Chest", kind: "container", isObject: true, distance: 4, pos: { x: 4, y: 10, z: 0 } });
-        const currentView = view({ objects: [chest] });
-        current.tick(currentView, 1000);
-        expect(runtime.started).toEqual(["inspect"]);
-        expect(runtime.act("select-target", { kind: "object", maxDistance: 14 }, currentView)).toBe("success");
-        expect(runtime.act("mark-visited")).toBe("success");
-        expect(current.snapshotMemory().visited).toContain("chest-1");
-    });
-
-    test("foraging ends homesick and selects return", () => {
-        const runtime = new FakeRuntime();
-        const current = brain(runtime, { needs: { curiosity: 0.95, social: 0.9, energy: 0.9 } });
-        current.tick(view(), 1000);
-        expect(runtime.started).toEqual(["forage"]);
-
-        runtime.status = "success";
-        current.tick(view({ x: 20 }), 2000);
-        runtime.status = "running";
-
-        const player = sensed({ id: "player-1", isPlayer: true, distance: 5, pos: { x: 25, y: 10, z: 0 } });
-        current.tick(view({ x: 20, nearby: [player] }), 3000);
-        expect(runtime.started.at(-1)).toBe("return");
-    });
-
-    test("seeks an empty bed and claims it through the action primitives", () => {
-        const runtime = new FakeRuntime();
-        const current = brain(runtime, { needs: { social: 0.1, curiosity: 0.4, energy: 0.9 } });
-        const bed = sensed({
-            id: "bed-1",
-            name: "Bed",
-            kind: "bed",
+        const object = sensed({
+            id: "chest-1",
+            name: "Chest",
+            kind: "container",
             isObject: true,
-            distance: 9,
-            pos: { x: 9, y: 11, z: 0 }
+            distance: 4,
+            pos: { x: 4, y: 10, z: 0 }
         });
-        const currentView = view({ objects: [bed] });
-        current.tick(currentView, 1000);
-        expect(runtime.started).toEqual(["seekHome"]);
-        expect(runtime.act("select-shelter", {}, currentView)).toBe("success");
-        expect(runtime.act("claim-home")).toBe("success");
-        expect(current.isSheltered).toBe(true);
-        expect(current.homePosition).toEqual({ x: 9, y: 11, z: 0 });
-        expect(current.snapshotMemory().shelter).toBe("bed-1");
+        const scene = view({ nearby: [player], objects: [object] });
+
+        const bobContext = new FakeContext("Bob");
+        expect(ai("Bob", bobContext).tick(scene)).toBe("socialize");
+        expect(bobContext.trees).toEqual(["socialize"]);
+
+        const astridContext = new FakeContext("Astrid");
+        expect(ai("Astrid", astridContext).tick(scene)).toBe("inspect");
+        expect(astridContext.trees).toEqual(["inspect"]);
     });
 
-    test("blocks an unreachable inspect target after tree failure", () => {
-        const runtime = new FakeRuntime();
-        const current = brain(runtime, { needs: { social: 0.1, curiosity: 0.9 } });
-        const fish = sensed({ id: "fish-1", name: "Fish1", kind: "item", isObject: true, distance: 6, pos: { x: 6, y: 8, z: 0 } });
-        const currentView = view({ objects: [fish] });
-        current.tick(currentView, 1000);
-        runtime.act("select-target", { kind: "object", maxDistance: 14 }, currentView);
+    test("tired villagers rest at night and apply the declared satisfaction", () => {
+        const context = new FakeContext("Bob");
+        context.needs.energy = 0.2;
+        const night = view({
+            environment: { day: 1, isDay: false, biome: "Meadows", weather: null }
+        });
 
-        runtime.status = "failure";
-        current.tick(currentView, 2000);
-        expect(current.snapshotMemory().blocked).toMatchObject({ "fish-1": 302000 });
-
-        runtime.status = "running";
-        current.tick(currentView, 3000);
-        expect(runtime.started.at(-1)).not.toBe("inspect");
+        expect(ai("Bob", context).tick(night)).toBe("rest");
+        expect(context.exits).toEqual(["success"]);
+        expect(context.satisfied).toContainEqual({ energy: 0.35 });
     });
 
-    test("remembers home and accepts a manual request", () => {
-        const runtime = new FakeRuntime();
-        const current = brain(runtime, { memory: { home: { x: 50, y: 12, z: -20 } }, needs: { energy: 0.9 } });
-        expect(current.snapshotMemory().home).toEqual({ x: 50, y: 12, z: -20 });
+    test("runtime satisfaction changes the fast needs state", () => {
+        const runtime = new VillagerRuntime({
+            actor: new FakeActor(),
+            runtime: {
+                instantiate: () => "tree",
+                tick: () => "running",
+                release: () => {}
+            },
+            home: { x: 0, y: 0, z: 0 }
+        });
+        runtime.needs.energy = 0.5;
+        runtime.needs.social = 0.8;
+        runtime.needs.curiosity = 0.5;
 
-        current.request("rest", null, 1000);
-        current.tick(view(), 1000);
-        expect(runtime.started).toEqual(["rest"]);
+        runtime.satisfy({ energy: 0.2, social: -0.3, curiosity: -0.1 });
+
+        expect(runtime.needs.energy).toBeCloseTo(0.7);
+        expect(runtime.needs.social).toBeCloseTo(0.5);
+        expect(runtime.needs.curiosity).toBeCloseTo(0.4);
+    });
+
+    test("a visible enemy selects flee", () => {
+        const context = new FakeContext("Astrid");
+        const enemy = sensed({
+            id: "enemy-1",
+            enemy: true,
+            distance: 4,
+            pos: { x: 4, y: 10, z: 0 }
+        });
+
+        expect(ai("Astrid", context).tick(view({ nearby: [enemy] }))).toBe("flee");
+    });
+
+    test("tree conditions use the villager runtime facts", () => {
+        const host = new FakeActionHost();
+        const conditions = createConditionHandler(host);
+
+        expect(conditions("at-home", treeContext(view()))).toBe(true);
+        expect(conditions("at-home", treeContext(view({ x: 10 })))).toBe(false);
+
+        const food = sensed({
+            kind: "pickable",
+            food: true,
+            ready: true,
+            distance: 5,
+            pos: { x: 5, y: 10, z: 0 }
+        });
+        expect(conditions("has-food-source", treeContext(view({ objects: [food] })))).toBe(true);
+    });
+
+    test("tree actions select targets and claim a home", () => {
+        const host = new FakeActionHost();
+        const actions = createActionHandler(host);
+        const player = sensed({
+            id: "player-1",
+            isPlayer: true,
+            distance: 6,
+            pos: { x: 6, y: 11, z: 0 }
+        });
+        const context = treeContext(view({ nearby: [player] }));
+
+        expect(actions("select-target", { ...context, args: { kind: "player", maxDistance: 18 } })).toBe(
+            "success"
+        );
+        expect(host.activeTarget?.id).toBe("player-1");
+        expect((context.state.target as NpcSensed).id).toBe("player-1");
+
+        expect(actions("claim-home", context)).toBe("success");
+        expect(host.home).toEqual({ x: 6, y: 11, z: 0 });
+        expect(host.sheltered).toBe(true);
+    });
+
+    test("tree actions issue movement through the actor", () => {
+        const host = new FakeActionHost();
+        const actions = createActionHandler(host);
+        const context = treeContext(view());
+
+        expect(actions("select-point", { ...context, args: { around: "home", min: 3, max: 8 } })).toBe(
+            "success"
+        );
+        const destination = context.state.destination as NpcPos;
+        expect(host.activeDestination).toEqual(destination);
+
+        expect(actions("move-to", context)).toBe("running");
+        expect(context.state.moveIssued).toBe(true);
     });
 });

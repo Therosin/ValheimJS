@@ -468,6 +468,54 @@ The matching JS actions live in the plugin. `chase` is responsible for its own l
 intent: issue `moveTo`, return `running` while it is active, and return success only once the
 NPC has arrived.
 
+### Queries and iteration
+
+`findObject` and `findObjects` are native actions when the instance has an NPC handle. They query
+the same perception store as `npc.sensed`, so no JS filter loop is needed:
+
+```yaml
+id: collect-wood
+state:
+  loot: []
+root:
+  type: sequence
+  children:
+    - action: findObjects
+      args:
+        kind: item
+        query:
+          where:
+            tags: { anyOf: [wood, sapling] }
+            distance: { lte: 6 }
+          orderBy: distance
+          take: 16
+      out: "@[loot]"
+    - type: forEach
+      args:
+        items: "@[loot]"
+        item: entry
+        index: position
+      children:
+        - action: take
+          args: { target: "@[entry.id]" }
+```
+
+`forEach` binds `args.item` (default `item`) and `args.index` (default `index`) in instance state
+for the child, restores the previous values when it finishes, and propagates failure. The child
+can be any node, including a sequence. `findObject(kind, query)` is the same query with `take: 1`
+and returns one record.
+
+Queries use the fields exposed on `NpcSensed`: `kind`, `prefab`, `name`, `tags`, `verbs`,
+`requires`, `ready`, `usable`, `visible`, `inRange`, `enemy`, `isPlayer`, `isNpc`, `isTamed`,
+`isDead`, `isObject`, `food`, `distance`. `tags`/`verbs`/`requires` accept an array (any) or
+`{ anyOf }`/`{ allOf }`. `usable` means the NPC’s current equipment satisfies `requires`.
+Nested groups are `{ and: [...] }`, `{ or: [...] }` and `{ not: {...} }`; fields next to a
+group are ANDed with it.
+
+When the instance has an NPC handle, `moveTo`, `wait`, `lookAt` and `face` are also native
+actions. The host issues the intent once and returns `running` until `NpcActionState` settles it,
+so YAML does not need `moveIssued`/`waitIssued` state.
+
 ## 8. Planning is plugin policy
 
 `Planner` is an optional, policy-free scheduler: it scores plugin-supplied goals, runs the
@@ -540,6 +588,192 @@ The same primitives support every policy without core changes:
 
 `onHeard` and `onDamaged` are the edges; `affordances`/`interact` are the verbs; the choice
 between fleeing, investigating and ignoring belongs to the plugin.
+
+### Optional utility policy
+
+`UtilityAI` is an optional layer over the same `Planner`. It does not replace goals, actions,
+signals or behaviour trees, and the selectable capability remains an ordinary `Goal`:
+
+| Existing piece | What UtilityAI uses |
+|---|---|
+| Planner goals | The activity catalogue; `id`, `eligible`, `cooldownMs`, `hysteresis`, `tick` |
+| `Goal.score` | Fallback score when no description is present |
+| `Goal.describe` | Optional contextual facts for selection |
+| `Goal.eligible` | The existing availability conditions |
+| `ctx.run(steps)` / actions | Existing execution for native and JS steps |
+| `ai.instantiate` / `ai.tick` | Still available inside a goal's `enter`/`tick` for YAML behaviours |
+| Goal settlement + `utility.record` | Before/after state plus events that happened during the run |
+| Shared feedback rules | Plugin-defined, reusable stat adjustments |
+| `npc.memory` / `npc.setMemory` | Durable store supplied by the plugin |
+
+A goal optionally describes contextual facts before selection. It does not declare utility math
+or stat deltas:
+
+```ts
+import { UtilityAI, type Goal } from "../../../sdk/index";
+
+const gatherWood: Goal = {
+    id: "gather-wood",
+    score: () => 0, // ignore: UtilityAI uses describe instead
+    eligible: view => view.objects.some(entry => entry.kind === "tree"),
+    describe: ({ view }) => {
+        const tree = view.objects.find(entry => entry.kind === "tree");
+        return {
+            factors: {
+                distance: tree ? Math.hypot(tree.pos.x - view.x, tree.pos.z - view.z) / 30 : 0,
+                effort: 0.5,
+                outdoors: 1
+            },
+            provides: ["wood"]
+        };
+    },
+    enter(ctx) {
+        const tree = ctx.view.objects.find(entry => entry.kind === "tree");
+        if (!tree) return;
+        ctx.run([{ moveTo: tree.pos }, { interact: { target: tree.id, verb: "harvest" } }]);
+    },
+    tick(ctx) {
+        return ctx.planStatus === "success" ? "success"
+            : ctx.planStatus === "failure" ? "failure"
+            : "running";
+    }
+};
+```
+
+When `describe` is present, UtilityAI uses `description.base` plus the shared considerations and
+does **not** call `score`. If a goal wants to retain its old urgency, it returns it as `base`.
+Without `describe`, `score(view)` keeps its existing meaning.
+
+`describe` can also declare `satisfies`, the effects the activity claims to deliver. UtilityAI
+captures the selected goal's description at entry as `expected` in the settlement outcome, so a
+discarded candidate evaluation can never become the committed expectation. Describing the effect
+does not accomplish it: the runtime or activity still has to apply it. Feedback rules receive
+both `expected` and `observed`, so they can compare what was promised with what was delivered.
+
+Selection considerations are shared across activities. `cook` is another ordinary goal; its
+`describe` can return `requires: ["wood"]`.
+
+```ts
+const inventory = npc.inventory(this);
+
+const utility = new UtilityAI({
+    actor: this,
+    goals: [gatherWood, cook],
+    considerations: {
+        social: ({ factors, stats }) => (factors.social ?? 0) * stats.Social * 10,
+        distance: ({ factors, stats }) => -(factors.distance ?? 0) * (1 - stats.Explorer) * 10,
+        effort: ({ factors, stats }) => -(factors.effort ?? 0) * (1 - stats.Patience) * 10
+    },
+    snapshot: () => ({ food: inventory.count("Raspberry") }),
+    feedback: [
+        {
+            id: "wilderness-danger",
+            adjust: context => {
+                const attackedAway = context.events.some(
+                    event => event.name === "damaged" && (event.observed.awayFromHome ?? 0) >= 10
+                );
+                return attackedAway ? { Explorer: -0.02 } : {};
+            }
+        },
+        {
+            id: "hunted-food",
+            adjust: context =>
+                context.goal.id === "hunt" && (context.observed.foodDelta ?? 0) > 0
+                    ? { Hunter: 0.02 }
+                    : {}
+        }
+    ],
+    store: {
+        load: () => npc.memory(this).utility as Record<string, number> | undefined,
+        save: stats => npc.setMemory(this, { ...npc.memory(this), utility: stats })
+    },
+    planner: { log: message => log(message) }
+});
+
+// in onTick
+utility.tick(view);
+```
+
+Feed existing events into the recorder while the activity is running:
+
+```ts
+onDamaged(payload) {
+    utility.record("damaged", payload, npc.perception(this) ?? undefined);
+}
+```
+
+Each event stores a context snapshot from the moment it happened. The feedback rule above still
+sees that the attack occurred away from home even if the NPC returned before the activity settled.
+
+`observed` contains state deltas (`healthDelta`, `staminaDelta`, `foodDelta`, `distance`,
+`duration`) plus the differences of the plugin `snapshot` counters. The event list contains the
+event context and payloads. Feedback rules receive the goal, description, current stats, observed
+state and events, so they can combine factors and use the activity's identity. There are no
+built-in psychological mappings and success is not automatically rewarded.
+
+Stats are normalized `0..1` preference values. Base keys are `Intellect`, `Social`, `Curiosity`,
+`Ambition`, `Patience` and `Predictability`; `Hunter`, `Cook`, `Crafter` and `Explorer` are
+starting affinity keys. Plugins may add their own. They are behavioral preferences, not
+mechanical proficiency: raising `Crafter` does not change crafting speed or output. Each
+settlement's total adjustment is clamped per stat by `maxStep` (default `0.02`) before it is
+applied and persisted.
+
+`Predictability` controls selection: `1` always takes the highest utility; `0` chooses uniformly
+among eligible activities; intermediate values prefer the top-ranked candidates. The Planner still
+owns preemption and cooldowns.
+
+### Commitment and resource intents
+
+A goal may declare `commitMs` to own the execution window before ordinary preemption. This is
+intended for activities whose reward arrives late, such as travelling to a drop, finishing a
+harvest, or killing prey. Mark a goal `urgent: true` when it must still preempt a commitment
+(survival, food, withdrawal). Commitment changes when preemption is allowed; it does not change
+eligibility or turn an action into a native ownership claim.
+
+```ts
+const collect: Goal = {
+    id: "collect",
+    commitMs: 8_000,
+    urgent: false,
+    // ...
+};
+```
+
+Resource reservations are separate from ownership. `npc.reserve(handle, owner, ttlMs)` and
+`npc.release(handle, owner)` keep competing scripted actors from selecting the same drop during a
+short window. The bridge owns the registry so it survives JS reloads and can be shared across
+plugins. A reservation must be revalidated before interaction and released with the original
+failure reason:
+
+```ts
+// target-missing: the object is gone; try another resource
+// not-loaded: the ZDO exists but has no interactable instance; wait, move closer, or invalidate
+```
+
+Never use a reservation to suppress the native item's availability rules or to replace native
+ownership checks.
+
+### Storage and cooking
+
+Storage is a supply relationship, not a score shortcut. Deposit goals are low priority; withdrawal
+goals are demand-driven. A withdrawal should read the actual container inventory and distinguish
+raw food from cooked food, because cooking needs raw food while eating can use either. Container
+access failures are not resource failures: skip that container and revalidate another.
+
+`CookingStation` is a native player-only interactable. Plugins should use the bridge adapter
+(`src/AI/Extensions/CookingStation.cs`) rather than calling its `Interact` callback directly.
+The adapter adds raw food, watches the station, takes finished items and publishes the per-NPC
+`cook` board event. JS should wait for that event; it should not poll station slots.
+
+When `describe` reports a missing requirement and another known goal `provides` it, UtilityAI
+selects that provider first and resumes the original objective afterwards. Repeated attempts are
+bounded by `maxPrerequisiteAttempts` (default `2`) and cooled down by `prerequisiteCooldownMs`
+(default 30 s). This uses the same goal catalogue and execution; there is no second planner.
+
+`ai.available(view)` is the central "what can this NPC do now" query: Planner eligibility,
+cooldown, threshold and the activity's current prerequisites are already applied. For tree-backed
+activities, write a normal goal whose `enter` instantiates the compiled YAML and whose `tick`
+forwards `ai.tick`; `exit` releases it. The utility layer does not need to know the executor.
 
 ## 9. Full plugin: a companion hunter
 
@@ -675,33 +909,46 @@ export default definePlugin({
 
 The tree and the NPC have separate lifetimes: `ai` owns the compiled definition and instance,
 `npc` owns movement, ZDO persistence and the perception store. `ai.release` on despawn prevents
-the brain from leaking after the entity is removed.
+the tree instance from leaking after the entity is removed.
 
-## Example: a villager with a life
+## Example: two villagers with different lives
 
-`scripting/testing/life-demo` is a complete utility-driven example with a deliberately split brain:
+`scripting/testing/life-demo` spawns **Bob** and **Astrid** from the same repertoire and lets
+`UtilityAI` drive them with different profiles.
 
-- **Brain** (`lib/brain.ts`) owns needs, eligibility, utility scoring, interruption, memory and AI
-  instance lifecycle. It picks one activity at a time, then ticks the matching YAML tree with
-  `ai.instantiate`/`ai.tick`/`ai.release`.
+- **Definitions** (`definitions/`):
+  - `activities.ts` builds one ordinary `Goal` per YAML tree. Each goal supplies contextual
+    factors such as social exposure, novelty, exploration, effort and distance, plus the
+    `satisfies` effects it delivers on success. `wander`/`forage`/`explore` select points from
+    the current position, not permanently from home; `return` only pulls home beyond a wider
+    distance or under night/low-energy pressure.
+  - `profiles.ts` holds Bob's and Astrid's initial stats and needs, the shared selection
+    considerations, and the demo feedback rules.
+  - `index.ts` creates the `UtilityAI` for a named villager.
+  - `VillagerRuntime.satisfy()` applies those effects to the fast needs state when an activity
+    succeeds. Rest uses hysteresis so recovering energy does not make it preempt itself.
+- **Runtime** (`lib/villager.ts`) owns durable facts, needs, blackboard publication and YAML tree
+  lifecycle. It contains no activity selection.
 - **YAML behaviours** (`behaviours/*.yaml`) own *how* the activity runs. `wander`, `forage`,
-  `return-home`, `rest`, `seek-home`, `inspect`, `socialize` and `flee` compose the micro trees in
-  `behaviours/micro/` (`move`, `wait`, `look`, `look-around`, `face`, `claim`).
-- **Loader** (`lib/behaviours.ts`) reads the YAML text from the plugin folder through `importText`
-  and compiles each activity once in setup; the YAML ships as files rather than source strings.
+  `return-home`, `rest`, `seek-home`, `inspect`, `socialize`, `flee` and `eat` compose the micro
+  trees in `behaviours/micro/`.
+- **Loader** (`lib/behaviours.ts`) reads the YAML text through `importText` and compiles each
+  activity once in setup.
 
-The activity names are also the manual/LLM vocabulary: `brain.request(activity, target?)` cancels
-the current tree and runs one activity before normal selection resumes.
+The activity names are also the tree keys. Bob's profile leans social and patient; Astrid's leans
+curious and exploratory. Their needs and stats feed the same considerations, so the same scene can
+produce different choices.
 
 - Needs (`energy`, `social`, `curiosity`) drift every tick; behaviours satisfy or spend them.
 - `seek-home` claims a visible empty `bed`/`door` as the persistent home.
 - `forage` walks 10–18 m from home, looks around and lowers curiosity; `return-home` scores higher
   once the villager is far away, it is getting dark or energy is low.
-- Recognition facts live in `npc.memory` (`home`, `shelter`, `visited`, `blocked`, `lastMet`), so a
-  reload or restart resumes the same life.
+- Recognition facts live in `npc.memory` (`home`, `shelter`, `visited`, `blocked`, `lastMet`) plus
+  the persisted utility stats under `utility`, so a reload resumes the same preferences.
+- `onDamaged` and `onHeard` feed `utility.record`, preserving the event context from the moment it
+  happened. The demo feedback rules can then react to danger away from home.
 - **Hot state** lives in a per-villager blackboard scope (`ai.board.local('npc:<id>')`): `activity`,
   `needs`, `threat`, `home`, `sheltered` and transitions such as `activity:start`/`activity:complete`.
-  The brain publishes; the YAML trees still own execution.
 - **Shared coordination** uses `ai.board.join('village:life-demo')`. Each villager joins on spawn,
   publishes `villager:online`/`threat:seen`, and translates another villager's threat signal into
   its own local `heard:threat` event. It does not copy the other villager's state.
@@ -722,9 +969,11 @@ village.onSignal("threat:seen", (_name, data) => {
 });
 ```
 
-Tests: `scripting/test/life-demo.test.ts` covers brain selection/lifecycle and board publication;
-`scripting/test/board.test.ts` covers scope/membership lifetime; `task probe:life` compiles the real
-YAML files and asserts each activity's composed action sequence.
+Tests: `scripting/test/life-demo.test.ts` covers the Bob/Astrid profile divergence, rest and flee
+selection; `scripting/test/utility.test.ts` covers shared considerations, event context, feedback
+and a feedback-driven selection flip; `scripting/test/board.test.ts` covers scope/membership
+lifetime; `task probe:life` compiles the real YAML files and asserts each activity's composed
+action sequence.
 
 ## Authority, cadence and limits
 
@@ -774,9 +1023,3 @@ default; `life-demo` reads `debug=true` from its config.
 
 Use `task probe:ai` for the binding and perception-model contract, `task probe:behaviour` for the
 YAML engine, and `task probe:life` for the composed behaviour library.
-
-Nested groups are `{ and: [...] }`, `{ or: [...] }` and `{ not: {...} }`; fields next to a
-group are ANDed with it.
-When the instance has an NPC handle, `moveTo`, `wait`, `lookAt` and `face` are also native
-actions. The host issues the intent once and returns `running` until `NpcActionState` settles it,
-so YAML does not need `moveIssued`/`waitIssued` state.

@@ -1,5 +1,5 @@
 id: forage
-description: Walk away from home, look around and pause before heading back.
+description: Walk farther from here, look around and pause.
 imports:
   move: ./micro/move.yaml
   wait: ./micro/wait.yaml
@@ -11,9 +11,9 @@ root:
   children:
     - action: select-point
       args:
-        around: home
-        min: 10
-        max: 18
+        around: self
+        min: 15
+        max: 30
         run: true
     - use: move
     - use: look-around

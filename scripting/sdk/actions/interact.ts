@@ -53,6 +53,15 @@ registerAction<InteractConfig>("interact", {
 
         const result = context.actor.interact(step.target, step);
         if (result.ok) return "success";
+
+        if (result.reason === "not-owner" || result.reason === "not-loaded") {
+            const retries = (context.local.retries as number | undefined) ?? 0;
+            if (retries < 30) {
+                context.local.retries = retries + 1;
+                return "running";
+            }
+        }
+
         if (enabled && result.reason === "out-of-range") {
             const attempts = (context.local.attempts as number | undefined) ?? 0;
             if (attempts < 3) {

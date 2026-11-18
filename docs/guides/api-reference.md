@@ -172,6 +172,8 @@ npc.despawn(entity): boolean
 npc.handles(kind): ValheimBaseNPC[]
 npc.perception(entity): NpcView | null
 npc.sensed(entity, filter?): NpcSensed[]        // store query; remembered: true includes lost contacts
+npc.findObject(entity, kind, query?): NpcSensed | null  // nearest declarative match
+npc.findObjects(entity, kind, query?): NpcSensed[]      // all declarative matches
 npc.affordances(entity, target): NpcAffordances // verbs/support for one target object
 npc.interact(entity, target, options?): NpcInteractionResult
 npc.attack(entity, target, secondary?): ActionResult
@@ -255,6 +257,12 @@ interface NpcSensed {
     visible: boolean; inRange: boolean; ready: boolean; enemy: boolean;
     isPlayer: boolean; isNpc: boolean; isTamed: boolean; isDead: boolean;
     level: number; isObject: boolean;
+    toolTier?: number;
+    tags?: string[];              // wood, stone, food, container, loot, ...
+    verbs?: string[];             // harvest, pick, pickup, store, take, cook, ...
+    requires?: string[];          // chop, pickaxe, player
+    gives?: string[];             // prefab/item names
+    usable?: boolean;             // this NPC satisfies requires with its current gear
     health: number; maxHealth: number;
     firstSeen: number; lastSeen: number;        // seconds since first/last in-range contact
     seenCount: number;
@@ -292,6 +300,34 @@ npc.sensed(this, { remembered: true, max: 64 });
 (`container`, `door`, `bed`, `smelter`, `station`, `item`, `portal`) enter the same store when
 `perception.objectRadius > 0`; they appear in `view.objects` and in `npc.sensed` results
 (`isObject: true`).
+
+For selection, prefer the declarative query instead of filtering arrays in JS:
+
+```ts
+const tree = npc.findObject(this, "tree", {
+    where: {
+        tags: { anyOf: ["wood", "sapling"] },
+        distance: { lte: 24 },
+        usable: true
+    }
+});
+
+const loot = npc.findObjects(this, "item", {
+    where: { tags: { anyOf: ["wood", "sapling"] }, distance: { lte: 6 } },
+    orderBy: "distance",
+    take: 16
+});
+```
+
+`where` is an implicit **AND**. Fields are the same names exposed on `NpcSensed`
+(`kind`, `prefab`, `name`, `tags`, `verbs`, `requires`, `ready`, `usable`, `visible`,
+`inRange`, `enemy`, `isPlayer`, `isNpc`, `isTamed`, `isDead`, `isObject`, `food`, `distance`).
+Set operators are `anyOf` (any) and `allOf` (all); `distance` accepts `{ lte, gte, eq }`.
+Nested groups are `{ and: [...] }`, `{ or: [...] }` and `{ not: {...} }`; fields next to a
+group are ANDed with it. Top-level `orderBy` accepts `distance`, `health`, `level` or
+`seenCount`; `take`/`max` and `skip` bound the result. `includeRemembered` includes
+out-of-range contacts. Unknown fields and operators fail loudly instead of silently matching
+everything.
 
 ### Durable memory
 

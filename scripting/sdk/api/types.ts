@@ -203,6 +203,12 @@ export interface InventoryItem {
     quality: number;
     durability: number;
     maxDurability: number;
+    /** Categorical wear state; tools only. */
+    condition: "none" | "high" | "mid" | "low" | "broken";
+    /** Native tool capabilities, normalized for policy. */
+    chop: number;
+    pickaxe: number;
+    toolTier: number;
     weight: number;
     type: "food" | "mead" | "weapon" | "tool" | "armor" | "ammo" | "material" | "misc";
     equipped: boolean;
@@ -256,6 +262,18 @@ export interface NpcSensed {
     isDead: boolean;
     level: number;
     isObject: boolean;
+    /** Minimum tool tier for harvestable world objects; 0 when not applicable. */
+    toolTier?: number;
+    /** Stable lower-case tags projected from prefab/item data (`wood`, `food`, `container`...). */
+    tags?: string[];
+    /** Verbs this target supports for a scripted body. */
+    verbs?: string[];
+    /** Capabilities required from the actor (`chop`, `pickaxe`, `player`). */
+    requires?: string[];
+    /** Prefab/item names this target can yield. */
+    gives?: string[];
+    /** True when the owning NPC currently satisfies `requires`. */
+    usable?: boolean;
     health: number;
     maxHealth: number;
     /** Seconds since first contact (in range). */
@@ -295,8 +313,18 @@ export interface NpcAffordances {
     playerOnly: boolean;
     reason: string | null;
     verbs: string[];
+    /** Expected item prefab names when this target is harvested or taken. */
+    gives: string[];
+    /** Tool/damage capabilities needed to use the target. */
+    requires: string[];
+    /** Minimum tool tier for harvestable targets. */
+    toolTier: number;
     distance: number;
     inRange: boolean;
+    /** Native stations with queued output, e.g. cooking slots ready to take. */
+    readyCount?: number;
+    /** Generic station state: idle, cooking, done, full. */
+    state?: string | null;
 }
 
 export interface NpcInteractionResult {
@@ -371,6 +399,44 @@ export interface NpcSenseFilter {
     /** Include entries remembered after leaving range. */
     remembered?: boolean;
     max?: number;
+}
+
+/** Declarative query accepted by `npc.findObject` / `npc.findObjects`. */
+export interface NpcFindQuery {
+    kind?: string;
+    prefab?: string;
+    name?: string;
+    /** Array means any-of; `{ anyOf }`/`{ allOf }` narrow explicitly. */
+    tags?: string[] | { anyOf?: string[]; allOf?: string[] };
+    verbs?: string[] | { anyOf?: string[]; allOf?: string[] };
+    requires?: string[] | { anyOf?: string[]; allOf?: string[] };
+    where?: {
+        kind?: string;
+        prefab?: string;
+        name?: string;
+        tags?: string[] | { anyOf?: string[]; allOf?: string[] };
+        verbs?: string[] | { anyOf?: string[]; allOf?: string[] };
+        requires?: string[] | { anyOf?: string[]; allOf?: string[] };
+        ready?: boolean;
+        usable?: boolean;
+        visible?: boolean;
+        inRange?: boolean;
+        enemy?: boolean;
+        isPlayer?: boolean;
+        isNpc?: boolean;
+        isTamed?: boolean;
+        isDead?: boolean;
+        isObject?: boolean;
+        food?: boolean;
+        distance?: number | { lte?: number; gte?: number; eq?: number };
+    };
+    orderBy?: "distance" | "health" | "level" | "seenCount";
+    take?: number;
+    max?: number;
+    skip?: number;
+    radius?: number;
+    includeRemembered?: boolean;
+    exclude?: string[];
 }
 
 export interface NpcPerceptionOptions {
