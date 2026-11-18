@@ -52,12 +52,23 @@ export interface PluginContext {
     dep<T extends Record<string, unknown> = Record<string, unknown>>(name: string): T;
 }
 
+type ContextGlobal = { __vjs_context?: PluginContext | null };
+
 /**
- * The context the host attached to the currently running plugin. Valid inside hooks, timers and
- * `await` continuations — the host restores it around every invocation.
+ * Each plugin bundle contains its own copy of this module and is evaluated under its own
+ * context, so this is the plugin that owns the SDK, not whoever happens to be on the JS stack.
+ * That is what keeps an exported function's `database()`/`fs()`/`host.api` in the provider's
+ * scope when another plugin calls it.
+ */
+const owner = (globalThis as ContextGlobal).__vjs_context ?? null;
+
+/**
+ * The context that owns this bundle. During entry evaluation it is the evaluating plugin; host
+ * hooks, timers and `await` continuations restore the same context. Unit tests that install a
+ * context after importing the SDK fall back to the live global.
  */
 export function context(): PluginContext {
-    const active = (globalThis as { __vjs_context?: PluginContext | null }).__vjs_context;
+    const active = owner ?? (globalThis as ContextGlobal).__vjs_context;
     if (!active) {
         throw new Error("no plugin context is active — call this during entry evaluation, setup, a hook, or a host callback");
     }

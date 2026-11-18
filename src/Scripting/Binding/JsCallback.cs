@@ -69,7 +69,7 @@ public sealed class JsCallback
         catch (Exception exception)
         {
             throw new InvalidOperationException(
-                $"{_description} threw: {exception.GetType().Name}: {exception.Message}", exception);
+                $"{_description} threw: {JsErrorText.Describe(exception)}", exception);
         }
     }
 

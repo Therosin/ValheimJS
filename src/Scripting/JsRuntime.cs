@@ -135,6 +135,22 @@ internal sealed class JsRuntime : IDisposable
             // not as an exception that escapes the engine and kills the whole tick.
             opt.CatchClrExceptions();
 
+            // Stack frames use the same source map as the primary location, so a frame inside a
+            // bundled SDK module still names the original TypeScript file.
+            opt.SetBuildCallStackHandler((description, location, _) =>
+            {
+                var mapped = SourceMapRegistry.Map(location);
+                var frame = string.IsNullOrWhiteSpace(description) ? "    at " : $"    at {description} ";
+                if (string.IsNullOrEmpty(mapped.SourceFile))
+                {
+                    return string.IsNullOrWhiteSpace(description)
+                        ? string.Empty
+                        : $"    at {description}{Environment.NewLine}";
+                }
+
+                return $"{frame}({mapped.SourceFile}:{mapped.Start.Line}:{mapped.Start.Column}){Environment.NewLine}";
+            });
+
             if (options.MemoryLimitBytes > 0)
             {
                 opt.LimitMemory(options.MemoryLimitBytes);
@@ -177,12 +193,13 @@ internal sealed class JsRuntime : IDisposable
         {
             foreach (var path in bundlePaths)
             {
+                var fullPath = Path.GetFullPath(path);
                 try
                 {
                     Run(name, () =>
                     {
                         _engine.SetValue("__vjs_plugin", JsValue.Undefined);
-                        _engine.Execute(File.ReadAllText(path));
+                        _engine.Execute(File.ReadAllText(fullPath), fullPath);
                         var module = _engine.GetValue("__vjs_plugin");
                         _engine.SetValue("__vjs_plugin", JsValue.Undefined);
                         if (module is not ObjectInstance descriptor)
@@ -215,10 +232,12 @@ internal sealed class JsRuntime : IDisposable
                         foreach (var hook in component.Hooks) registration.Hooks[hook.Key] = hook.Value;
                         InvokeLifecycle(registration, component, "setup", "onLoad");
                     });
+                    LoadSourceMap(fullPath);
                 }
                 catch (Exception exception)
                 {
-                    throw new InvalidOperationException($"{name} [{Path.GetFileName(path)}] {path}: {Describe(exception)}", exception);
+                    throw new InvalidOperationException(
+                        $"{name} [{Path.GetFileName(path)}] {path}: {JsErrorText.Describe(exception)}", exception);
                 }
             }
             return registration;
@@ -274,7 +293,7 @@ internal sealed class JsRuntime : IDisposable
         {
             var component = registration.Components[index];
             try { Run(plugin, () => InvokeLifecycle(registration, component, "teardown", "onUnload")); }
-            catch (Exception exception) { _log.Write("warn", plugin, $"{component.Entry}: unload failed: " + Describe(exception)); }
+            catch (Exception exception) { _log.Write("warn", plugin, $"{component.Entry}: unload failed: " + JsErrorText.Describe(exception)); }
         }
 
         foreach (var id in new List<int>(_timers.Keys))
@@ -325,7 +344,7 @@ internal sealed class JsRuntime : IDisposable
                         _timers.Remove(id);
                     }
 
-                    _log.Write("error", timer.Plugin, "timer failed: " + Describe(exception) + " — timer stopped");
+                    _log.Write("error", timer.Plugin, "timer failed: " + JsErrorText.Describe(exception) + " — timer stopped");
                 }
             }
         }
@@ -340,8 +359,37 @@ internal sealed class JsRuntime : IDisposable
         _plugins.Clear();
         _contextsByPlugin.Clear();
         _servicesByPlugin.Clear();
+        SourceMapRegistry.Clear();
         _bindings.Dispose();
         _engine.Dispose();
+    }
+
+    /// <summary>Loads a linked Source Map next to the evaluated bundle, when the builder emitted one.</summary>
+    private void LoadSourceMap(string bundlePath)
+    {
+        var mapPath = bundlePath + ".map";
+        if (!File.Exists(mapPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var root = Json.Parse(_engine, File.ReadAllText(mapPath)).AsObject();
+            var sourceArray = root.Get("sources").AsArray();
+            var sources = new string[sourceArray.Length];
+            for (var index = 0; index < sourceArray.Length; index++)
+            {
+                sources[index] = sourceArray.Get(index).AsString();
+            }
+
+            var directory = Path.GetDirectoryName(mapPath) ?? ".";
+            SourceMapRegistry.Register(bundlePath, new SourceMap(sources, root.Get("mappings").AsString(), directory));
+        }
+        catch (Exception exception)
+        {
+            _log.Write("warn", "host", $"source map '{mapPath}' ignored: {JsErrorText.Describe(exception)}");
+        }
     }
 
     private void InstallTimers()
@@ -587,17 +635,6 @@ internal sealed class JsRuntime : IDisposable
         }
 
         _log.Write(level, plugin, message);
-    }
-
-    private static string Describe(Exception exception)
-    {
-        var inner = exception;
-        while (inner.InnerException != null)
-        {
-            inner = inner.InnerException;
-        }
-
-        return inner.GetType().Name + ": " + inner.Message;
     }
 
     private sealed class Timer

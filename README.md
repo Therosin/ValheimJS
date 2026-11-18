@@ -152,6 +152,7 @@ export default definePlugin(Greeter);
 | `onChat` | `{ channel, senderId, text }` | `Chat.RPC_ChatMessage` prefix |
 | `onPlayerJoin` / `onPlayerLeave` | `{ uid, name }` | `ZNet.SendPlayerList` postfix + peer diff |
 | `onPlayerSpawned` / `onPlayerDespawned` | `{ uid, name }` | heartbeat poll over character ZDOs |
+| `onPlayerReady` / `onPlayerUnready` | `{ uid, name }` | server-only heartbeat poll over `WorldManager.PeerReady` |
 | `onDamage` | `{ target, attacker, damage, targetHealth, targetMaxHealth, hitType, ... }` | `Character.Damage` postfix |
 
 ## Bindings (`host.api`)

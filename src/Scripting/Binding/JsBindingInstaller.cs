@@ -168,7 +168,8 @@ public sealed class JsBindingInstaller : IDisposable
             }
             catch (TargetInvocationException exception) when (exception.InnerException != null)
             {
-                throw new InvalidOperationException($"{name}: {exception.InnerException.Message}", exception.InnerException);
+                throw new InvalidOperationException(
+                    $"{name}: {JsErrorText.Describe(exception.InnerException)}", exception.InnerException);
             }
         }, Math.Max(0, parameters.Count));
     }

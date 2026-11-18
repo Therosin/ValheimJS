@@ -11,7 +11,8 @@ Start with **`ValheimJS/logs/<your-plugin>.log`** for plugin log() output. Also 
 Check, in order:
 
 1. The folder is `ValheimJS/plugins/<name>/` and contains `manifest.ini` and at least one of `shared.js`, `server.js`, or `client.js`.
-2. `name` in the manifest matches the folder name (they are used interchangeably in logs).
+2. `name` in the manifest matches the folder name exactly. The loader rejects a mismatch because
+   `ctx.dir`, `ctx.paths.plugin`, `data/`, `config/` and `assets` all derive paths from that name.
 3. `apiVersion=1` — anything else is refused with `needs apiVersion X, host provides 1`.
 4. The plugin has a shared or matching process entry. An opposite-side-only plugin is skipped.
 5. The server log says `loaded N plugin(s)`. If N is lower than expected, the missing ones were
@@ -28,8 +29,14 @@ Raw ES modules and scripts that never install a descriptor are not valid deploye
 A handler threw and the plugin was disabled on purpose:
 
 ```
-[error] hook 'onServerTick' threw: TypeError: … — plugin disabled
+[error] hook 'onServerTick' threw: TypeError: Cannot read properties of undefined (reading 'x')
+    (/…/ValheimJS/plugins/greeter/server.js:14:7) — plugin disabled
+    at onServerTick (...)
 ```
+
+The location is mapped through the linked `shared.js.map`/`server.js.map`/`client.js.map` that
+`build.ts` emits, so it points at the original TypeScript file when the source map is shipped
+next to the bundle.
 
 Fix, rebuild, redeploy, reload. One failing plugin never takes the server or other plugins with it,
 but it will not receive events until reloaded.

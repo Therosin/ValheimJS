@@ -81,8 +81,9 @@ the bank's own exports still authorize and perform withdrawals/deposits.
 
 The document backend caches collections. It is not a multi-process database, has no cross-document
 transactions and does not automatically observe external edits. Writes fail explicitly and update
-cache only after a successful file replacement. The string-storage convenience file uses its own
-format and should not be treated as a JSON document database or transactional store.
+cache only after a successful file replacement. The string-storage convenience file is a JSON
+object of base64-encoded keys and values; it round-trips arbitrary text and is replaced atomically,
+but it is not a document database or a transaction boundary.
 
 The current document filename escaping can collide: `a/b` and `a_002fb` map to the same key. This
 is a confirmed backend limitation, retained here because changing persisted key encoding requires
@@ -101,9 +102,8 @@ attribution.
 General player/inventory APIs, general chat broadcasting, new content registration and automatic
 sync replication are not implemented. See the [roadmap](api-roadmap.md) for proposed work.
 
-The heartbeat payload currently contains `world`, `peers`, `day` and `dayFraction`; use
-`game().snapshot()` when you need `timeOfDay`. The SDK's `ServerTickPayload` currently aliases
-the broader game-snapshot type, so that annotation alone does not guarantee the extra field.
+The heartbeat payload contains the same fields as `game().snapshot()`: `world`, `peers`, `day`,
+`dayFraction` and `timeOfDay`. The SDK's `ServerTickPayload` aliases that shape.
 
 ## Verification coverage
 

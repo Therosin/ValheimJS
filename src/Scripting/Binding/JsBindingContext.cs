@@ -152,7 +152,7 @@ public sealed class JsBindingContext : IDisposable
             }
             catch (Exception exception)
             {
-                Log("error", "posted work failed: " + exception.GetType().Name + ": " + exception.Message);
+                Log("error", "posted work failed: " + JsErrorText.Describe(exception));
             }
         }
 

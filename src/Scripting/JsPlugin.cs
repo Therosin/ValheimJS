@@ -1,4 +1,5 @@
 using System;
+using ValheimJS.Scripting.Binding;
 
 namespace ValheimJS.Scripting;
 
@@ -46,7 +47,7 @@ public sealed class JsPlugin
         catch (Exception exception)
         {
             Failed = true;
-            _log.Write("error", Name, $"hook '{hook}' threw: {Describe(exception)} — plugin disabled");
+            _log.Write("error", Name, $"hook '{hook}' threw: {JsErrorText.Describe(exception)} — plugin disabled");
             _runtime.Unregister(Name);
             return null;
         }
@@ -67,17 +68,7 @@ public sealed class JsPlugin
         }
         catch (Exception exception)
         {
-            _log.Write("warn", Name, "unload threw: " + Describe(exception));
+            _log.Write("warn", Name, "unload threw: " + JsErrorText.Describe(exception));
         }
-    }
-
-    private static string Describe(Exception exception)
-    {
-        var inner = exception;
-        while (inner.InnerException != null)
-        {
-            inner = inner.InnerException;
-        }
-        return inner.GetType().Name + ": " + inner.Message;
     }
 }

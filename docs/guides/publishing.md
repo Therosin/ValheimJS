@@ -17,17 +17,23 @@ bun run build.ts myplugin
 ```
 
 Take `scripting/dist/myplugin/` with its manifest and built shared/server/client entries. Keep the
-folder name aligned with the manifest name; changing plugin identity also changes its data/config namespace:
+folder name aligned with the manifest name; changing plugin identity also changes its data/config
+namespace. `build.ts` rejects a manifest `name` that differs from the source folder:
 
 ```
 myplugin/
   manifest.ini
-  shared.js    # optional
-  server.js    # optional
-  client.js    # optional
+  shared.js       # optional
+  shared.js.map   # optional; error locations fall back to the bundle without it
+  server.js       # optional
+  server.js.map
+  client.js       # optional
+  client.js.map
 ```
 
 Zip that folder, or put it in a repository. Users drop it into `<server>/ValheimJS/plugins/`.
+Keep the `.js.map` files next to their bundles; the host uses them to report the original
+TypeScript file and line when a plugin throws.
 
 ## 2. Ship a config template
 

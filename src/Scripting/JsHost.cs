@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using ValheimJS.Scripting.Binding;
+using ValheimJS.Storage;
 using Network = ValheimJS.Core.Networking;
 
 namespace ValheimJS.Scripting;
@@ -125,6 +126,23 @@ public sealed class JsHost
                 continue;
             }
 
+            // Identity and paths are both derived from the manifest name. Requiring the folder
+            // to match keeps ctx.dir, ctx.paths.plugin, data/, config/ and assets in one place.
+            var folderName = Path.GetFileName(directory);
+            if (manifest.Name.Length == 0)
+            {
+                _errors.Add($"{folderName}: manifest name is empty");
+                _log.Write("error", folderName, "manifest name is empty");
+                continue;
+            }
+
+            if (!string.Equals(manifest.Name, folderName, StringComparison.Ordinal))
+            {
+                _errors.Add($"{folderName}: manifest name '{manifest.Name}' must match the plugin folder");
+                _log.Write("error", folderName, $"manifest name '{manifest.Name}' must match the plugin folder");
+                continue;
+            }
+
             if (!new[] { "shared.js", "server.js", "client.js" }.Any(entry => File.Exists(Path.Combine(directory, entry))))
             {
                 _errors.Add($"{manifest.Name}: no shared.js, server.js, or client.js in {directory}");
@@ -165,8 +183,8 @@ public sealed class JsHost
         }
         catch (Exception exception)
         {
-            _errors.Add("bindings failed: " + Describe(exception));
-            _log.Write("error", "bindings", "install failed: " + Describe(exception));
+            _errors.Add("bindings failed: " + JsErrorText.Describe(exception));
+            _log.Write("error", "bindings", "install failed: " + JsErrorText.Describe(exception));
             bindings.Dispose();
             _bindings = null;
             return;
@@ -193,8 +211,8 @@ public sealed class JsHost
             }
             catch (Exception exception)
             {
-                _errors.Add($"{name}: load failed: {Describe(exception)}");
-                _log.Write("error", name, "load failed: " + Describe(exception));
+                _errors.Add($"{name}: load failed: {JsErrorText.Describe(exception)}");
+                _log.Write("error", name, "load failed: " + JsErrorText.Describe(exception));
             }
         }
 
@@ -428,56 +446,51 @@ public sealed class JsHost
 
     private string? ReadStorage(string plugin, string key)
     {
-        var file = StoragePath(plugin);
-        if (!File.Exists(file))
-        {
-            return null;
-        }
-
-        foreach (var line in File.ReadAllLines(file))
-        {
-            var separator = line.IndexOf('\t');
-            if (separator > 0 && line.Substring(0, separator) == key)
-            {
-                return line.Substring(separator + 1);
-            }
-        }
-
-        return null;
+        return ReadStorageMap(plugin).TryGetValue(key, out var value) ? value : null;
     }
 
     private void WriteStorage(string plugin, string key, string value)
     {
-        var file = StoragePath(plugin);
-        var lines = new List<string>();
-        var replaced = false;
-        if (File.Exists(file))
+        var values = ReadStorageMap(plugin);
+        values[key] = value;
+        try
         {
-            foreach (var line in File.ReadAllLines(file))
+            StringStore.Write(StoragePath(plugin), values);
+        }
+        catch (Exception exception)
+        {
+            _log.Write("error", plugin, "storage write failed: " + JsErrorText.Describe(exception));
+        }
+    }
+
+    private Dictionary<string, string> ReadStorageMap(string plugin)
+    {
+        var file = StoragePath(plugin);
+        try
+        {
+            return StringStore.Read(file);
+        }
+        catch (Exception exception)
+        {
+            _log.Write("error", plugin, "storage.json is invalid: " + JsErrorText.Describe(exception));
+            BackupBrokenStorage(file);
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+    }
+
+    private static void BackupBrokenStorage(string file)
+    {
+        try
+        {
+            if (File.Exists(file))
             {
-                var separator = line.IndexOf('\t');
-                if (separator > 0 && line.Substring(0, separator) == key)
-                {
-                    lines.Add(key + "\t" + value);
-                    replaced = true;
-                }
-                else
-                {
-                    lines.Add(line);
-                }
+                File.Move(file, file + ".corrupt-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss"));
             }
         }
-
-        if (!replaced)
+        catch
         {
-            lines.Add(key + "\t" + value);
+            // The error is already logged; a second failure to move the file is not actionable.
         }
-
-        File.WriteAllLines(file, lines);
     }
 
-    private static string Describe(Exception exception)
-    {
-        return exception.GetType().Name + ": " + exception.Message;
-    }
 }

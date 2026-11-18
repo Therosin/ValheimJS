@@ -30,6 +30,7 @@ test("builds independent entries and removes deleted branch output", async () =>
     for (const side of ["shared", "server", "client"]) {
         const code = readFileSync(join(output, `${side}.js`), "utf8");
         expect(code).not.toMatch(/^\s*(import|export)\s/m);
+        expect(existsSync(join(output, `${side}.js.map`))).toBe(true);
         const target: { __vjs_plugin?: { value: { exports: { branch: string } } } } = {};
         new Function("globalThis", code)(target);
         expect(target.__vjs_plugin?.value.exports.branch).toBe(side);
@@ -40,4 +41,20 @@ test("builds independent entries and removes deleted branch output", async () =>
     await build();
     expect(existsSync(join(output, "client.js"))).toBe(false);
     expect(existsSync(join(output, "shared.js"))).toBe(true);
+});
+
+test("rejects a manifest name that does not match the plugin folder", async () => {
+    const root = mkdtempSync(join(tmpdir(), "valheimjs-build-"));
+    roots.push(root);
+    copyFileSync(resolve(import.meta.dir, "../build.ts"), join(root, "build.ts"));
+    const source = join(root, "plugins", "wrong");
+    mkdirSync(join(source, "shared"), { recursive: true });
+    writeFileSync(join(source, "shared", "main.ts"), "export default {__vjsPlugin:'object',value:{}};");
+    writeFileSync(join(source, "manifest.ini"), "name=other\napiVersion=1\n");
+
+    const child = Bun.spawn([process.execPath, "run", join(root, "build.ts")], { cwd: root, stdout: "pipe", stderr: "pipe" });
+    const [exit, error] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+    expect(exit).not.toBe(0);
+    expect(error).toContain("must match the plugin folder");
+    expect(existsSync(join(root, "dist", "wrong"))).toBe(false);
 });

@@ -21,7 +21,9 @@ internal static class ProcessProbe
             CheckSide(root, "server");
             CheckSide(root, "client");
             CheckFailures(root);
-            Console.WriteLine("PASS: process identity, metadata filtering, components, context, dependencies, rollback and reload");
+            CheckDiagnostics(root);
+            CheckStorage(root);
+            Console.WriteLine("PASS: process identity, metadata filtering, components, context, dependencies, rollback, diagnostics, storage and reload");
             return 0;
         }
         catch (Exception exception)
@@ -155,6 +157,8 @@ internal static class ProcessProbe
         });
         WritePlugin(scenario, "healthy", new() { ["shared.js"] = "globalThis.__vjs_plugin={__vjsPlugin:'object',value:{event:function(){return 'ok';}}};" });
         WritePlugin(scenario, "empty", new());
+        WritePlugin(scenario, "mismatch", new() { ["shared.js"] = "throw Error('MISMATCH EVALUATED');" });
+        File.WriteAllText(Path.Combine(scenario, "plugins", "mismatch", "manifest.ini"), "name=other\napiVersion=1\n");
         WritePlugin(scenario, "cycle-a", new() { ["shared.js"] = "throw Error('cycle');" }, "depends=cycle-b@*\n");
         WritePlugin(scenario, "cycle-b", new() { ["shared.js"] = "throw Error('cycle');" }, "depends=cycle-a@*\n");
         var log = new CaptureLog();
@@ -163,6 +167,8 @@ internal static class ProcessProbe
         {
             host.Load();
             Assert(host.LoadedNames.SequenceEqual(new[] { "conflict", "healthy" }), "failed plugins were retained: " + string.Join(",", host.LoadedNames));
+            Assert(host.Errors.Any(error => error.Contains("must match the plugin folder")), "manifest/folder mismatch accepted");
+            Assert(!host.LoadedNames.Contains("mismatch"), "mismatched plugin loaded");
             Assert(host.Errors.Any(error => error.Contains("server.js") && error.Contains("setup failure")), "entry error attribution");
             Assert(host.Errors.Any(error => error.Contains("Duplicate export")), "duplicate exports accepted");
             Assert(host.Errors.Any(error => error.Contains("synchronous")), "async lifecycle accepted");
@@ -176,6 +182,86 @@ internal static class ProcessProbe
             Assert(!log.Messages.Any(message => message.Contains("leaked timer") || message.Contains("DEPENDENT EVALUATED") || message.Contains("MISSING DEP EVALUATED")), "failed plugin work executed");
         }
         finally { host.Dispose(); }
+    }
+
+    private static void CheckDiagnostics(string root)
+    {
+        var scenario = Path.Combine(root, "diagnostics");
+        WritePlugin(scenario, "diagnostics", new()
+        {
+            ["shared.js"] = "globalThis.__vjs_plugin={__vjsPlugin:'object',value:{event:function(){throw new Error('mapped failure');}}};",
+            ["shared.js.map"] = """{"version":3,"sources":["original.ts"],"mappings":"AACA"}"""
+        });
+
+        var log = new CaptureLog();
+        var host = Host(scenario, "server", log);
+        try
+        {
+            host.Load();
+            Assert(!host.HasErrors, string.Join(" | ", host.Errors));
+            host.DispatchTo("diagnostics", "event", "{}");
+            var message = log.Messages.FirstOrDefault(entry => entry.Contains("hook 'event' threw")) ?? "";
+            Assert(message.Contains("mapped failure"), "script message was lost");
+            Assert(message.Contains("original.ts:2:0"), "source map was not applied: " + message);
+        }
+        finally
+        {
+            host.Dispose();
+        }
+    }
+
+    private static void CheckStorage(string root)
+    {
+        var scenario = Path.Combine(root, "storage");
+        WritePlugin(scenario, "store", new()
+        {
+            ["shared.js"] = """
+                globalThis.__vjs_plugin={__vjsPlugin:'object',value:{check:function(ctx){
+                    var value="tab\tnewline\nunicode-\u00e9-\u0001";
+                    ctx.host.storage.set("value", value);
+                    if (ctx.host.storage.get("value") !== value) throw Error("storage roundtrip");
+                    var json=JSON.stringify({text:value});
+                    ctx.host.storage.set("json", json);
+                    if (ctx.host.storage.get("json") !== json) throw Error("storage json roundtrip");
+                }}};
+                """
+        });
+        WritePlugin(scenario, "legacy", new()
+        {
+            ["shared.js"] = """
+                globalThis.__vjs_plugin={__vjsPlugin:'object',value:{check:function(ctx){
+                    if (ctx.host.storage.get("greeting") !== "Hello") throw Error("legacy read");
+                    ctx.host.storage.set("other", "value");
+                    if (ctx.host.storage.get("greeting") !== "Hello") throw Error("legacy lost after write");
+                }}};
+                """
+        });
+
+        var legacyDirectory = Path.Combine(scenario, "data", "legacy");
+        Directory.CreateDirectory(legacyDirectory);
+        File.WriteAllText(Path.Combine(legacyDirectory, "storage.json"), "greeting\tHello\n");
+
+        var log = new CaptureLog();
+        var host = Host(scenario, "server", log);
+        try
+        {
+            host.Load();
+            Assert(!host.HasErrors, string.Join(" | ", host.Errors));
+            host.DispatchTo("store", "check", "{}");
+            host.DispatchTo("legacy", "check", "{}");
+            Assert(!host.Plugins.Any(plugin => plugin.Failed), "storage plugin failed: " + string.Join(" | ", log.Messages));
+
+            var store = File.ReadAllText(Path.Combine(scenario, "data", "store", "storage.json"));
+            Assert(store.StartsWith("{", StringComparison.Ordinal), "storage is not JSON: " + store);
+            Assert(!store.Contains('\t') && !store.Contains('\n'), "storage contains raw separators");
+            var legacy = File.ReadAllText(Path.Combine(legacyDirectory, "storage.json"));
+            Assert(legacy.StartsWith("{", StringComparison.Ordinal), "legacy storage was not migrated");
+            Assert(legacy.Contains("Z3JlZXRpbmc="), "legacy key was not preserved");
+        }
+        finally
+        {
+            host.Dispose();
+        }
     }
 
     private static JsHost Host(string root, string side, CaptureLog log) => new(root, side == "server" ? ProcessSide.Server : ProcessSide.Client, log, bindingFilter: type => !BindingProbe.IsFixture(type));

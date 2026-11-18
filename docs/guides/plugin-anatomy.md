@@ -104,10 +104,11 @@ to another plugin's exported functions remain ordinary JS calls; see below. Keep
 |---|---|---|
 | `setup(ctx)` / `onLoad(ctx)` | — | once, after dependencies load |
 | `teardown(ctx)` / `onUnload(ctx)` | — | before the plugin is dropped |
-| `onServerTick(ctx, snapshot)` | `{ world, peers, day, dayFraction }` | ~1 Hz on a process with `ZNet` |
+| `onServerTick(ctx, snapshot)` | `{ world, peers, day, dayFraction, timeOfDay }` | ~1 Hz on a process with `ZNet` |
 | `onChat(ctx, payload)` | `{ channel, senderId, text }` | routed chat reaches this process |
 | `onPlayerJoin` / `onPlayerLeave` | `{ uid, name }` | a peer appears/disappears |
 | `onPlayerSpawned` / `onPlayerDespawned` | `{ uid, name }` | a character enters/leaves the world |
+| `onPlayerReady` / `onPlayerUnready` | `{ uid, name }` | server only: the peer's world became playable, or stopped being playable |
 | `onDamage(ctx, payload)` | `DamagePayload` | a hit was applied (read-only) |
 
 Rules that matter:
@@ -140,7 +141,7 @@ Rules that matter:
 | `ctx.host.api` | Game API — see [API reference](api-reference.md) |
 | `ctx.host.log(level, msg)` | `info` / `warn` / `error` |
 | `ctx.host.config(key)` | Value from `config/<name>/config.ini`, else the manifest |
-| `ctx.host.storage.get/set` | Small key/value strings persisted under `data/<plugin>/storage.json` |
+| `ctx.host.storage.get/set` | Small key/value strings persisted as base64 JSON under `data/<plugin>/storage.json`; tabs and newlines are safe |
 | `ctx.host.now()` | Epoch milliseconds |
 | `ctx.host.info()` | `{ name, version, api, dir }` |
 
@@ -180,11 +181,12 @@ const core = context().dep<{ formatPlayer(name: string, uid: number): string }>(
 ```
 
 Or consume them with `use("core", core => { /* call core methods */ })`.
-Exports are live objects in one engine; they can contain functions and objects. There is no
-network request or automatic provider-context switch. For exported operations that access a
-provider's store, capture its `database()` collection or scoped `ctx.host.api` during provider
-setup and close over that value. Do not rely on the caller's active `context()` identifying the
-provider. See [Accounts](accounts.md#publish-something-another-plugin-needs) for shared account links.
+Exports are live objects in one engine; they can contain functions and objects. Each plugin
+bundle has its own SDK copy, bound to the plugin that evaluated it, so an exported function keeps
+the provider's `context()`, `database()`, `fs()` and scoped `host.api` when a consumer calls it.
+`use` passes the consumer's context as its second argument; pass that identity explicitly when an
+operation needs to know who called it. See
+[Accounts](accounts.md#publish-something-another-plugin-needs) for shared account links.
 
 ## Configuration
 

@@ -162,11 +162,12 @@ public class Plugin : BaseUnityPlugin
 
     private static string BuildWorldSnapshot()
     {
-        var worldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : null;
-        var peers = ZNet.instance != null && ZNet.instance.GetPeers() != null ? ZNet.instance.GetPeers().Count : 0;
-        var day = EnvMan.instance != null ? EnvMan.instance.GetDay() : 0;
-        var fraction = EnvMan.instance != null ? EnvMan.instance.GetDayFraction() : 0f;
-        return $"{{\"world\":{ValheimBridge.Quote(worldName)},\"peers\":{peers},\"day\":{day},\"dayFraction\":{fraction.ToString(System.Globalization.CultureInfo.InvariantCulture)}}}";
+        var worldName = GameEnvironment.WorldName;
+        var peers = GameEnvironment.Peers;
+        var day = GameEnvironment.Day;
+        var fraction = GameEnvironment.DayFraction.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return $"{{\"world\":{ValheimBridge.Quote(worldName)},\"peers\":{peers},\"day\":{day}," +
+               $"\"dayFraction\":{fraction},\"timeOfDay\":{ValheimBridge.Quote(GameEnvironment.TimeOfDay)}}}";
     }
 
     private void Update()
