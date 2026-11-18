@@ -774,3 +774,9 @@ default; `life-demo` reads `debug=true` from its config.
 
 Use `task probe:ai` for the binding and perception-model contract, `task probe:behaviour` for the
 YAML engine, and `task probe:life` for the composed behaviour library.
+
+Nested groups are `{ and: [...] }`, `{ or: [...] }` and `{ not: {...} }`; fields next to a
+group are ANDed with it.
+When the instance has an NPC handle, `moveTo`, `wait`, `lookAt` and `face` are also native
+actions. The host issues the intent once and returns `running` until `NpcActionState` settles it,
+so YAML does not need `moveIssued`/`waitIssued` state.

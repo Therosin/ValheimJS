@@ -7,8 +7,8 @@ using ValheimJS.Core;
 
 /// <summary>
 /// Compiles the real life-demo YAML library and asserts that each activity reaches its expected
-/// primitive sequence through imports. This is the composition contract the TypeScript brain
-/// relies on; the brain itself is tested in the Bun suite.
+/// primitive sequence through imports. This is the composition contract the TypeScript
+/// activity definitions rely on; selection and feedback are tested in the Bun suite.
 /// </summary>
 internal static class LifeDemoProbe
 {
@@ -28,6 +28,7 @@ internal static class LifeDemoProbe
 
             Check(behaviours, micro, "wander.yaml", ["select-point", "move-to", "wait"]);
             Check(behaviours, micro, "forage.yaml", ["select-point", "move-to", "look-around", "wait"]);
+            Check(behaviours, micro, "explore.yaml", ["select-point", "move-to", "look-around", "wait"]);
             Check(behaviours, micro, "return-home.yaml", ["select-home", "move-to", "wait"]);
             Check(behaviours, micro, "rest.yaml", ["select-home", "move-to", "wait"]);
             Check(behaviours, micro, "seek-home.yaml", ["select-shelter", "move-to", "claim-home", "wait"]);

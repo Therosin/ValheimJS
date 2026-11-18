@@ -37,6 +37,7 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
     internal sealed class Brain
     {
         internal string Id = string.Empty;
+        internal string Plugin = string.Empty;
         internal string TreeId = string.Empty;
         internal BehaviourTree Tree = null!;
         internal BehaviourInstance Instance = null!;
@@ -47,6 +48,7 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
         internal JsCallback? Random;
         internal string? SensesKey;
         internal bool Senses = true;
+        internal readonly Dictionary<string, object?> NativeState = new(StringComparer.Ordinal);
     }
 
     private sealed class TreeEntry
@@ -391,6 +393,7 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
         var settings = Object(options, "ai.instantiate(options)");
         var brain = new Brain
         {
+            Plugin = plugin,
             TreeId = treeId,
             Tree = tree,
             This = settings?.Get("this") ?? JsValue.Undefined,
@@ -506,12 +509,20 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
         StatusName(Require(plugin, instanceId, "ai: instance").Instance.Status);
 
     [JsBinding(Scoped = true, Description = "Stops the instance and runs active execAfter hooks as interrupted.")]
-    public void Cancel(string plugin, string instanceId) =>
-        Require(plugin, instanceId, "ai: instance").Instance.Cancel();
+    public void Cancel(string plugin, string instanceId)
+    {
+        var brain = Require(plugin, instanceId, "ai: instance");
+        brain.NativeState.Clear();
+        brain.Instance.Cancel();
+    }
 
     [JsBinding(Scoped = true, Description = "Clears execution progress; optionally restores declared state defaults.")]
-    public void Reset(string plugin, string instanceId, bool resetState) =>
-        Require(plugin, instanceId, "ai: instance").Instance.Reset(resetState);
+    public void Reset(string plugin, string instanceId, bool resetState)
+    {
+        var brain = Require(plugin, instanceId, "ai: instance");
+        brain.NativeState.Clear();
+        brain.Instance.Reset(resetState);
+    }
 
     [JsBinding(Scoped = true, Description = "Drops one instance without running hooks.")]
     public bool Release(string plugin, string instanceId) => Remove(plugin, instanceId, out _);
@@ -588,6 +599,28 @@ internal sealed class AiBindings : ScopedBindings<string, AiBindings.Brain>
 
     private BehaviourResult InvokeAction(Brain brain, string name, BehaviourContext context)
     {
+        if (brain.SensesKey != null && AiNative.Resolve is { } native)
+        {
+            var nativeResult = native(
+                brain.Plugin,
+                brain.SensesKey,
+                context.NodeId,
+                name,
+                context.Args,
+                brain.NativeState);
+            if (nativeResult.Handled)
+            {
+                if (nativeResult.Running)
+                {
+                    return BehaviourResult.Running;
+                }
+
+                return nativeResult.Success
+                    ? BehaviourResult.Success(nativeResult.Output)
+                    : BehaviourResult.Failure(nativeResult.Output);
+            }
+        }
+
         if (brain.Action == null)
         {
             throw new BehaviourException($"ai: the tree uses action '{name}' but the instance has no action callback.");

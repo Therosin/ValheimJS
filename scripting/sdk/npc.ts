@@ -21,6 +21,7 @@ import type {
     NpcAffordances,
     NpcDamageEvent,
     NpcEquipment,
+    NpcFindQuery,
     NpcInteractOptions,
     NpcInteractionResult,
     NpcObject,

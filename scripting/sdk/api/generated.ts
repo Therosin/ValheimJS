@@ -495,6 +495,10 @@ export interface NpcApi {
      */
     craftCheck(entity: unknown, recipe: string): CraftCheck;
     /**
+     * Sets the native crouch/sneak state.
+     */
+    crouch(entity: unknown, crouched: boolean): ActionResult;
+    /**
      * Enables host-side NPC tracing: lifecycle, perception and settled intents.
      */
     debug(enabled: boolean): boolean;
@@ -502,6 +506,14 @@ export interface NpcApi {
      * Despawns one of this plugin's NPCs.
      */
     despawn(entity: unknown): boolean;
+    /**
+     * Finds the nearest perceived target matching a declarative query.
+     */
+    findObject(entity: unknown, kind: string, options: unknown): NpcSensed | null;
+    /**
+     * Finds perceived targets matching a declarative query, nearest first.
+     */
+    findObjects(entity: unknown, kind: string, options: unknown): NpcSensed[];
     /**
      * Live NPCs of one kind owned by this plugin.
      */
@@ -534,6 +546,14 @@ export interface NpcApi {
      * Registers an NPC kind and its plugin subclass constructor.
      */
     register(kind: string, prefab: string, tickMs: number, constructor: (...args: unknown[]) => unknown, options: unknown): void;
+    /**
+     * Releases a world resource reservation owned by one script actor.
+     */
+    releaseResource(handle: string, owner: string): void;
+    /**
+     * Reserves a world resource handle for one script actor; intention only.
+     */
+    reserveResource(handle: string, owner: string, ttlMs: number): boolean;
     /**
      * Queries the NPC's perception store; entities persist as memory after leaving range.
      */

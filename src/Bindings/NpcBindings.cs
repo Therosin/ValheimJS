@@ -63,7 +63,354 @@ internal sealed class NpcBindings : JsBindings
 
     public NpcBindings(JsBindingContext context) : base(context)
     {
+        AiNative.Resolve = ResolveAiAction;
     }
+
+    internal static AiNativeResult ResolveAiAction(
+        string plugin,
+        string handle,
+        string nodeId,
+        string name,
+        IReadOnlyDictionary<string, object?> args,
+        IDictionary<string, object?> state)
+    {
+        if (name is "findObject" or "findObjects")
+        {
+            return ResolveFind(plugin, handle, name, args);
+        }
+
+        if (name is "moveTo" or "wait" or "lookAt" or "face")
+        {
+            return ResolveIntent(plugin, handle, nodeId, name, args, state);
+        }
+
+        if (name is "harvest" or "pick" or "pickup" or "take" or "store" or "withdraw" or
+            "interact" or "cook" or "use")
+        {
+            return ResolveInteraction(plugin, handle, name, args);
+        }
+
+        if (name is "attack" or "jump" or "stop" or "idle" or "crouch")
+        {
+            return ResolveCommand(plugin, handle, name, args);
+        }
+
+        return AiNativeResult.NotHandled;
+    }
+
+    private static AiNativeResult ResolveIntent(
+        string plugin,
+        string handle,
+        string nodeId,
+        string name,
+        IReadOnlyDictionary<string, object?> args,
+        IDictionary<string, object?> state)
+    {
+        var manager = WorldManager.Instance;
+        var obj = manager?.Resolve(plugin, handle);
+        if (manager == null || obj == null)
+        {
+            return AiNativeResult.Fail("no-world");
+        }
+
+        var key = "intent:" + nodeId;
+        if (state.TryGetValue(key, out var tracked) && tracked is long seq)
+        {
+            return ObserveIntent(manager, plugin, handle, key, seq, state);
+        }
+
+        CommandResult result;
+        switch (name)
+        {
+            case "moveTo":
+            {
+                var position = ReadPosition(args);
+                if (position == null)
+                {
+                    return AiNativeResult.Fail("target-required");
+                }
+
+                result = manager.Command(
+                    plugin,
+                    handle,
+                    "moveTo",
+                    position.Value.X,
+                    position.Value.Y,
+                    position.Value.Z,
+                    ArgBool(args, "run") ?? false);
+                break;
+            }
+
+            case "wait":
+            {
+                var seconds = ArgDouble(args, "seconds") ?? ArgDouble(args, "wait");
+                if (seconds == null)
+                {
+                    return AiNativeResult.Fail("seconds-required");
+                }
+
+                result = manager.Command(plugin, handle, "wait", seconds.Value);
+                break;
+            }
+
+            case "lookAt":
+            {
+                var position = ReadPosition(args);
+                if (position == null)
+                {
+                    return AiNativeResult.Fail("target-required");
+                }
+
+                result = manager.Command(plugin, handle, "lookAt", position.Value.X, position.Value.Y, position.Value.Z);
+                break;
+            }
+
+            default:
+            {
+                var target = ArgString(args, "target") ?? ArgString(args, "id");
+                if (string.IsNullOrWhiteSpace(target))
+                {
+                    return AiNativeResult.Fail("target-required");
+                }
+
+                result = manager.Command(plugin, handle, "face", target);
+                break;
+            }
+        }
+
+        if (!result.Ok)
+        {
+            return AiNativeResult.Fail(result.Reason ?? "rejected");
+        }
+
+        var perception = manager.Snapshot(plugin, handle) as NpcPerception;
+        var action = perception?.Action;
+        if (action == null || action.Seq <= 0)
+        {
+            return AiNativeResult.Fail("no-action");
+        }
+
+        if (action.Status == "arrived")
+        {
+            return AiNativeResult.Ok(action.ToPlain());
+        }
+
+        if (action.Status is "failed" or "cancelled")
+        {
+            return AiNativeResult.Fail(action.Reason ?? action.Status);
+        }
+
+        state[key] = action.Seq;
+        return AiNativeResult.Pending();
+    }
+
+    private static AiNativeResult ObserveIntent(
+        WorldManager manager,
+        string plugin,
+        string handle,
+        string key,
+        long seq,
+        IDictionary<string, object?> state)
+    {
+        var perception = manager.Snapshot(plugin, handle) as NpcPerception;
+        var action = perception?.Action;
+        if (action == null || action.Seq != seq)
+        {
+            state.Remove(key);
+            return AiNativeResult.Fail("superseded");
+        }
+
+        switch (action.Status)
+        {
+            case "arrived":
+                state.Remove(key);
+                return AiNativeResult.Ok(action.ToPlain());
+            case "failed":
+            case "cancelled":
+                state.Remove(key);
+                return AiNativeResult.Fail(action.Reason ?? action.Status);
+            default:
+                return AiNativeResult.Pending();
+        }
+    }
+
+    private static (double X, double Y, double Z)? ReadPosition(IReadOnlyDictionary<string, object?> args)
+    {
+        if (args.TryGetValue("target", out var value) ||
+            args.TryGetValue("pos", out value) ||
+            args.TryGetValue("position", out value))
+        {
+            if (value is IReadOnlyDictionary<string, object?> map)
+            {
+                if (map.TryGetValue("pos", out var nested) && nested is IReadOnlyDictionary<string, object?> posMap)
+                {
+                    map = posMap;
+                }
+
+                var x = ArgDouble(map, "x");
+                var y = ArgDouble(map, "y");
+                var z = ArgDouble(map, "z");
+                if (x.HasValue && y.HasValue && z.HasValue)
+                {
+                    return (x.Value, y.Value, z.Value);
+                }
+            }
+        }
+
+        var directX = ArgDouble(args, "x");
+        var directY = ArgDouble(args, "y");
+        var directZ = ArgDouble(args, "z");
+        return directX.HasValue && directY.HasValue && directZ.HasValue
+            ? (directX.Value, directY.Value, directZ.Value)
+            : null;
+    }
+
+    private static AiNativeResult ResolveFind(
+        string plugin,
+        string handle,
+        string name,
+        IReadOnlyDictionary<string, object?> args)
+    {
+        var manager = WorldManager.Instance;
+        var obj = manager?.Resolve(plugin, handle);
+        if (manager == null || obj == null)
+        {
+            return AiNativeResult.Fail();
+        }
+
+        var kind = args.TryGetValue("kind", out var kindValue) ? kindValue as string : null;
+        IReadOnlyDictionary<string, object?>? query = null;
+        if (args.TryGetValue("query", out var queryValue) &&
+            queryValue is IReadOnlyDictionary<string, object?> map)
+        {
+            query = map;
+        }
+
+        var find = NpcFindQuery.FromPlain(query, kind);
+        if (name == "findObject")
+        {
+            find.Max = 1;
+        }
+
+        var matches = manager.Find(plugin, handle, find);
+        var now = Time.realtimeSinceStartup;
+        if (name == "findObject")
+        {
+            return matches.Count == 0
+                ? AiNativeResult.Fail()
+                : AiNativeResult.Ok(matches[0].ToPlain(obj.Position.x, obj.Position.y, obj.Position.z, obj.Yaw, now));
+        }
+
+        var list = new List<object?>(matches.Count);
+        foreach (var entry in matches)
+        {
+            list.Add(entry.ToPlain(obj.Position.x, obj.Position.y, obj.Position.z, obj.Yaw, now));
+        }
+
+        return AiNativeResult.Ok(list);
+    }
+
+    private static AiNativeResult ResolveInteraction(
+        string plugin,
+        string handle,
+        string name,
+        IReadOnlyDictionary<string, object?> args)
+    {
+        var manager = WorldManager.Instance;
+        var obj = manager?.Resolve(plugin, handle);
+        if (manager == null || obj == null)
+        {
+            return AiNativeResult.Fail();
+        }
+
+        var target = ArgString(args, "target") ?? ArgString(args, "id");
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return AiNativeResult.Fail("target-required");
+        }
+
+        var verb = name switch
+        {
+            "take" => NpcInteraction.Inspect(obj, target).Kind == "item" ? "pickup" : "take",
+            "withdraw" => "take",
+            "pick" => "pick",
+            "pickup" => "pickup",
+            "harvest" => "harvest",
+            "store" => "store",
+            "cook" => "cook",
+            "use" => "use",
+            _ => ArgString(args, "verb")
+        };
+
+        var options = new NpcInteractOptions
+        {
+            Verb = verb,
+            Prefab = ArgString(args, "prefab"),
+            Name = ArgString(args, "item") ?? ArgString(args, "name"),
+            Count = Math.Max(1, ArgInt(args, "count") ?? 1),
+            Repeat = ArgBool(args, "repeat") ?? false,
+            Alt = ArgBool(args, "alt") ?? false
+        };
+
+        if (args.TryGetValue("slot", out var slot) && slot is IReadOnlyDictionary<string, object?> slotMap)
+        {
+            options.X = ArgInt(slotMap, "x");
+            options.Y = ArgInt(slotMap, "y");
+        }
+
+        var result = NpcInteraction.Interact(obj, target, options);
+        return result.Ok
+            ? AiNativeResult.Ok(result.ToPlain())
+            : AiNativeResult.Fail(result.Reason ?? "rejected");
+    }
+
+    private static AiNativeResult ResolveCommand(
+        string plugin,
+        string handle,
+        string name,
+        IReadOnlyDictionary<string, object?> args)
+    {
+        var manager = WorldManager.Instance;
+        if (manager?.Resolve(plugin, handle) == null)
+        {
+            return AiNativeResult.Fail("no-world");
+        }
+
+        var result = name switch
+        {
+            "attack" => manager.Command(
+                plugin,
+                handle,
+                "attack",
+                ArgString(args, "target") ?? ArgString(args, "id") ?? string.Empty,
+                ArgBool(args, "secondary") ?? false),
+            "jump" => manager.Command(plugin, handle, "jump"),
+            "stop" => manager.Command(plugin, handle, "stop"),
+            "idle" => manager.Command(plugin, handle, "idle"),
+            "crouch" => manager.Command(
+                plugin,
+                handle,
+                "crouch",
+                ArgBool(args, "crouched") ?? ArgBool(args, "value") ?? true),
+            _ => CommandResult.Fail("unknown-action")
+        };
+
+        return result.Ok ? AiNativeResult.Ok() : AiNativeResult.Fail(result.Reason ?? "rejected");
+    }
+
+    private static string? ArgString(IReadOnlyDictionary<string, object?> args, string key) =>
+        args.TryGetValue(key, out var value) ? value as string : null;
+
+    private static int? ArgInt(IReadOnlyDictionary<string, object?> args, string key) =>
+        args.TryGetValue(key, out var value) && value is long number ? (int)number :
+        args.TryGetValue(key, out value) && value is double real ? (int)real : null;
+
+    private static double? ArgDouble(IReadOnlyDictionary<string, object?> args, string key) =>
+        args.TryGetValue(key, out var value) && value is long number ? number :
+        args.TryGetValue(key, out value) && value is double real ? real : null;
+
+    private static bool? ArgBool(IReadOnlyDictionary<string, object?> args, string key) =>
+        args.TryGetValue(key, out var value) && value is bool flag ? flag : null;
 
     public override void Install(JsTypeRegistry types)
     {
@@ -202,6 +549,36 @@ internal sealed class NpcBindings : JsBindings
             ["ok"] = result.Ok,
             ["reason"] = result.Reason
         });
+    }
+
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "ActionResult",
+        Description = "Sets the native crouch/sneak state.")]
+    public JsValue Crouch(string plugin, JsValue entity, bool crouched)
+    {
+        var handle = HandleOf(entity);
+        var result = handle == null
+            ? CommandResult.Fail("unknown-handle")
+            : WorldManager.Instance?.Command(plugin, handle, "crouch", crouched) ??
+              CommandResult.Fail("no-world");
+        return JsPayload.FromPlain(Engine, new Dictionary<string, object?>
+        {
+            ["ok"] = result.Ok,
+            ["reason"] = result.Reason
+        });
+    }
+
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "boolean",
+        Description = "Reserves a world resource handle for one script actor; intention only.")]
+    public bool ReserveResource(string plugin, string handle, string owner, int ttlMs)
+    {
+        return ResourceIntents.TryReserve(handle, owner, ttlMs);
+    }
+
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "void",
+        Description = "Releases a world resource reservation owned by one script actor.")]
+    public void ReleaseResource(string plugin, string handle, string owner)
+    {
+        ResourceIntents.Release(handle, owner);
     }
 
     [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "CraftCheck",
@@ -499,6 +876,62 @@ internal sealed class NpcBindings : JsBindings
         return JsPayload.Array(Engine, values);
     }
 
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "NpcSensed | null",
+        Description = "Finds the nearest perceived target matching a declarative query.")]
+    public JsValue FindObject(string plugin, JsValue entity, string kind, JsValue options)
+    {
+        var handle = HandleOf(entity);
+        var manager = WorldManager.Instance;
+        var obj = handle != null && manager != null ? manager.Resolve(plugin, handle) : null;
+        if (handle == null || manager == null || obj == null)
+        {
+            return JsValue.Null;
+        }
+
+        var matches = manager.Find(plugin, handle, FindQuery(kind, options, 1));
+        if (matches.Count == 0)
+        {
+            return JsValue.Null;
+        }
+
+        return JsPayload.FromPlain(Engine,
+            matches[0].ToPlain(obj.Position.x, obj.Position.y, obj.Position.z, obj.Yaw, Time.realtimeSinceStartup));
+    }
+
+    [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "NpcSensed[]",
+        Description = "Finds perceived targets matching a declarative query, nearest first.")]
+    public JsValue FindObjects(string plugin, JsValue entity, string kind, JsValue options)
+    {
+        var handle = HandleOf(entity);
+        var manager = WorldManager.Instance;
+        var obj = handle != null && manager != null ? manager.Resolve(plugin, handle) : null;
+        if (handle == null || manager == null || obj == null)
+        {
+            return JsPayload.Array(Engine, Array.Empty<JsValue?>());
+        }
+
+        var matches = manager.Find(plugin, handle, FindQuery(kind, options, int.MaxValue));
+        var now = Time.realtimeSinceStartup;
+        var values = new List<JsValue?>(matches.Count);
+        foreach (var entry in matches)
+        {
+            values.Add(JsPayload.FromPlain(Engine,
+                entry.ToPlain(obj.Position.x, obj.Position.y, obj.Position.z, obj.Yaw, now)));
+        }
+
+        return JsPayload.Array(Engine, values);
+    }
+
+    private static NpcFindQuery FindQuery(string kind, JsValue options, int limit)
+    {
+        var plain = options.IsUndefined() || options.IsNull()
+            ? null
+            : ToPlain(options) as IReadOnlyDictionary<string, object?>;
+        var query = NpcFindQuery.FromPlain(plain, string.IsNullOrWhiteSpace(kind) ? null : kind);
+        query.Max = Math.Max(1, limit);
+        return query;
+    }
+
     [JsBinding(Scoped = true, ReturnKind = JsReturnKind.Native, Returns = "Record<string, unknown>",
         Description = "Persistent plugin-owned memory object for one NPC (survives restarts).")]
     public JsValue Memory(string plugin, JsValue entity)
@@ -792,7 +1225,7 @@ internal sealed class NpcBindings : JsBindings
         }
         catch (Exception exception)
         {
-            LogError($"[{blueprint.Plugin}] npc '{handle}' construction failed: {Describe(exception)}");
+            LogError($"[{blueprint.Plugin}] npc '{handle}' construction failed: {JsErrorText.Describe(exception)}");
             return null;
         }
         finally
@@ -829,7 +1262,7 @@ internal sealed class NpcBindings : JsBindings
             instance.Failures.TryGetValue(hook, out var failures);
             failures++;
             instance.Failures[hook] = failures;
-            LogError($"[{blueprint.Plugin}] npc '{instance.Handle}' {hook} threw ({failures}): {Describe(exception)}");
+            LogError($"[{blueprint.Plugin}] npc '{instance.Handle}' {hook} threw ({failures}): {JsErrorText.Describe(exception)}");
             if (failures >= 3)
             {
                 instance.DisabledHooks.Add(hook);
@@ -1138,20 +1571,59 @@ internal sealed class NpcBindings : JsBindings
         return false;
     }
 
+    private static object? ToPlain(JsValue value)
+    {
+        if (value.IsNull() || value.IsUndefined())
+        {
+            return null;
+        }
+
+        if (value.IsString())
+        {
+            return value.AsString();
+        }
+
+        if (value.IsBoolean())
+        {
+            return value.AsBoolean();
+        }
+
+        if (value.IsNumber())
+        {
+            return value.AsNumber();
+        }
+
+        if (value.IsArray())
+        {
+            var array = value.AsArray();
+            var list = new List<object?>((int)array.Length);
+            for (var index = 0; index < array.Length; index++)
+            {
+                list.Add(ToPlain(array.Get(index)));
+            }
+
+            return list;
+        }
+
+        if (value is ObjectInstance obj)
+        {
+            var map = new Dictionary<string, object?>(StringComparer.Ordinal);
+            foreach (var key in obj.GetOwnPropertyKeys(Jint.Runtime.Types.String))
+            {
+                var name = key.ToString();
+                map[name] = ToPlain(obj.Get(name));
+            }
+
+            return map;
+        }
+
+        throw new ArgumentException($"npc: query value of type '{value.Type}' is not supported.");
+    }
+
     private static ZDOID ResolveId(string handle) =>
         WorldManager.TryParseHandle(handle, out var id) ? id : ZDOID.None;
 
     private string? HandleOf(JsValue entity) =>
         _types?.Handle(entity) is BaseNPC npc ? npc.Id : null;
 
-    private static string Describe(Exception exception)
-    {
-        var inner = exception;
-        while (inner.InnerException != null)
-        {
-            inner = inner.InnerException;
-        }
-
-        return inner.GetType().Name + ": " + inner.Message;
-    }
 }

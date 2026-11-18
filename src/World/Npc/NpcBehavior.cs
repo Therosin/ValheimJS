@@ -520,6 +520,14 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
 
                 obj.Character.Jump(false);
                 return CommandResult.Success;
+            case "crouch" when args.Length >= 1:
+                if (obj.AI == null)
+                {
+                    return CommandResult.Fail("body-lost");
+                }
+
+                obj.AI.SetCrouched(Convert.ToBoolean(args[0]));
+                return CommandResult.Success;
             default:
                 return CommandResult.Fail("unknown-action");
         }
@@ -745,6 +753,7 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
             entry.InRange = true;
             entry.LastSeenAt = _now;
             entry.SeenCount++;
+            DescribeCharacter(entry);
 
             if (audible && !wasAudible)
             {
@@ -881,6 +890,52 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
         return matches.Count > query.Max ? matches.GetRange(0, query.Max) : matches;
     }
 
+    public IReadOnlyList<NpcSensedEntity> Find(NpcFindQuery query)
+    {
+        var matches = new List<NpcSensedEntity>();
+        foreach (var entry in _entities.Values)
+        {
+            if (query.Allows(entry, _origin.x, _origin.z))
+            {
+                matches.Add(entry);
+            }
+        }
+
+        foreach (var entry in _objects.Values)
+        {
+            if (query.Allows(entry, _origin.x, _origin.z))
+            {
+                matches.Add(entry);
+            }
+        }
+
+        matches.Sort((left, right) => query.Sort switch
+        {
+            "health" => right.Health.CompareTo(left.Health),
+            "level" => right.Level.CompareTo(left.Level),
+            "seenCount" => right.SeenCount.CompareTo(left.SeenCount),
+            _ => Distance(left).CompareTo(Distance(right))
+        });
+
+        if (query.Skip > 0 && query.Skip < matches.Count)
+        {
+            matches.RemoveRange(0, query.Skip);
+        }
+        else if (query.Skip >= matches.Count)
+        {
+            matches.Clear();
+        }
+
+        return matches.Count > query.Max ? matches.GetRange(0, query.Max) : matches;
+
+        double Distance(NpcSensedEntity entry)
+        {
+            var dx = entry.X - _origin.x;
+            var dz = entry.Z - _origin.z;
+            return dx * dx + dz * dz;
+        }
+    }
+
     public IReadOnlyList<NpcSensedEntity> TakeNewSenses()
     {
         if (_newEntities.Count == 0)
@@ -956,6 +1011,11 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
             entry.Prefab = prefab.name;
             entry.Name = prefab.name;
             entry.Kind = kind;
+            entry.ToolTier = prefab.GetComponent<TreeBase>()?.m_minToolTier
+                ?? prefab.GetComponent<TreeLog>()?.m_minToolTier
+                ?? prefab.GetComponent<MineRock>()?.m_minToolTier
+                ?? prefab.GetComponent<MineRock5>()?.m_minToolTier
+                ?? 0;
             entry.X = position.x;
             entry.Y = position.y;
             entry.Z = position.z;
@@ -969,6 +1029,7 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
             entry.InRange = true;
             entry.LastSeenAt = _now;
             entry.SeenCount++;
+            DescribeObject(entry, obj, kind, prefab, live, pickable);
             entries.Add(entry);
         }
 
@@ -1010,6 +1071,272 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
         return distance <= 0.01f || !Physics.Raycast(eye, delta / distance, distance, ViewBlockMask);
     }
 
+    private static void DescribeCharacter(NpcSensedEntity entry)
+    {
+        ResetFacts(entry);
+        AddTag(entry, "character");
+        AddTag(entry, entry.IsPlayer ? "player" : entry.IsNpc ? "npc" : "creature");
+        if (entry.IsTamed) AddTag(entry, "tamed");
+        if (entry.Enemy) AddTag(entry, "enemy");
+        if (entry.IsDead) AddTag(entry, "dead");
+        AddVerb(entry, "attack");
+        AddVerb(entry, "face");
+        entry.Usable = true;
+    }
+
+    private static void DescribeObject(
+        NpcSensedEntity entry,
+        WorldObject actor,
+        string kind,
+        GameObject prefab,
+        GameObject? live,
+        Pickable? pickable)
+    {
+        ResetFacts(entry);
+        AddTag(entry, kind);
+
+        switch (kind)
+        {
+            case "tree":
+            case "log":
+                AddTag(entry, "wood");
+                AddTag(entry, "harvestable");
+                AddVerb(entry, "harvest");
+                AddRequirement(entry, "chop");
+                AddDrops(entry, prefab.GetComponent<TreeBase>()?.m_dropWhenDestroyed);
+                AddDrops(entry, prefab.GetComponent<TreeLog>()?.m_dropWhenDestroyed);
+                break;
+
+            case "rock":
+                AddTag(entry, "stone");
+                AddTag(entry, "harvestable");
+                AddVerb(entry, "harvest");
+                AddRequirement(entry, "pickaxe");
+                AddDrops(entry, prefab.GetComponent<MineRock>()?.m_dropItems);
+                AddDrops(entry, prefab.GetComponent<MineRock5>()?.m_dropItems);
+                break;
+
+            case "pickable":
+                AddTag(entry, "loot");
+                AddVerb(entry, "pick");
+                var itemPrefab = (pickable ?? prefab.GetComponent<Pickable>())?.m_itemPrefab;
+                if (itemPrefab != null) AddItem(entry, itemPrefab);
+                if (entry.Food) AddTag(entry, "food");
+                break;
+
+            case "item":
+                AddTag(entry, "loot");
+                AddTag(entry, "item");
+                AddVerb(entry, "pickup");
+                AddItem(entry, live != null ? live : prefab);
+                break;
+
+            case "container":
+                AddTag(entry, "storage");
+                AddVerb(entry, "store");
+                AddVerb(entry, "take");
+                break;
+
+            case "smelter":
+                AddVerb(entry, "addOre");
+                AddVerb(entry, "addFuel");
+                break;
+
+            case "door":
+                AddVerb(entry, "open");
+                AddVerb(entry, "close");
+                AddVerb(entry, "toggle");
+                break;
+
+            case "bed":
+                AddTag(entry, "shelter");
+                AddVerb(entry, "sleep");
+                AddRequirement(entry, "player");
+                break;
+
+            case "station":
+                AddVerb(entry, "craft");
+                AddVerb(entry, "repair");
+                AddRequirement(entry, "player");
+                break;
+
+            case "cooking":
+                AddTag(entry, "station");
+                AddVerb(entry, "cook");
+                break;
+
+            case "portal":
+                AddVerb(entry, "use");
+                AddRequirement(entry, "player");
+                break;
+        }
+
+        entry.Usable = CanUse(actor, entry);
+    }
+
+    private static void AddItem(NpcSensedEntity entry, GameObject itemPrefab)
+    {
+        if (itemPrefab == null)
+        {
+            return;
+        }
+
+        if (!entry.Gives.Contains(itemPrefab.name))
+        {
+            entry.Gives.Add(itemPrefab.name);
+        }
+
+        var shared = itemPrefab.GetComponent<ItemDrop>()?.m_itemData.m_shared;
+        if (shared == null)
+        {
+            return;
+        }
+
+        var name = itemPrefab.name;
+        if (shared.m_food > 0f || shared.m_foodStamina > 0f || shared.m_foodEitr > 0f)
+        {
+            AddTag(entry, "food");
+            if (name.StartsWith("Cooked", StringComparison.OrdinalIgnoreCase))
+            {
+                AddTag(entry, "cooked");
+            }
+            else
+            {
+                AddTag(entry, "raw");
+            }
+        }
+
+        if (name.Contains("Meat", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("Boar", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("Deer", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("Wolf", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("Serpent", StringComparison.OrdinalIgnoreCase))
+        {
+            AddTag(entry, "meat");
+        }
+
+        if (name.Contains("Seed", StringComparison.OrdinalIgnoreCase))
+        {
+            AddTag(entry, "seed");
+        }
+
+        if (name is "Wood" or "FineWood" or "RoundLog" or "ElderBark")
+        {
+            AddTag(entry, "wood");
+        }
+
+        if (name.Contains("Stone", StringComparison.OrdinalIgnoreCase))
+        {
+            AddTag(entry, "stone");
+        }
+
+        if (name.EndsWith("Ore", StringComparison.OrdinalIgnoreCase))
+        {
+            AddTag(entry, "ore");
+        }
+
+        if (name.Contains("Ingot", StringComparison.OrdinalIgnoreCase))
+        {
+            AddTag(entry, "metal");
+        }
+    }
+
+    private static void AddDrops(NpcSensedEntity entry, DropTable? table)
+    {
+        if (table == null)
+        {
+            return;
+        }
+
+        foreach (var drop in table.GetDropList())
+        {
+            if (drop != null)
+            {
+                AddItem(entry, drop);
+            }
+        }
+    }
+
+    private static bool CanUse(WorldObject actor, NpcSensedEntity entry)
+    {
+        if (entry.Requires.Count == 0)
+        {
+            return true;
+        }
+
+        if (entry.Requires.Contains("player"))
+        {
+            return false;
+        }
+
+        if (actor.Character is not Humanoid humanoid)
+        {
+            return false;
+        }
+
+        var tool = humanoid.RightItem;
+        if (tool == null || tool.m_shared.m_useDurability && tool.m_durability <= 0f)
+        {
+            return false;
+        }
+
+        if (tool.m_shared.m_toolTier < entry.ToolTier)
+        {
+            return false;
+        }
+
+        var damage = tool.GetDamage();
+        foreach (var requirement in entry.Requires)
+        {
+            switch (requirement)
+            {
+                case "chop" when damage.m_chop <= 0f:
+                case "pickaxe" when damage.m_pickaxe <= 0f:
+                    return false;
+                case "chop":
+                case "pickaxe":
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static void ResetFacts(NpcSensedEntity entry)
+    {
+        entry.Tags.Clear();
+        entry.Verbs.Clear();
+        entry.Requires.Clear();
+        entry.Gives.Clear();
+        entry.Usable = false;
+    }
+
+    private static void AddTag(NpcSensedEntity entry, string tag)
+    {
+        if (!entry.Tags.Contains(tag))
+        {
+            entry.Tags.Add(tag);
+        }
+    }
+
+    private static void AddVerb(NpcSensedEntity entry, string verb)
+    {
+        if (!entry.Verbs.Contains(verb))
+        {
+            entry.Verbs.Add(verb);
+        }
+    }
+
+    private static void AddRequirement(NpcSensedEntity entry, string requirement)
+    {
+        if (!entry.Requires.Contains(requirement))
+        {
+            entry.Requires.Add(requirement);
+        }
+    }
+
     private static string? Classify(GameObject prefab)
     {
         if (prefab.GetComponent<Pickable>() != null)
@@ -1020,6 +1347,11 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
         if (prefab.GetComponent<TreeBase>() != null)
         {
             return "tree";
+        }
+
+        if (prefab.GetComponent<TreeLog>() != null)
+        {
+            return "log";
         }
 
         if (prefab.GetComponent<MineRock>() != null || prefab.GetComponent<MineRock5>() != null)
@@ -1045,6 +1377,11 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
         if (prefab.GetComponent<Smelter>() != null)
         {
             return "smelter";
+        }
+
+        if (prefab.GetComponent<CookingStation>() != null)
+        {
+            return "cooking";
         }
 
         if (prefab.GetComponent<CraftingStation>() != null)

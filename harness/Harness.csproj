@@ -20,13 +20,16 @@
     <Compile Include="..\src\AI\BehaviourTree.cs" LinkBase="Shared\AI" />
     <Compile Include="..\src\AI\ReactiveBlackboard.cs" LinkBase="Shared\AI" />
     <Compile Include="..\src\Entities\NpcModels.cs" LinkBase="Shared\Entities" />
+    <Compile Include="..\src\Entities\NpcFindQuery.cs" LinkBase="Shared\Entities" />
     <Compile Include="..\src\Entities\NpcActionState.cs" LinkBase="Shared\Entities" />
     <Compile Include="..\src\Entities\NpcInventoryPayload.cs" LinkBase="Shared\Entities" />
     <Compile Include="..\src\AI\AiSenses.cs" LinkBase="Shared\AI" />
+    <Compile Include="..\src\AI\AiNative.cs" LinkBase="Shared\AI" />
     <Compile Include="..\src\Core\Ui\UiCompiler.cs" LinkBase="Shared\Core\Ui" />
     <Compile Include="..\src\Core\Networking.cs" LinkBase="Shared\Core" />
     <Compile Include="..\src\Core\NetworkSync.cs" LinkBase="Shared\Core" />
     <Compile Include="..\src\World\WorldMessages.cs" LinkBase="Shared\World" />
+    <Compile Include="..\src\World\ResourceIntents.cs" LinkBase="Shared\World" />
     <Compile Include="..\src\World\WorldRelevancy.cs" LinkBase="Shared\World" />
     <Compile Include="..\src\Core\SpawnHandleTable.cs" LinkBase="Shared\Core" />
     <Compile Include="..\src\Networking\IRpcTransport.cs" LinkBase="Shared\Networking" />

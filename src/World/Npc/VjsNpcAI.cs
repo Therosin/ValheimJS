@@ -47,6 +47,8 @@ internal sealed class VjsNpcAI : BaseAI
     private Character? _threat;
     private float _threatAt;
     private bool _engaged;
+    private bool _crouched;
+    private ZSyncAnimation? _anim;
     private bool _nameApplied;
     private readonly System.Collections.Generic.List<NpcDamageEvent> _damage = new();
 
@@ -169,7 +171,7 @@ internal sealed class VjsNpcAI : BaseAI
         Disengage();
         _target = target;
         _stopDistance = Mathf.Max(0.05f, stopDistance);
-        _run = run;
+        _run = _crouched ? false : run;
         _moving = true;
         _lookOnly = false;
         _faceId = null;
@@ -184,9 +186,10 @@ internal sealed class VjsNpcAI : BaseAI
         return true;
     }
 
-    /// <summary>Stops movement without cancelling auto-combat.</summary>
+    /// <summary>Stops movement and cancels auto-combat; a script stop is authoritative.</summary>
     internal void StopCommand()
     {
+        Disengage();
         _moving = false;
         _lookOnly = false;
         _faceId = null;
@@ -240,25 +243,27 @@ internal sealed class VjsNpcAI : BaseAI
             return false;
         }
 
-        if (_engaged && TickCombat(dt))
-        {
-            return true;
-        }
-
+        // Scripted intent owns the body. Auto-combat is a fallback only when no intent is active,
+        // otherwise a plugin's stop/move/idle can be silently overridden by an engaged body.
         if (_lookOnly)
         {
             TickFace();
             return true;
         }
 
-        if (!_moving)
+        if (_moving)
         {
-            StopMoving();
+            TickDoors();
+            TickMove(dt);
             return true;
         }
 
-        TickDoors();
-        TickMove(dt);
+        if (_engaged && TickCombat(dt))
+        {
+            return true;
+        }
+
+        StopMoving();
         return true;
     }
 
@@ -476,7 +481,18 @@ internal sealed class VjsNpcAI : BaseAI
             return;
         }
 
-        MoveTowards(delta.normalized, _run);
+        MoveTowards(delta.normalized, _crouched ? false : _run);
+    }
+
+    internal void SetCrouched(bool crouched)
+    {
+        _crouched = crouched;
+        _anim ??= GetComponent<ZSyncAnimation>();
+        _anim?.SetBool("crouching", crouched);
+        if (m_character == null) return;
+        m_character.SetRun(false);
+        m_character.SetWalk(crouched);
+        if (crouched) _run = false;
     }
 
     private void TrackProgress(float now)

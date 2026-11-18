@@ -27,6 +27,7 @@ public enum BehaviourNodeKind
     Sequence,
     Selector,
     Random,
+    ForEach,
     Action,
     Condition,
 
@@ -70,13 +71,15 @@ public sealed class BehaviourContext
         IDictionary<string, object?> state,
         object? host,
         float deltaTime,
-        bool interrupted)
+        bool interrupted,
+        string nodeId)
     {
         Args = args;
         State = state;
         This = host;
         DeltaTime = deltaTime;
         Interrupted = interrupted;
+        NodeId = nodeId;
     }
 
     /// <summary>The current node's arguments, with <c>@[state]</c> references already resolved.</summary>
@@ -93,6 +96,9 @@ public sealed class BehaviourContext
 
     /// <summary>True when this context belongs to an <c>execAfter</c> run caused by cancellation, reset or a jump.</summary>
     public bool Interrupted { get; }
+
+    /// <summary>Stable identity for the node within this instance, used by native action state.</summary>
+    public string NodeId { get; }
 }
 
 /// <summary>Runs an inline <c>exec*</c> script. The host owns the interpreter.</summary>
@@ -562,6 +568,7 @@ public sealed class BehaviourTree
                     "sequence" => BehaviourNodeKind.Sequence,
                     "selector" => BehaviourNodeKind.Selector,
                     "random" => BehaviourNodeKind.Random,
+                    "forEach" => BehaviourNodeKind.ForEach,
                     _ => throw new BehaviourException($"{location}: unknown node type '{type}'.")
                 };
             }
@@ -644,9 +651,10 @@ public sealed class BehaviourTree
             var children = new List<BehaviourNode>();
             if (map.TryGetValue("children", out var childrenValue))
             {
-                if (kind != BehaviourNodeKind.Sequence && kind != BehaviourNodeKind.Selector && kind != BehaviourNodeKind.Random)
+                if (kind != BehaviourNodeKind.Sequence && kind != BehaviourNodeKind.Selector &&
+                    kind != BehaviourNodeKind.Random && kind != BehaviourNodeKind.ForEach)
                 {
-                    throw new BehaviourException($"{location}: 'children' is only valid on sequence, selector and random nodes.");
+                    throw new BehaviourException($"{location}: 'children' is only valid on sequence, selector, random and forEach nodes.");
                 }
 
                 if (childrenValue is not List<object?> items)
@@ -677,10 +685,34 @@ public sealed class BehaviourTree
                         throw new BehaviourException($"{location}: a random node needs at least one child with a positive weight.");
                     }
                 }
+
+                if (kind == BehaviourNodeKind.ForEach && children.Count != 1)
+                {
+                    throw new BehaviourException($"{location}: a forEach node needs exactly one child.");
+                }
             }
-            else if (kind == BehaviourNodeKind.Sequence || kind == BehaviourNodeKind.Selector || kind == BehaviourNodeKind.Random)
+            else if (kind == BehaviourNodeKind.Sequence || kind == BehaviourNodeKind.Selector ||
+                     kind == BehaviourNodeKind.Random || kind == BehaviourNodeKind.ForEach)
             {
                 throw new BehaviourException($"{location}: 'children' is required on {kind.ToString().ToLowerInvariant()} nodes.");
+            }
+
+            if (kind == BehaviourNodeKind.ForEach)
+            {
+                if (!node.Arguments.ContainsKey("items"))
+                {
+                    throw new BehaviourException($"{location}: a forEach node needs args.items.");
+                }
+
+                if (node.Arguments.TryGetValue("item", out var itemKey) && itemKey is not string)
+                {
+                    throw new BehaviourException($"{location}: 'args.item' must be a state key string.");
+                }
+
+                if (node.Arguments.TryGetValue("index", out var indexKey) && indexKey is not string)
+                {
+                    throw new BehaviourException($"{location}: 'args.index' must be a state key string.");
+                }
             }
 
             node.Children = children;
@@ -1089,6 +1121,14 @@ public sealed class BehaviourInstance
         internal int Cursor;
         internal int Selected = -1;
         internal Dictionary<string, object?>? Args;
+        internal List<object?>? ForEachItems;
+        internal int ForEachIndex;
+        internal string ForEachItemKey = "item";
+        internal string ForEachIndexKey = "index";
+        internal bool ForEachHadItem;
+        internal bool ForEachHadIndex;
+        internal object? ForEachPreviousItem;
+        internal object? ForEachPreviousIndex;
     }
 
     private readonly struct Outcome
@@ -1167,6 +1207,9 @@ public sealed class BehaviourInstance
                 break;
             case BehaviourNodeKind.Random:
                 outcome = RunRandom(frame, node, state, null);
+                break;
+            case BehaviourNodeKind.ForEach:
+                outcome = RunForEach(frame, node, state);
                 break;
             case BehaviourNodeKind.Action:
                 outcome = RunAction(node, Context(node, state, interrupted: false));
@@ -1272,6 +1315,8 @@ public sealed class BehaviourInstance
             case BehaviourNodeKind.Random:
                 state.Selected = index;
                 return RunRandom(frame, node, state, child);
+            case BehaviourNodeKind.ForEach:
+                return RunForEach(frame, node, state);
             case BehaviourNodeKind.Condition:
                 state.Selected = index;
                 state.Cursor = index;
@@ -1384,6 +1429,99 @@ public sealed class BehaviourInstance
 
         state.Cursor = branchIndex;
         return seed ?? Step(frame, branch);
+    }
+
+    private Outcome RunForEach(Frame frame, BehaviourNode node, NodeState state)
+    {
+        if (state.ForEachItems == null)
+        {
+            if (state.Args == null ||
+                !state.Args.TryGetValue("items", out var itemsValue) ||
+                itemsValue is not List<object?> items)
+            {
+                throw new BehaviourException(
+                    $"Node '{node.Describe()}' forEach requires args.items to resolve to a list.");
+            }
+
+            if (items.Count > 4096)
+            {
+                throw new BehaviourException(
+                    $"Node '{node.Describe()}' forEach cannot iterate more than 4096 items.");
+            }
+
+            state.ForEachItems = items;
+            state.ForEachIndex = 0;
+            state.ForEachItemKey = Key(node, "item", "item");
+            state.ForEachIndexKey = Key(node, "index", "index");
+            if (string.Equals(state.ForEachItemKey, state.ForEachIndexKey, StringComparison.Ordinal))
+            {
+                throw new BehaviourException(
+                    $"Node '{node.Describe()}' forEach item and index keys must differ.");
+            }
+
+            state.ForEachHadItem = _state.TryGetValue(state.ForEachItemKey, out var previousItem);
+            state.ForEachPreviousItem = previousItem;
+            state.ForEachHadIndex = _state.TryGetValue(state.ForEachIndexKey, out var previousIndex);
+            state.ForEachPreviousIndex = previousIndex;
+        }
+
+        var child = node.Children[0];
+        while (state.ForEachIndex < state.ForEachItems.Count)
+        {
+            _state[state.ForEachItemKey] = state.ForEachItems[state.ForEachIndex];
+            _state[state.ForEachIndexKey] = (long)state.ForEachIndex;
+            var outcome = Step(frame, child);
+            if (outcome.IsJump || outcome.Status == BehaviourStatus.Running ||
+                outcome.Status == BehaviourStatus.Failure)
+            {
+                return outcome;
+            }
+
+            state.ForEachIndex++;
+        }
+
+        RestoreForEach(state);
+        return Outcome.Success(null);
+    }
+
+    private static string Key(BehaviourNode node, string name, string fallback) =>
+        node.Arguments.TryGetValue(name, out var value) && value is string text && text.Length > 0
+            ? text
+            : fallback;
+
+    private void RestoreForEach(NodeState state)
+    {
+        if (state.ForEachItems == null)
+        {
+            return;
+        }
+
+        if (state.ForEachHadItem)
+        {
+            _state[state.ForEachItemKey] = state.ForEachPreviousItem;
+        }
+        else
+        {
+            _state.Remove(state.ForEachItemKey);
+        }
+
+        if (state.ForEachHadIndex)
+        {
+            _state[state.ForEachIndexKey] = state.ForEachPreviousIndex;
+        }
+        else
+        {
+            _state.Remove(state.ForEachIndexKey);
+        }
+
+        state.ForEachItems = null;
+        state.ForEachIndex = 0;
+        state.ForEachItemKey = "item";
+        state.ForEachIndexKey = "index";
+        state.ForEachHadItem = false;
+        state.ForEachHadIndex = false;
+        state.ForEachPreviousItem = null;
+        state.ForEachPreviousIndex = null;
     }
 
     private Outcome RunAction(BehaviourNode node, BehaviourContext context)
@@ -1569,6 +1707,11 @@ public sealed class BehaviourInstance
             RunScript(node.ExecAfter, node, state, interrupted);
         }
 
+        if (node.Kind == BehaviourNodeKind.ForEach)
+        {
+            RestoreForEach(state);
+        }
+
         TraceExit(node, status);
         state.Active = false;
         state.Cursor = 0;
@@ -1615,6 +1758,7 @@ public sealed class BehaviourInstance
         BehaviourNodeKind.Sequence => "sequence",
         BehaviourNodeKind.Selector => "selector",
         BehaviourNodeKind.Random => "random",
+        BehaviourNodeKind.ForEach => "forEach",
         BehaviourNodeKind.Action => "action " + node.Action,
         BehaviourNodeKind.Condition => "condition " + node.Condition,
         BehaviourNodeKind.Use => "use " + (node.Use?.Id ?? "?"),
@@ -1642,7 +1786,12 @@ public sealed class BehaviourInstance
     }
 
     private BehaviourContext Context(BehaviourNode node, NodeState state, bool interrupted) =>
-        new(state.Args ?? NoArguments, _state, _host, DeltaTime, interrupted);
+        new(state.Args ?? NoArguments, _state, _host, DeltaTime, interrupted, NodeIdentity(node));
+
+    private static string NodeIdentity(BehaviourNode node) =>
+        node.Id != null
+            ? $"id:{node.Id}:{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(node)}"
+            : $"node:{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(node)}";
 
     private Dictionary<string, object?> ResolveArguments(BehaviourNode node)
     {

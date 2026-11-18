@@ -479,6 +479,19 @@ internal sealed class WorldManager : IDisposable
         return senses.Senses(query);
     }
 
+    /// <summary>Declarative query over one NPC's perception store.</summary>
+    internal IReadOnlyList<NpcSensedEntity> Find(string plugin, string handle, NpcFindQuery query)
+    {
+        var obj = Resolve(plugin, handle);
+        if (obj == null || obj.Behavior is not INpcSenses senses)
+        {
+            return Array.Empty<NpcSensedEntity>();
+        }
+
+        obj.Behavior.Snapshot(obj);
+        return senses.Find(query);
+    }
+
     internal IReadOnlyList<NpcSensedEntity> TakeNewSenses(string plugin, string handle)
     {
         var obj = Resolve(plugin, handle);

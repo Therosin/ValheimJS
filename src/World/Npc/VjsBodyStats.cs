@@ -59,6 +59,30 @@ internal sealed class VjsBodyStats : MonoBehaviour
 
     internal float MaxStamina => BaseStamina + FoodSum(slot => slot.Stamina);
 
+    /// <summary>Spends body stamina for a scripted action; false when the body is too exhausted.</summary>
+    internal bool TryUseStamina(float amount)
+    {
+        if (!Authority)
+        {
+            return false;
+        }
+
+        if (amount <= 0f)
+        {
+            return true;
+        }
+
+        if (_stamina < amount)
+        {
+            return false;
+        }
+
+        _stamina = Mathf.Clamp(_stamina - amount, 0f, MaxStamina);
+        _regenDelay = StaminaRegenDelay;
+        _dirty = true;
+        return true;
+    }
+
     internal int FoodCount
     {
         get

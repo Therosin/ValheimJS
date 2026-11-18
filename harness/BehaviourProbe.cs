@@ -23,6 +23,7 @@ internal static class BehaviourProbe
             CheckImports();
             CheckPlanExample();
             CheckGoto();
+            CheckForEach();
             CheckCancellation();
             CheckErrors();
             Console.WriteLine("PASS: yaml parser and behaviour tree execution");
@@ -629,6 +630,92 @@ internal static class BehaviourProbe
             root:
               goto: nowhere
             """), "unknown goto target");
+    }
+
+    private static void CheckForEach()
+    {
+        var seen = new List<string>();
+        var tree = Parse("""
+            state:
+              loot: []
+            root:
+              type: sequence
+              children:
+                - action: find
+                  out: "@[loot]"
+                - type: forEach
+                  args:
+                    items: "@[loot]"
+                    item: entry
+                    index: position
+                  children:
+                    - action: take
+            """);
+
+        var calls = 0;
+        var instance = tree.CreateInstance(action: (name, context) =>
+        {
+            if (name == "find")
+            {
+                return BehaviourResult.Success(new List<object?> { "a", "b", "c" });
+            }
+
+            if (name == "take")
+            {
+                calls++;
+                if (calls <= 3 && calls % 2 == 1)
+                {
+                    return BehaviourResult.Running;
+                }
+
+                seen.Add($"{context.State["position"]}:{context.State["entry"]}");
+                return BehaviourResult.Success();
+            }
+
+            return BehaviourResult.Failure();
+        });
+
+        for (var tick = 0; tick < 10 && instance.Status == BehaviourStatus.Running; tick++)
+        {
+            instance.Tick(0.1f);
+        }
+
+        Assert(instance.Status == BehaviourStatus.Success, "forEach completes");
+        Assert(seen.SequenceEqual(new[] { "0:a", "1:b", "2:c" }), "forEach item/index binding");
+        Assert(!instance.State.ContainsKey("entry") && !instance.State.ContainsKey("position"),
+            "forEach leaves no temporary state");
+
+        var fail = Parse("""
+            state:
+              loot: [a, b]
+            root:
+              type: forEach
+              args: { items: "@[loot]" }
+              children:
+                - action: take
+            """);
+        instance = fail.CreateInstance(action: (name, _) =>
+            name == "take" && name == "take" ? BehaviourResult.Failure() : BehaviourResult.Success());
+        Assert(instance.Tick(0.1f).Status == BehaviourStatus.Failure, "forEach propagates failure");
+
+        Throws<BehaviourException>(() => Parse("""
+            root:
+              type: forEach
+              children:
+                - action: a
+            """), "forEach requires args.items");
+
+        var duplicateKeys = Parse("""
+            state:
+              x: [a]
+            root:
+              type: forEach
+              args: { items: "@[x]", item: same, index: same }
+              children:
+                - action: a
+            """);
+        var duplicate = duplicateKeys.CreateInstance(action: (_, _) => BehaviourResult.Success());
+        Catch<BehaviourException>(() => duplicate.Tick(0.1f), "forEach item/index keys differ");
     }
 
     private static void CheckCancellation()

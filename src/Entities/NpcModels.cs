@@ -135,11 +135,23 @@ internal sealed class NpcSensedEntity
     internal bool IsDead { get; set; }
     internal int Level { get; set; }
     internal bool IsObject { get; set; }
+    /// <summary>Minimum tool tier for harvestable world objects; 0 for non-harvest targets.</summary>
+    internal int ToolTier { get; set; }
     internal bool Enemy { get; set; }
     internal bool Visible { get; set; }
     internal bool InRange { get; set; }
     internal bool Ready { get; set; }
     internal bool Food { get; set; }
+    /// <summary>Stable lower-case tags projected from the prefab/item data.</summary>
+    internal List<string> Tags { get; } = new();
+    /// <summary>Verbs this target supports for a scripted body.</summary>
+    internal List<string> Verbs { get; } = new();
+    /// <summary>Capabilities required from the actor, for example <c>chop</c> or <c>pickaxe</c>.</summary>
+    internal List<string> Requires { get; } = new();
+    /// <summary>Prefab/item names this target can yield.</summary>
+    internal List<string> Gives { get; } = new();
+    /// <summary>True when the owning NPC can currently satisfy <see cref="Requires"/>.</summary>
+    internal bool Usable { get; set; }
     /// <summary>Current native noise radius emitted by a character; 0 for objects.</summary>
     internal float Noise { get; set; }
     /// <summary>Native hearing rule: within the NPC's hear range and within the target's noise radius.</summary>
@@ -187,6 +199,12 @@ internal sealed class NpcSensedEntity
             ["isDead"] = IsDead,
             ["level"] = Level,
             ["isObject"] = IsObject,
+            ["toolTier"] = ToolTier,
+            ["tags"] = Tags,
+            ["verbs"] = Verbs,
+            ["requires"] = Requires,
+            ["gives"] = Gives,
+            ["usable"] = Usable,
             ["health"] = Health,
             ["maxHealth"] = MaxHealth,
             ["firstSeen"] = (double)(now - FirstSeenAt),
@@ -365,9 +383,9 @@ internal sealed class NpcSensors
             throw new ArgumentException("npc: perception.objectRadius must be between 0 and 64");
         }
 
-        if (ObjectMax < 1 || ObjectMax > 32)
+        if (ObjectMax < 1 || ObjectMax > 64)
         {
-            throw new ArgumentException("npc: perception.objectMax must be between 1 and 32");
+            throw new ArgumentException("npc: perception.objectMax must be between 1 and 64");
         }
 
         return this;
@@ -583,6 +601,9 @@ internal sealed class NpcPerception
 internal interface INpcSenses
 {
     IReadOnlyList<NpcSensedEntity> Senses(NpcSenseQuery query);
+
+    /// <summary>Declarative query over the same perception store.</summary>
+    IReadOnlyList<NpcSensedEntity> Find(NpcFindQuery query);
 
     IReadOnlyList<NpcSensedEntity> TakeNewSenses();
 }

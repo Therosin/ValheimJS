@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using ValheimJS.AI.Extensions;
 
 namespace ValheimJS.World;
 
@@ -16,8 +17,13 @@ internal sealed class NpcAffordances
     internal bool PlayerOnly;
     internal string? Reason;
     internal IReadOnlyList<string> Verbs = Array.Empty<string>();
+    internal IReadOnlyList<string> Gives = Array.Empty<string>();
+    internal IReadOnlyList<string> Requires = Array.Empty<string>();
+    internal int ToolTier;
     internal float Distance;
     internal bool InRange;
+    internal int ReadyCount;
+    internal string? State;
 
     internal Dictionary<string, object?> ToPlain() => new()
     {
@@ -30,8 +36,13 @@ internal sealed class NpcAffordances
         ["playerOnly"] = PlayerOnly,
         ["reason"] = Reason,
         ["verbs"] = new List<string>(Verbs),
+        ["gives"] = new List<string>(Gives),
+        ["requires"] = new List<string>(Requires),
+        ["toolTier"] = ToolTier,
         ["distance"] = Distance,
-        ["inRange"] = InRange
+        ["inRange"] = InRange,
+        ["readyCount"] = ReadyCount,
+        ["state"] = State
     };
 }
 
@@ -100,6 +111,11 @@ internal static class NpcInteraction
         result.Distance = Vector3.Distance(obj.Position, instance.transform.position);
         result.InRange = result.Distance <= Range;
 
+        if (NativeInteractions.TryDescribe(instance, result))
+        {
+            return result;
+        }
+
         var hoverable = Find<Hoverable>(instance);
         if (hoverable != null)
         {
@@ -107,7 +123,11 @@ internal static class NpcInteraction
             result.HoverText = hoverable.GetHoverText();
         }
 
+        var tree = Find<TreeBase>(instance);
+        var log = Find<TreeLog>(instance);
+        var rock = Find<MineRock>(instance);
         var pickable = Find<Pickable>(instance);
+        var itemDrop = Find<ItemDrop>(instance);
         var container = Find<Container>(instance);
         var smelter = Find<Smelter>(instance);
         var bed = Find<Bed>(instance);
@@ -118,7 +138,34 @@ internal static class NpcInteraction
         var door = Find<Door>(instance);
         var interactable = Find<Interactable>(instance);
 
-        if (pickable != null)
+        if (tree != null)
+        {
+            result.Kind = "tree";
+            result.Verbs = new[] { "harvest" };
+            result.Requires = new[] { "chop" };
+            result.ToolTier = tree.m_minToolTier;
+            result.Gives = DropNames(tree.m_dropWhenDestroyed);
+            result.Supported = true;
+        }
+        else if (log != null)
+        {
+            result.Kind = "log";
+            result.Verbs = new[] { "harvest" };
+            result.Requires = new[] { "chop" };
+            result.ToolTier = log.m_minToolTier;
+            result.Gives = DropNames(log.m_dropWhenDestroyed);
+            result.Supported = true;
+        }
+        else if (rock != null)
+        {
+            result.Kind = "rock";
+            result.Verbs = new[] { "harvest" };
+            result.Requires = new[] { "pickaxe" };
+            result.ToolTier = rock.m_minToolTier;
+            result.Gives = DropNames(rock.m_dropItems);
+            result.Supported = true;
+        }
+        else if (pickable != null)
         {
             result.Kind = "pickable";
             result.Verbs = new[] { "pick" };
@@ -128,6 +175,12 @@ internal static class NpcInteraction
         {
             result.Kind = "container";
             result.Verbs = new[] { "store", "take" };
+            result.Supported = true;
+        }
+        else if (itemDrop != null)
+        {
+            result.Kind = "item";
+            result.Verbs = new[] { "pickup" };
             result.Supported = true;
         }
         else if (smelter != null)
@@ -228,12 +281,26 @@ internal static class NpcInteraction
             view.ClaimOwnership();
         }
 
+        var native = NativeInteractions.TryInteract(obj, instance, verb, options);
+        if (native != null)
+        {
+            return native;
+        }
+
         switch (verb)
         {
             case "pick":
                 return VjsActions.Pick(obj, handle, out var reason)
                     ? new NpcInteractionResult { Ok = true, Verb = verb, Count = 1 }
                     : NpcInteractionResult.Fail(reason ?? "rejected", verb);
+
+            case "harvest":
+                return Harvest(obj, instance, humanoid, verb);
+
+            case "pickup":
+                return VjsActions.Pickup(obj, handle, out var pickupReason)
+                    ? new NpcInteractionResult { Ok = true, Verb = verb, Count = 1 }
+                    : NpcInteractionResult.Fail(pickupReason ?? "rejected", verb);
 
             case "store":
             case "take":
@@ -322,9 +389,137 @@ internal static class NpcInteraction
         return new NpcInteractionResult { Ok = true, Verb = verb, Count = count };
     }
 
+    private static NpcInteractionResult Harvest(WorldObject obj, GameObject instance, Humanoid? humanoid, string verb)
+    {
+        var tree = Find<TreeBase>(instance);
+        var log = Find<TreeLog>(instance);
+        var rock = Find<MineRock>(instance);
+        if (tree == null && log == null && rock == null)
+        {
+            return NpcInteractionResult.Fail("not-harvestable", verb);
+        }
+
+        if (humanoid == null)
+        {
+            return NpcInteractionResult.Fail("body-lost", verb);
+        }
+
+        var tool = humanoid.RightItem;
+        if (tool == null || (tool.m_shared.m_useDurability && tool.m_durability <= 0f))
+        {
+            return NpcInteractionResult.Fail("tool-required", verb);
+        }
+
+        var damage = tool.GetDamage();
+        var requiredDamage = tree != null || log != null ? damage.m_chop : damage.m_pickaxe;
+        if (requiredDamage <= 0f)
+        {
+            return NpcInteractionResult.Fail("tool-required", verb);
+        }
+
+        var requiredTier = tree != null
+            ? tree.m_minToolTier
+            : log != null
+                ? log.m_minToolTier
+                : rock!.m_minToolTier;
+        if (tool.m_shared.m_toolTier < requiredTier)
+        {
+            return NpcInteractionResult.Fail("too-hard", verb);
+        }
+
+        // Harvesting is a real stamina expense even for scripted bodies. This is what makes
+        // "I need wood" interact with rest, food and the utility decision.
+        var staminaCost = tool.m_shared.m_attack.m_attackStamina;
+        if (staminaCost <= 0f)
+        {
+            staminaCost = 5f;
+        }
+
+        if (obj.Stats == null || !obj.Stats.TryUseStamina(staminaCost))
+        {
+            return NpcInteractionResult.Fail("exhausted", verb);
+        }
+
+        if (tool.m_shared.m_useDurability)
+        {
+            tool.m_durability = Mathf.Max(
+                0f,
+                tool.m_durability - tool.m_shared.m_useDurabilityDrain * Game.m_durabilityRate);
+            var zdo = obj.Zdo;
+            if (zdo != null)
+            {
+                VjsInventory.Save(humanoid, zdo);
+            }
+        }
+
+        var point = instance.transform.position;
+        Collider? hitCollider = null;
+        if (rock != null)
+        {
+            var bestDistance = float.MaxValue;
+            foreach (var candidate in instance.GetComponentsInChildren<Collider>())
+            {
+                if (candidate == null || !candidate.gameObject.activeInHierarchy)
+                {
+                    continue;
+                }
+
+                var distance = Vector3.Distance(humanoid.transform.position, candidate.bounds.center);
+                if (distance >= bestDistance)
+                {
+                    continue;
+                }
+
+                bestDistance = distance;
+                hitCollider = candidate;
+                point = candidate.bounds.center;
+            }
+
+            if (hitCollider == null)
+            {
+                return NpcInteractionResult.Fail("no-collider", verb);
+            }
+        }
+
+        var hit = new HitData
+        {
+            m_point = point,
+            m_dir = (point - humanoid.transform.position).normalized,
+            m_hitCollider = hitCollider,
+            m_toolTier = (short)tool.m_shared.m_toolTier,
+            m_damage = damage,
+            m_hitType = HitData.HitType.PlayerHit
+        };
+        hit.SetAttacker(humanoid);
+
+        IDestructible destructible = tree != null ? tree : log != null ? log : rock!;
+        destructible.Damage(hit);
+        return new NpcInteractionResult { Ok = true, Verb = verb, Count = 1 };
+    }
+
+    private static IReadOnlyList<string> DropNames(DropTable? table)
+    {
+        if (table == null)
+        {
+            return Array.Empty<string>();
+        }
+
+        var names = new List<string>();
+        foreach (var drop in table.GetDropList())
+        {
+            if (drop != null)
+            {
+                names.Add(drop.name);
+            }
+        }
+
+        return names;
+    }
+
     private static string? DefaultVerb(IReadOnlyList<string> verbs)
     {
         if (Contains(verbs, "pick")) return "pick";
+        if (Contains(verbs, "harvest")) return "harvest";
         if (Contains(verbs, "use")) return "use";
         if (Contains(verbs, "toggle")) return "toggle";
         if (Contains(verbs, "open")) return "open";

@@ -40,6 +40,69 @@ internal static class VjsActions
         return shared != null && (shared.m_food > 0f || shared.m_foodStamina > 0f || shared.m_foodEitr > 0f);
     }
 
+    internal static bool Pickup(WorldObject obj, string handle, out string? reason)
+    {
+        reason = null;
+        if (!WorldManager.TryParseHandle(handle, out var id))
+        {
+            reason = "invalid-target";
+            return false;
+        }
+
+        var instance = ZNetScene.instance?.FindInstance(id);
+        var drop = instance?.GetComponent<ItemDrop>();
+        if (drop == null)
+        {
+            reason = "target-missing";
+            return false;
+        }
+
+        if (obj.Character == null || obj.Character is not Humanoid humanoid)
+        {
+            reason = "body-inactive";
+            return false;
+        }
+
+        if (Vector3.Distance(obj.Character.transform.position, drop.transform.position) > PickRange)
+        {
+            reason = "out-of-range";
+            return false;
+        }
+
+        // Item drops are owned by whoever last touched them. Request the transfer and let the
+        // caller retry next tick; claiming directly races the ownership RPC. This is the same
+        // CanPickup/RequestOwn handshake Companions and DvergerAutomation use.
+        var view = instance!.GetComponent<ZNetView>();
+        if (view == null || !view.IsValid())
+        {
+            reason = "target-missing";
+            return false;
+        }
+
+        if (!drop.CanPickup(false))
+        {
+            drop.RequestOwn();
+            reason = "not-owner";
+            return false;
+        }
+
+        drop.Load();
+        var inventory = humanoid.GetInventory();
+        if (!inventory.CanAddItem(drop.m_itemData, -1))
+        {
+            reason = "no-room";
+            return false;
+        }
+
+        if (humanoid.Pickup(instance, autoequip: false, autoPickupDelay: false))
+        {
+            return true;
+        }
+
+        reason = "rejected";
+        return false;
+    }
+
     internal static bool Pick(WorldObject obj, string handle, out string? reason)
     {
         reason = null;

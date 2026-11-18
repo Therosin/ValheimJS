@@ -13,7 +13,8 @@ internal static class NpcProbe
             InventoryPayload();
             DefinitionDefaults();
             Audibility();
-            Console.WriteLine("PASS: npc action lifecycle, wait deadlines, death stickiness, inventory payload and audibility");
+            FindQuery();
+            Console.WriteLine("PASS: npc action lifecycle, wait deadlines, death stickiness, inventory payload, audibility and find queries");
             return 0;
         }
         catch (Exception exception)
@@ -146,6 +147,101 @@ internal static class NpcProbe
             throw new InvalidOperationException("definition options were lost");
     }
 
+    private static void FindQuery()
+    {
+        var tree = new ValheimJS.Entities.NpcSensedEntity
+        {
+            Id = "1:1",
+            Kind = "tree",
+            Prefab = "Beech1",
+            X = 4d,
+            Z = 0d,
+            InRange = true,
+            Ready = true,
+            Usable = true
+        };
+        tree.Tags.Add("tree");
+        tree.Tags.Add("wood");
+        tree.Verbs.Add("harvest");
+        tree.Requires.Add("chop");
+
+        var rock = new ValheimJS.Entities.NpcSensedEntity
+        {
+            Id = "1:2",
+            Kind = "rock",
+            Prefab = "Rock_4",
+            X = 8d,
+            Z = 0d,
+            InRange = true,
+            Ready = true,
+            Usable = true
+        };
+        rock.Tags.Add("rock");
+        rock.Tags.Add("stone");
+        rock.Verbs.Add("harvest");
+        rock.Requires.Add("pickaxe");
+
+        var query = ValheimJS.Entities.NpcFindQuery.FromPlain(new Dictionary<string, object?>
+        {
+            ["where"] = new Dictionary<string, object?>
+            {
+                ["tags"] = new Dictionary<string, object?> { ["anyOf"] = new List<object?> { "wood", "sapling" } },
+                ["distance"] = new Dictionary<string, object?> { ["lte"] = 10d },
+                ["usable"] = true
+            },
+            ["orderBy"] = "distance",
+            ["take"] = 1
+        }, "tree");
+
+        Assert(query.Allows(tree, 0d, 0d), "find query rejected a matching tree");
+        Assert(!query.Allows(rock, 0d, 0d), "find query accepted a rock for a wood/tree query");
+
+        var all = ValheimJS.Entities.NpcFindQuery.FromPlain(new Dictionary<string, object?>
+        {
+            ["where"] = new Dictionary<string, object?> { ["verbs"] = new List<object?> { "harvest" } },
+            ["orderBy"] = "distance"
+        });
+        Assert(all.Allows(tree, 0d, 0d) && all.Allows(rock, 0d, 0d), "verb query rejected a harvest target");
+
+        var either = ValheimJS.Entities.NpcFindQuery.FromPlain(new Dictionary<string, object?>
+        {
+            ["where"] = new Dictionary<string, object?>
+            {
+                ["or"] = new List<object?>
+                {
+                    new Dictionary<string, object?> { ["kind"] = "tree" },
+                    new Dictionary<string, object?> { ["kind"] = "rock" }
+                }
+            }
+        });
+        Assert(either.Allows(tree, 0d, 0d) && either.Allows(rock, 0d, 0d), "or group rejected a match");
+
+        var withoutStone = ValheimJS.Entities.NpcFindQuery.FromPlain(new Dictionary<string, object?>
+        {
+            ["where"] = new Dictionary<string, object?>
+            {
+                ["and"] = new List<object?>
+                {
+                    new Dictionary<string, object?>
+                    {
+                        ["tags"] = new Dictionary<string, object?> { ["anyOf"] = new List<object?> { "wood", "stone" } }
+                    },
+                    new Dictionary<string, object?>
+                    {
+                        ["not"] = new Dictionary<string, object?> { ["kind"] = "rock" }
+                    }
+                }
+            }
+        });
+        Assert(withoutStone.Allows(tree, 0d, 0d), "not group rejected a tree");
+        Assert(!withoutStone.Allows(rock, 0d, 0d), "not group accepted a rock");
+
+        Throws<ArgumentException>(() => ValheimJS.Entities.NpcFindQuery.FromPlain(new Dictionary<string, object?>
+        {
+            ["where"] = new Dictionary<string, object?> { ["colour"] = "red" }
+        }), "unknown where field");
+    }
+
     private static void Audibility()
     {
         if (!NpcAudibility.IsAudible(10f, 15f, 20f, false))
@@ -158,5 +254,28 @@ internal static class NpcProbe
             throw new InvalidOperationException("interior hearing inside the cap must work");
         if (NpcAudibility.IsAudible(5f, 0f, 20f, false))
             throw new InvalidOperationException("silent targets must not be audible");
+    }
+
+    private static void Assert(bool condition, string message)
+    {
+        if (!condition)
+        {
+            throw new InvalidOperationException(message);
+        }
+    }
+
+    private static void Throws<TException>(Action action, string message)
+        where TException : Exception
+    {
+        try
+        {
+            action();
+        }
+        catch (TException)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException("expected " + typeof(TException).Name + ": " + message);
     }
 }

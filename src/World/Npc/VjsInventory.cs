@@ -96,11 +96,37 @@ internal static class VjsInventory
             ["quality"] = item.m_quality,
             ["durability"] = item.m_durability,
             ["maxDurability"] = shared?.m_maxDurability ?? 0f,
+            ["condition"] = Condition(item),
+            // Normalized tool facts. JS policy never reads native damage internals.
+            ["chop"] = shared?.m_damages.m_chop ?? 0f,
+            ["pickaxe"] = shared?.m_damages.m_pickaxe ?? 0f,
+            ["toolTier"] = shared?.m_toolTier ?? 0,
             ["weight"] = item.GetWeight(),
             ["type"] = Kind(item),
             ["equipped"] = humanoid != null && humanoid.IsItemEquiped(item),
             ["food"] = food
         };
+    }
+
+    private static string Condition(ItemDrop.ItemData item)
+    {
+        var shared = item.m_shared;
+        if (shared == null || !shared.m_useDurability)
+        {
+            return "none";
+        }
+
+        var max = item.GetMaxDurability();
+        if (max <= 0f)
+        {
+            return "none";
+        }
+
+        var ratio = Mathf.Clamp01(item.m_durability / max);
+        if (ratio <= 0f) return "broken";
+        if (ratio <= 0.2f) return "low";
+        if (ratio <= 0.6f) return "mid";
+        return "high";
     }
 
     internal static string Kind(ItemDrop.ItemData item)
