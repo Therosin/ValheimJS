@@ -25,6 +25,9 @@ client branch; session authority is checked live. See [Process branches](guides/
 | World simulation registry, lifecycle, ZDO writes and ownership retention | `World/WorldManager.cs`, `World/WorldOwnership.cs` | `npc` binding; future world kinds |
 | Relevance subscriptions and control messages | `World/WorldRelevancy.cs`, `World/WorldMessages.cs`, `World/WorldManager.cs` | Clients receive relevance diffs on `valheimjs:world` |
 | Native NPC body, BaseAI movement and state adapter | `World/Npc/NpcPrefabs.cs`, `World/Npc/VjsNpcAI.cs`, `World/Npc/NpcBehavior.cs` | `npc` binding and `ValheimBaseNPC` |
+| Vanilla NPC inventory UI and server-authoritative mirror | `World/Npc/NpcInventoryUi.cs`, `World/Npc/NpcInventoryContainerPatches.cs`, `World/Npc/VjsInventory.cs` | Native `InventoryGui` interaction; no JS panel |
+| Native cooking/fire interaction adapters | `AI/Extensions/CookingStation.cs`, `AI/Extensions/Fireplace.cs`, `AI/Extensions/NativeInteractions.cs` | `cook`/`addFuel` verbs, `inputs`/`state`, board events |
+| Native plan execution, planner selection and utility policy | `Planning/PlanHost.cs`, `Planning/PlannerHost.cs`, `Planning/UtilityHost.cs`, `Planning/UtilityMath.cs` | `ctx.run`/`PlanHandle`, `Planner`, `UtilityAI`; `planning` binding |
 | Declarative YAML panels and flat host UI | `Core/Ui/UiCompiler.cs`, `Bindings/UiBindings.cs`, `UI/`, `Core/ValheimJsHost.cs` | `ui` binding and SDK `ui` facade |
 | Perception store, durable memory and YAML AI bridge | `Entities/NpcModels.cs`, `World/Npc/NpcBehavior.cs`, `Core/AiSenses.cs`, `Bindings/AiBindings.cs` | `npc.sensed`/`npc.memory`; `ai` with `ctx.state.senses` |
 | World-space line/mesh drawing and server replication | `Debugging/WorldDraw.cs`, `Bindings/DrawBindings.cs` | `draw` binding and SDK `draw` |
@@ -99,8 +102,10 @@ remaining deliberate gap is naming: RPC channel/event and sync stream names are 
 two plugins can subscribe to or emit on the same name and `meta.sender` carries no plugin
 attribution.
 
-General player/inventory APIs, general chat broadcasting, new content registration and automatic
-sync replication are not implemented. See the [roadmap](api-roadmap.md) for proposed work.
+General player-owned stats/inventory APIs, general chat broadcasting, new content registration and
+automatic sync replication are not implemented. NPC body/container inventory is implemented and
+opens through the native vanilla container UI; player inventory remains client-owned. See the
+[roadmap](api-roadmap.md) for proposed work.
 
 The heartbeat payload contains the same fields as `game().snapshot()`: `world`, `peers`, `day`,
 `dayFraction` and `timeOfDay`. The SDK's `ServerTickPayload` aliases that shape.
@@ -109,10 +114,11 @@ The heartbeat payload contains the same fields as `game().snapshot()`: `world`, 
 
 `task check` covers typechecking, SDK unit tests, native compilation, generated-declaration drift,
 bundling, binding/process/network/command/account/management/world-handle/world-manager/signals/
-behaviour/ai/ui/life/assets probes and example reloads. `--probe-world-manager` covers relevance hysteresis/diffs and world message DTOs. Role and help probes include actual JS registration through the native bindings,
+behaviour/planning/ai/ui/life/npc/assets probes and example reloads. `--probe-world-manager` covers relevance hysteresis/diffs and world message DTOs. Role and help probes include actual JS registration through the native bindings,
 not only facade mocks. Live dedicated-server checks confirmed the heartbeat payload, the absence
-of client-only `ui`/`input`, query-only account/permission bindings and session-scoped spawn
-handles.
+of client-only `ui`/`input`, query-only account/permission bindings, session-scoped spawn handles,
+NPC inventory persistence across save/restart, and native fireplace/cooking affordances. Live
+checks use the deployed client and dedicated server; headless probes remain the repeatable gate.
 
 Development live checks exercised client/dedicated startup, private commands, Valheim admin
 recognition, management CRUD, default-role persistence, account lookup/shared-data boundaries,

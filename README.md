@@ -162,8 +162,9 @@ export default definePlugin(Greeter);
 | `game` | `GameBindings` | side, world identity, live snapshot |
 | `world` | `WorldBindings` | ZDO counts, spawning, per-object data |
 | `players` | `PlayerBindings` | local player, lookups and the authority-owned online roster |
-| `npc` | `NpcBindings` | server-simulated NPCs: spawn, perception store, intents, memory, state |
+| `npc` | `NpcBindings` | server-simulated NPCs: spawn, perception store, intents, memory, state, inventory, stats |
 | `ai` | `AiBindings` | YAML behaviour trees with JS actions/conditions and NPC senses |
+| `planning` | `PlanningBindings` | native plans, planner/utility hosts and behaviour-goal execution |
 | `ui` | `UiBindings` | client-side YAML panels, bindings and events |
 | `draw` | `DrawBindings` | world-space lines/meshes; server calls replicate to clients |
 | `net` | `NetBindings` | adapter over `Core/Networking` channels/events |

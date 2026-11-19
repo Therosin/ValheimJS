@@ -12,7 +12,7 @@ script and a manifest; the host loads it, builds its context and calls your hook
 | [Getting started](getting-started.md) | First plugin, build, deploy, see it run |
 | [Plugin anatomy](plugin-anatomy.md) | Manifest fields, class vs object form, hooks, state, deps |
 | [API reference](api-reference.md) | Every namespace, function and hook you can call |
-| [NPCs and AI](npc-ai.md) | Scripted NPCs, perception store, intents, memory and behaviour trees |
+| [NPCs and AI](npc-ai.md) | Scripted NPCs, perception, inventories, native plans, utility policy, cooking/fire and behaviour trees |
 | [Declarative UI](ui.md) | YAML panels, components, imports, bindings and events |
 | [Signals](api-reference.md#signals) | Observe state transitions and compose predicates |
 | [Recipes](recipes.md) | Spawning, status files, persistence, RPC, keyboard |
@@ -68,7 +68,7 @@ bun run build.ts greeter --deploy "<server>/ValheimJS/plugins"
   lifecycle. See [Plugin anatomy](plugin-anatomy.md#lifecycle).
 - A plugin can only touch its own `data/` folder and its own database.
 - The API version is `1`. A plugin declaring another `apiVersion` is refused at load.
-- The game API is grouped: `game`, `world`, `players`, `npc`, `ai`, `ui`, `draw`,
+- The game API is grouped: `game`, `world`, `players`, `npc`, `ai`, `planning`, `ui`, `draw`,
   `signals`, `net`, `sync`, `ChatCommands`, `AccountService`, `PermissionService`, `input`, `fs`,
   `assets`, `db`. Types are generated from the C# bindings, so your editor always matches the
   running host.
