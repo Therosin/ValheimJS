@@ -9,8 +9,8 @@
   shared C# behaviour service instantiates and releases the tree. Life-demo no longer owns a tree
   lifecycle.
 - Breaking: `new Plan(...)` is replaced by `ctx.run(...)` returning `PlanHandle`. The old JS plan
-  loop and native action wrappers are removed; `follow` and implicit `approach` are no longer plan
-  steps. Use a goal/behaviour tree for continuous movement and explicit `moveTo` when needed.
+  loop and native action wrappers are removed; native `follow` and implicit `interact`/`harvest`
+  approach remain host-owned plan semantics.
 - NPC inventory: humanoid NPCs now open the vanilla `InventoryGui` container panel. The server
   remains authoritative; the client edits a mirror synchronized with native item serialization,
   and the NPC's body is frozen while the UI is open.

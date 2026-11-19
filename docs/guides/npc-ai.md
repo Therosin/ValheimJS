@@ -562,10 +562,13 @@ planner.setGoals([
 // in onTick: planner.tick(view);
 ```
 
-Built-in steps: `moveTo`, `wait`, `lookAt`, `face`, `pick`, `stop`, `idle`, `interact`, `attack`,
-`jump`, `harvest`, `until`, `call`, and inventory steps `equip`, `unequip`, `consume`, `drop`.
-`moveTo` is explicit: neither `interact` nor `harvest` hides an approach loop. `harvest` is one-shot
+Native steps: `moveTo`, `wait`, `lookAt`, `face`, `pick`, `stop`, `idle`, `interact`, `attack`,
+`jump`, `harvest`, `take`, `store`, `withdraw`, `cook`, `use`, `crouch`, `follow`. `interact` and
+`harvest` approach their target by default; pass `approach: false` or
+`approach: { distance, run }` to tune that. `follow` tracks a sensed target. `harvest` is one-shot
 native execution; repeat it from a goal or behaviour tree, not an internal plan loop.
+Script-dispatched steps are `until`, `call`, and inventory/crafting steps `equip`, `unequip`,
+`consume`, `drop`, `craft`.
 Each accepts `timeoutMs` and `retry` at the step level. Inventory steps use the accessor passed to
 the plan:
 
