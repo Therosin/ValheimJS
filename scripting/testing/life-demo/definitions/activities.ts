@@ -1306,7 +1306,7 @@ export function createActivities(
             cooldownMs: 30_000,
             urgent: true,
             eligible: (view, ctx) =>
-                ctx.actor.getStats().food.length === 0 && (ctx.hasFood() || ctx.hasFoodSource(view)),
+                ctx.actor.getStats().food.length < 3 && (ctx.hasFood() || ctx.hasFoodSource(view)),
             describe: (view, ctx) => ({
                 base: ctx.hasFood() ? 900 : 800,
                 factors: {
