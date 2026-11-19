@@ -604,7 +604,7 @@ function withdrawGoal(context: VillagerContext): Goal {
         hysteresis: 10,
         urgent: true,
         score: () => 0,
-        eligible: view => needsStoredFood(context, view),
+        eligible: view => needsStoredFood(context, view) || needsFireWood(context, view),
         describe: ({ view }) => {
             const entries = storageEntries(view);
             const provides: string[] = [];
@@ -620,9 +620,10 @@ function withdrawGoal(context: VillagerContext): Goal {
         enter: ctx => {
             const entries = storageEntries(ctx.view);
             const station = cookingStation(ctx.view);
-            const wanted = context.hasFood()
+            const wood = needsFireWood(context, ctx.view) ? storedPrefab(entries, "Wood") : null;
+            const wanted = wood ?? (context.hasFood()
                 ? storedRawFood(entries, station?.inputs)
-                : stored(entries, "food");
+                : stored(entries, "food"));
             const target = wanted ?? storedPrefab(entries, "Wood") ?? entries[0] ?? null;
             if (target === null) return;
             activeTarget = target.item.prefab;
@@ -648,12 +649,14 @@ function withdrawGoal(context: VillagerContext): Goal {
         tick: ctx => {
             if (ctx.planStatus === "running") return "running";
             if (ctx.planStatus === "failure") return "failure";
-            if (needsStoredFood(context, ctx.view)) {
+            if (needsStoredFood(context, ctx.view) || needsFireWood(context, ctx.view)) {
                 const entries = storageEntries(ctx.view);
                 const station = cookingStation(ctx.view);
-                const food = context.hasFood()
-                    ? storedRawFood(entries, station?.inputs)
-                    : stored(entries, "food");
+                const food = needsFireWood(context, ctx.view)
+                    ? storedPrefab(entries, "Wood")
+                    : context.hasFood()
+                        ? storedRawFood(entries, station?.inputs)
+                        : stored(entries, "food");
                 if (food !== null) {
                     activeTarget = food.item.prefab;
                     ctx.log(
