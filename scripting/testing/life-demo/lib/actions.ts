@@ -423,7 +423,9 @@ function chooseFood(inventory: Inventory, stats: NpcStats): InventoryItem | null
     for (const item of inventory.items) {
         if (item.type !== "food" || !item.food || !inventory.canConsume(item)) continue;
         const minutes = Math.max(1, item.food.burnTime) / 60;
+        const cooked = item.prefab.startsWith("Cooked") ? 1_000_000 : 0;
         const score =
+            cooked +
             (item.food.health / minutes) * needHealth +
             (item.food.stamina / minutes) * needStamina +
             item.food.regen * 6 * needHealth;

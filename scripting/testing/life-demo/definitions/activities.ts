@@ -442,10 +442,22 @@ function stored(entries: readonly StoredEntry[], type: InventoryItem["type"]): S
     return entries.find(entry => entry.item.type === type) ?? null;
 }
 
-function storedRawFood(entries: readonly StoredEntry[]): StoredEntry | null {
+function storedRawFood(entries: readonly StoredEntry[], requires?: readonly string[]): StoredEntry | null {
     return entries.find(
-        entry => entry.item.type === "food" && !entry.item.prefab.startsWith("Cooked")
+        entry =>
+            entry.item.type === "food" &&
+            !entry.item.prefab.startsWith("Cooked") &&
+            (requires === undefined || requires.includes(entry.item.prefab))
     ) ?? null;
+}
+
+function isCookableRaw(item: InventoryItem, requires?: readonly string[]): boolean {
+    return (
+        item.type === "food" &&
+        item.stack > 0 &&
+        !item.prefab.startsWith("Cooked") &&
+        (requires === undefined || requires.includes(item.prefab))
+    );
 }
 
 function storedPrefab(entries: readonly StoredEntry[], prefab: string): StoredEntry | null {
@@ -565,7 +577,12 @@ function storeGoal(context: VillagerContext): Goal {
 
 function needsStoredFood(context: VillagerContext, view: NpcView): boolean {
     if (!context.hasFood()) return stored(storageEntries(view), "food") !== null;
-    return cookingStation(view) !== null && cookableFood(context) === 0 && storedRawFood(storageEntries(view)) !== null;
+    const station = cookingStation(view);
+    return (
+        station !== null &&
+        cookableFood(context, station) === 0 &&
+        storedRawFood(storageEntries(view), station.requires) !== null
+    );
 }
 
 function withdrawGoal(context: VillagerContext): Goal {
@@ -592,8 +609,9 @@ function withdrawGoal(context: VillagerContext): Goal {
         },
         enter: ctx => {
             const entries = storageEntries(ctx.view);
+            const station = cookingStation(ctx.view);
             const wanted = context.hasFood()
-                ? storedRawFood(entries)
+                ? storedRawFood(entries, station?.requires)
                 : stored(entries, "food");
             const target = wanted ?? storedPrefab(entries, "Wood") ?? entries[0] ?? null;
             if (target === null) return;
@@ -622,7 +640,10 @@ function withdrawGoal(context: VillagerContext): Goal {
             if (ctx.planStatus === "failure") return "failure";
             if (needsStoredFood(context, ctx.view)) {
                 const entries = storageEntries(ctx.view);
-                const food = context.hasFood() ? storedRawFood(entries) : stored(entries, "food");
+                const station = cookingStation(ctx.view);
+                const food = context.hasFood()
+                    ? storedRawFood(entries, station?.requires)
+                    : stored(entries, "food");
                 if (food !== null) {
                     activeTarget = food.item.prefab;
                     ctx.log(
@@ -927,13 +948,11 @@ function cookingStation(view: NpcView): NpcSensed | null {
     );
 }
 
-export function cookableFood(context: VillagerContext): number {
-    return context.actor.getInventory().items.filter(
-        item =>
-            item.type === "food" &&
-            item.stack > 0 &&
-            !item.prefab.startsWith("Cooked")
-    ).length;
+export function cookableFood(context: VillagerContext, station: NpcSensed | null = null): number {
+    const requires = station?.requires;
+    return context.actor
+        .getInventory()
+        .items.filter(item => isCookableRaw(item, requires)).length;
 }
 
 function cookGoal(context: VillagerContext): Goal {
@@ -951,7 +970,10 @@ function cookGoal(context: VillagerContext): Goal {
         cooldownMs: 5_000,
         hysteresis: 80,
         score: () => 0,
-        eligible: view => cookingStation(view) !== null && cookableFood(context) > 0,
+        eligible: view => {
+            const station = cookingStation(view);
+            return station !== null && cookableFood(context, station) > 0;
+        },
         describe: ({ view }) => {
             const station = cookingStation(view);
             return {
@@ -1305,8 +1327,20 @@ export function createActivities(
         activityGoal(context, trees, "eat", {
             cooldownMs: 30_000,
             urgent: true,
-            eligible: (view, ctx) =>
-                ctx.actor.getStats().food.length < 3 && (ctx.hasFood() || ctx.hasFoodSource(view)),
+            eligible: (view, ctx) => {
+                const stats = ctx.actor.getStats();
+                if (stats.food.length >= 3) return false;
+                const inventory = ctx.actor.getInventory();
+                const hasCooked = inventory.items.some(
+                    item =>
+                        item.type === "food" &&
+                        item.prefab.startsWith("Cooked") &&
+                        inventory.canConsume(item)
+                );
+                const station = cookingStation(view);
+                const shouldCook = !hasCooked && station !== null && cookableFood(ctx, station) > 0;
+                return !shouldCook && (ctx.hasFood() || ctx.hasFoodSource(view));
+            },
             describe: (view, ctx) => ({
                 base: ctx.hasFood() ? 900 : 800,
                 factors: {
