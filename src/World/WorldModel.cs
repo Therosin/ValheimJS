@@ -31,6 +31,7 @@ internal static class WorldKeys
     internal const string Stats = "vjs.stats";
     internal const string Food = "vjs.food";
     internal const string Inventory = "vjs.inv";
+    internal const string InventoryBlob = "vjs.inv.bin";
     internal const string InventoryInitialized = "vjs.inv.init";
     internal const string Death = "vjs.death";
     internal const string Generation = "vjs.gen";

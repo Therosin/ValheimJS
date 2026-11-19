@@ -210,8 +210,12 @@ export interface InventoryItem {
     pickaxe: number;
     toolTier: number;
     weight: number;
+    maxStack: number;
     type: "food" | "mead" | "weapon" | "tool" | "armor" | "ammo" | "material" | "misc";
     equipped: boolean;
+    armor: number;
+    /** Non-zero native damage channels. */
+    damage: Record<string, number>;
     food: { health: number; stamina: number; eitr: number; burnTime: number; regen: number } | null;
 }
 
@@ -231,6 +235,66 @@ export interface NpcEnvironment {
     isDay: boolean;
     biome: string;
     weather: string | null;
+}
+
+/** Native item facts for a dropped item or pickable yield. */
+export interface NpcItemInfo {
+    /** Normalized kind: weapon, tool, armor, food, ammo, material, mead, misc. */
+    type: string;
+    /** Raw Valheim item type, for example OneHandedWeapon. */
+    typeName: string;
+    /** Equip slot when applicable: head, chest, legs, shoulder, utility, trinket, left, right, ammo. */
+    equipSlot: string;
+    quality: number;
+    maxQuality: number;
+    stack: number;
+    maxStack: number;
+    durability: number;
+    maxDurability: number;
+    durabilityRatio: number;
+    /** Total weight for the current stack. */
+    weight: number;
+    /** Weight of one item before stack/quality scaling. */
+    unitWeight: number;
+    armor: number;
+    toolTier: number;
+    canRepair: boolean;
+    isFood: boolean;
+    /** Non-zero damage channels, for example `{ slash: 12, pierce: 4 }`. */
+    damage: Record<string, number>;
+    /** Food values when `isFood` is true. */
+    food: Record<string, number>;
+}
+
+/** Cheap container facts visible at perception range. */
+export interface NpcContainerInfo {
+    available: boolean;
+    slots: number;
+    freeSlots: number;
+    itemCount: number;
+    weight: number;
+    /** Number of item records by normalized kind: food, weapon, wood, stone, etc. */
+    categories: Record<string, number>;
+    /** Total stack counts by normalized kind. */
+    amounts: Record<string, number>;
+    /** Total stack counts by prefab name, for literal item targets. */
+    prefabs: Record<string, number>;
+    /** Best food item currently in the container, or null. */
+    bestFood: NpcItemInfo | null;
+    /** Seconds since the inventory summary was refreshed. */
+    lastScanned: number;
+}
+
+/** Equipped items for a sensed character; never its backpack contents. */
+export interface NpcEquipmentInfo {
+    right: NpcItemInfo | null;
+    left: NpcItemInfo | null;
+    helmet: NpcItemInfo | null;
+    chest: NpcItemInfo | null;
+    legs: NpcItemInfo | null;
+    shoulder: NpcItemInfo | null;
+    utility: NpcItemInfo | null;
+    trinket: NpcItemInfo | null;
 }
 
 /** One recognized entity in the NPC's perception store. */
@@ -255,6 +319,12 @@ export interface NpcSensed {
     audible: boolean;
     /** Pickables: the yielded item is food. */
     food: boolean;
+    /** Native item facts for item/pickable entries, or null for other targets. */
+    item: NpcItemInfo | null;
+    /** Cheap container summary; full contents require `npc.container(id).items`. */
+    container: NpcContainerInfo | null;
+    /** Equipped items for characters; null for non-characters. */
+    equipment: NpcEquipmentInfo | null;
     enemy: boolean;
     isPlayer: boolean;
     isNpc: boolean;
@@ -466,6 +536,13 @@ export interface AiTickResult {
     status: AiStatus;
     /** Value the action returned as `output`; never written to state unless the node declares `out`. */
     output: unknown;
+}
+
+/** Result of one `planning.planTick()` call. */
+export interface PlanTickResult {
+    status: "idle" | "running" | "success" | "failure" | "cancelled";
+    reason: string | null;
+    index: number;
 }
 
 /** Value an AI action may return; `undefined`/`null` counts as success. */

@@ -102,10 +102,34 @@ internal static class VjsInventory
             ["pickaxe"] = shared?.m_damages.m_pickaxe ?? 0f,
             ["toolTier"] = shared?.m_toolTier ?? 0,
             ["weight"] = item.GetWeight(),
+            ["maxStack"] = shared?.m_maxStackSize ?? 1,
             ["type"] = Kind(item),
             ["equipped"] = humanoid != null && humanoid.IsItemEquiped(item),
+            ["armor"] = item.GetArmor(),
+            ["damage"] = Damage(item.GetDamage()),
             ["food"] = food
         };
+    }
+
+    private static Dictionary<string, object?> Damage(HitData.DamageTypes damage)
+    {
+        var result = new Dictionary<string, object?>(StringComparer.Ordinal);
+        AddDamage(result, "blunt", damage.m_blunt);
+        AddDamage(result, "slash", damage.m_slash);
+        AddDamage(result, "pierce", damage.m_pierce);
+        AddDamage(result, "chop", damage.m_chop);
+        AddDamage(result, "pickaxe", damage.m_pickaxe);
+        AddDamage(result, "fire", damage.m_fire);
+        AddDamage(result, "frost", damage.m_frost);
+        AddDamage(result, "lightning", damage.m_lightning);
+        AddDamage(result, "poison", damage.m_poison);
+        AddDamage(result, "spirit", damage.m_spirit);
+        return result;
+    }
+
+    private static void AddDamage(Dictionary<string, object?> result, string key, float value)
+    {
+        if (value > 0f) result[key] = value;
     }
 
     private static string Condition(ItemDrop.ItemData item)
@@ -287,18 +311,76 @@ internal static class VjsInventory
         return humanoid.EquipItem(item);
     }
 
-    /// <summary>Equips the first weapon found in inventory order; used when a body starts.</summary>
-    internal static ItemDrop.ItemData? EquipFirstWeapon(Humanoid humanoid)
+    /// <summary>
+    /// Equips the best usable weapon/tool for the current task. Null selects the best overall
+    /// weapon; "chop" and "pickaxe" select the strongest matching tool. Does nothing when the
+    /// current right-hand item is already the best.
+    /// </summary>
+    internal static ItemDrop.ItemData? EquipBestFor(Humanoid humanoid, string? task)
     {
         var inventory = humanoid.GetInventory();
         if (inventory == null) return null;
+
+        ItemDrop.ItemData? best = null;
+        var bestScore = double.NegativeInfinity;
         foreach (var item in inventory.GetAllItems())
         {
-            if (Kind(item) != "weapon") continue;
-            if (humanoid.EquipItem(item)) return item;
+            if (item?.m_shared == null) continue;
+            var kind = Kind(item);
+            if (kind is not ("weapon" or "tool")) continue;
+            if (item.m_shared.m_useDurability && item.m_durability <= 0f) continue;
+
+            var damage = item.GetDamage();
+            var score = task switch
+            {
+                "chop" => damage.m_chop,
+                "pickaxe" => damage.m_pickaxe,
+                _ => TotalDamage(damage)
+            };
+            if (score <= 0f) continue;
+
+            // Prefer tool tier first, then damage, then quality.
+            score += item.m_shared.m_toolTier * 1000d + item.m_quality;
+            if (score > bestScore)
+            {
+                bestScore = score;
+                best = item;
+            }
         }
 
-        return null;
+        if (best == null) return null;
+        if (ReferenceEquals(humanoid.RightItem, best)) return best;
+        return humanoid.EquipItem(best) ? best : null;
+    }
+
+    /// <summary>Equips the first weapon found in inventory order; used when a body starts.</summary>
+    internal static ItemDrop.ItemData? EquipFirstWeapon(Humanoid humanoid) => EquipBestFor(humanoid, null);
+
+    /// <summary>Rebuilds native equipment references from <c>m_equipped</c> after a native load.</summary>
+    private static void RestoreEquipped(Humanoid humanoid)
+    {
+        var inventory = humanoid.GetInventory();
+        if (inventory == null) return;
+        foreach (var item in inventory.GetAllItems())
+        {
+            if (item == null || !item.m_equipped) continue;
+            humanoid.EquipItem(item);
+        }
+    }
+
+    private static double TotalDamage(HitData.DamageTypes damage) =>
+        damage.m_blunt + damage.m_slash + damage.m_pierce + damage.m_chop + damage.m_pickaxe +
+        damage.m_fire + damage.m_frost + damage.m_lightning + damage.m_poison + damage.m_spirit;
+
+    internal static IReadOnlyDictionary<string, ItemDrop.ItemData?> Equipment(Humanoid humanoid)
+    {
+        var result = new Dictionary<string, ItemDrop.ItemData?>(StringComparer.Ordinal);
+        foreach (var entry in EquipmentFields)
+        {
+            result[entry.Name] = entry.Field?.GetValue(humanoid) as ItemDrop.ItemData;
+        }
+
+        return result;
     }
 
     internal static bool Unequip(Humanoid humanoid, ItemDrop.ItemData item)
@@ -323,37 +405,55 @@ internal static class VjsInventory
         return kind is "weapon" or "tool" or "armor";
     }
 
+    /// <summary>
+    /// Serializes an inventory with Valheim's own item writer, preserving custom item data that
+    /// the compact persistence payload intentionally drops.
+    /// </summary>
+    internal static string? Encode(Inventory? inventory)
+    {
+        if (inventory == null) return null;
+        var package = new ZPackage();
+        inventory.Save(package);
+        return Convert.ToBase64String(package.GetArray());
+    }
+
+    internal static bool TryDecode(Inventory? inventory, string? payload, out string error)
+    {
+        error = string.Empty;
+        if (inventory == null)
+        {
+            error = "no inventory";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            error = "empty payload";
+            return false;
+        }
+
+        try
+        {
+            var package = new ZPackage(Convert.FromBase64String(payload));
+            inventory.Load(package);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            error = exception.GetBaseException().Message;
+            return false;
+        }
+    }
+
     internal static void Save(Humanoid humanoid, ZDO zdo)
     {
         var inventory = humanoid.GetInventory();
         if (inventory == null) return;
-        var payload = new NpcInventoryPayload();
-        foreach (var item in inventory.GetAllItems())
+        var payload = Encode(inventory);
+        if (payload != null)
         {
-            payload.Items.Add(new NpcItemRecord
-            {
-                PrefabHash = PrefabHash(item),
-                Stack = item.m_stack,
-                Quality = item.m_quality,
-                Durability = item.m_durability,
-                X = item.m_gridPos.x,
-                Y = item.m_gridPos.y
-            });
+            zdo.Set(WorldKeys.InventoryBlob, payload);
         }
-
-        foreach (var entry in EquipmentFields)
-        {
-            if (entry.Field?.GetValue(humanoid) is not ItemDrop.ItemData item) continue;
-            payload.Equipment.Add(new NpcEquipmentRecord
-            {
-                Slot = entry.Name,
-                PrefabHash = PrefabHash(item),
-                X = item.m_gridPos.x,
-                Y = item.m_gridPos.y
-            });
-        }
-
-        zdo.Set(WorldKeys.Inventory, payload.Encode());
     }
 
     /// <summary>
@@ -366,6 +466,19 @@ internal static class VjsInventory
         var inventory = humanoid.GetInventory();
         var scene = ZNetScene.instance;
         if (inventory == null || scene == null) return;
+
+        if (zdo.GetString(WorldKeys.InventoryBlob, out var blob) && !string.IsNullOrEmpty(blob))
+        {
+            if (TryDecode(inventory, blob, out var blobError))
+            {
+                RestoreEquipped(humanoid);
+                return;
+            }
+
+            PluginLogger.Warn($"npc inventory: native blob restore skipped: {blobError}");
+        }
+
+        // Legacy compact payloads remain readable so existing worlds migrate on the next save.
         if (!zdo.GetString(WorldKeys.Inventory, out var saved) || string.IsNullOrEmpty(saved))
         {
             return;

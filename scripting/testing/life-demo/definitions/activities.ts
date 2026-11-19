@@ -1,7 +1,7 @@
 import { npc, type InventoryItem } from "../../../sdk/index";
-import type { NpcSensed, NpcView } from "../../../sdk/api/types";
+import type { NpcItemInfo, NpcSensed, NpcView } from "../../../sdk/api/types";
+import type { Inventory } from "../../../sdk/api/generated";
 import type { Goal, GoalDescription } from "../../../sdk/planning";
-import { TICK_SECONDS } from "../lib/behaviour";
 import type { VillagerActivity, VillagerContext } from "./types";
 
 interface ActivityDescription {
@@ -31,7 +31,7 @@ interface ActivityOptions {
  * One activity is one existing YAML tree. The goal supplies contextual facts; UtilityAI owns the
  * utility math and the Planner owns selection and execution.
  */
-function treeActivity(
+function activityGoal(
     context: VillagerContext,
     trees: Record<VillagerActivity, string>,
     id: VillagerActivity,
@@ -52,18 +52,26 @@ function treeActivity(
             } as GoalDescription;
         },
         eligible: view => options.eligible?.(view, context) ?? true,
-        enter: () => {
-            context.startActivity(id, trees[id], options.state?.(context));
+        behaviour: {
+            tree: trees[id],
+            state: () => ({
+                home: context.home,
+                target: null,
+                destination: null,
+                run: false,
+                moveIssued: false,
+                waitIssued: false,
+                ...options.state?.(context)
+            }),
+            action: (name, actionContext) => context.action(name, actionContext),
+            condition: (name, actionContext) => context.condition(name, actionContext)
         },
-        tick: () => {
-            const status = context.tickActivity(TICK_SECONDS);
-            return status === "running" ? "running" : status === "success" ? "success" : "failure";
-        },
+        enter: () => context.beginActivity(id),
         exit: (_ctx, reason) => {
             if (reason === "success" && options.satisfies !== undefined) {
                 context.satisfy(options.satisfies);
             }
-            context.endActivity(reason);
+            context.finishActivity(reason);
         }
     };
 }
@@ -157,6 +165,111 @@ function clearResource(id: string | null, owner: string): void {
     }
 }
 
+interface ItemDecision {
+    readonly keep: boolean;
+    readonly equip: boolean;
+    readonly reason: string;
+}
+
+function damageScore(info: NpcItemInfo | InventoryItem): number {
+    let total = 0;
+    for (const value of Object.values(info.damage)) {
+        if (typeof value === "number" && Number.isFinite(value)) total += value;
+    }
+    return total;
+}
+
+function equipmentFor(
+    equipment: Inventory["equipment"],
+    slot: string
+): InventoryItem | null {
+    if (equipment === null) return null;
+    switch (slot) {
+        case "head": return equipment.helmet;
+        case "chest": return equipment.chest;
+        case "legs": return equipment.legs;
+        case "shoulder": return equipment.shoulder;
+        case "utility": return equipment.utility;
+        case "trinket": return equipment.trinket;
+        case "left": return equipment.left;
+        case "right": return equipment.right;
+        default: return null;
+    }
+}
+
+function itemDecision(entry: NpcSensed, context: VillagerContext): ItemDecision {
+    const info = entry.item;
+    if (info == null) {
+        return { keep: true, equip: false, reason: "metadata-unavailable" };
+    }
+
+    const inventory = context.actor.getInventory();
+    if (info.isFood) {
+        return context.actor.getStats().food.length < 3
+            ? { keep: true, equip: false, reason: "food-slot" }
+            : { keep: false, equip: false, reason: "food-full" };
+    }
+
+    if (info.type === "weapon" || info.type === "tool") {
+        const current = equipmentFor(inventory.equipment, "right");
+        if (current === null) return { keep: true, equip: true, reason: "no-right-item" };
+        if (current.prefab === entry.prefab) return { keep: false, equip: false, reason: "duplicate" };
+        if (info.toolTier > current.toolTier || damageScore(info) > damageScore(current)) {
+            return { keep: true, equip: true, reason: "upgrade" };
+        }
+        return { keep: false, equip: false, reason: "not-upgrade" };
+    }
+
+    if (info.type === "armor") {
+        const current = equipmentFor(inventory.equipment, info.equipSlot);
+        if (current === null) return { keep: true, equip: true, reason: "armor-slot" };
+        if (current.prefab === entry.prefab) return { keep: false, equip: false, reason: "duplicate" };
+        if (info.quality > current.quality || info.armor > current.armor) {
+            return { keep: true, equip: true, reason: "armor-upgrade" };
+        }
+        return { keep: false, equip: false, reason: "not-upgrade" };
+    }
+
+    if (info.type === "ammo") {
+        const count = inventory.count(entry.prefab ?? "");
+        return count < 100
+            ? { keep: true, equip: false, reason: "ammo-low" }
+            : { keep: false, equip: false, reason: "ammo-full" };
+    }
+
+    if (info.type === "material") {
+        const count = inventory.count(entry.prefab ?? "");
+        return count < 64
+            ? { keep: true, equip: false, reason: "material-low" }
+            : { keep: false, equip: false, reason: "material-full" };
+    }
+
+    return { keep: true, equip: false, reason: "unclassified-item" };
+}
+
+function nearestUsefulDrop(
+    view: NpcView,
+    context: VillagerContext,
+    excludeId?: string | null
+): NpcSensed | null {
+    const now = Date.now();
+    const candidates = view.objects
+        .filter(entry => entry.visible && !entry.isDead && entry.kind === "item")
+        .filter(entry => entry.id !== excludeId)
+        .filter(entry => resourceUsable(entry.id, context.id, now))
+        .filter(entry => entry.distance <= 20)
+        .sort((left, right) => left.distance - right.distance);
+
+    for (const candidate of candidates) {
+        const decision = itemDecision(candidate, context);
+        if (decision.keep) return candidate;
+        context.debug?.(
+            `collect ignore ${candidate.prefab ?? candidate.name}: ${decision.reason}`
+        );
+    }
+    return null;
+}
+
 function nearestDrop(view: NpcView, owner: string, excludeId?: string | null): NpcSensed | null {
     const now = Date.now();
     return (
@@ -191,8 +304,8 @@ function harvestGoal(context: VillagerContext): Goal {
         context.publish("activity", stage === "collect" ? "collect" : "harvest");
         context.board.emit("activity:stage", { activity: "harvest", stage, targetId: target });
         ctx.log(`harvest stage=${stage} target=${target}`);
+        const sensed = ctx.view.objects.find(entry => entry.id === target);
         if (activity === "pickup") {
-            const sensed = ctx.view.objects.find(entry => entry.id === target);
             ctx.log(`pickup ${sensed?.prefab ?? sensed?.name ?? target}`);
             ctx.run([{ interact: { target, verb: "pickup" } }], {
                 timeoutMs: 30_000,
@@ -201,7 +314,7 @@ function harvestGoal(context: VillagerContext): Goal {
             return;
         }
 
-        ctx.run([{ harvest: { target, approach: { run: false } } }], {
+        ctx.run([{ harvest: { target } }], {
             timeoutMs: 60_000,
             log: message => ctx.log(message)
         });
@@ -217,8 +330,15 @@ function harvestGoal(context: VillagerContext): Goal {
             context.actor.getStats().staminaRatio > 0.25,
         describe: ({ view }) => {
             const target = nearestHarvestTarget(view, context);
+            const homeWood = context.homeStock.amounts.wood ?? 0;
+            const homeStone = context.homeStock.amounts.stone ?? 0;
+            const deficit = target?.kind === "tree"
+                ? Math.max(0, 50 - homeWood)
+                : Math.max(0, 50 - homeStone);
             return {
-                base: woodCount(context) < 5 && target?.kind === "tree" ? 110 : 20,
+                base: (woodCount(context) < 5 && target?.kind === "tree" ? 110 : 20) +
+                    Math.min(80, deficit) +
+                    Math.max(0, -(context.belongings[target?.kind === "tree" ? "wood" : "stone"] || 0)) * 40,
                 factors: {
                     effort: 0.6,
                     distance: target ? Math.min(1, target.distance / 14) : 1
@@ -386,14 +506,16 @@ function storeGoal(context: VillagerContext): Goal {
             ctx.log(`store materials -> ${container.prefab ?? container.name} (${container.id})`);
             context.board.emit("activity:start", { activity: "store", targetId: container.id });
             ctx.run(
-                storableItems(context).map(item => ({
-                    interact: {
-                        target: container.id,
-                        verb: "store",
-                        prefab: item.prefab,
-                        count: item.stack
-                    }
-                })),
+                [
+                    ...storableItems(context).map(item => ({
+                        interact: {
+                            target: container.id,
+                            verb: "store",
+                            prefab: item.prefab,
+                            count: item.stack
+                        }
+                    }))
+                ],
                 { timeoutMs: 60_000, log: message => ctx.log(message) }
             );
         },
@@ -416,14 +538,16 @@ function storeGoal(context: VillagerContext): Goal {
             ctx.log(`store materials -> ${container.prefab ?? container.name} (${container.id})`);
             context.board.emit("activity:stage", { activity: "store", targetId: container.id });
             ctx.run(
-                items.map(item => ({
-                    interact: {
-                        target: container.id,
-                        verb: "store",
-                        prefab: item.prefab,
-                        count: item.stack
-                    }
-                })),
+                [
+                    ...items.map(item => ({
+                        interact: {
+                            target: container.id,
+                            verb: "store",
+                            prefab: item.prefab,
+                            count: item.stack
+                        }
+                    }))
+                ],
                 { timeoutMs: 60_000, log: message => ctx.log(message) }
             );
             return "running";
@@ -888,6 +1012,7 @@ function cookGoal(context: VillagerContext): Goal {
 
 function collectGoal(context: VillagerContext): Goal {
     let activeTarget: string | null = null;
+    let activeEquip: string | null = null;
     let holdUntil = 0;
     let loadingAttempts = 0;
 
@@ -898,12 +1023,12 @@ function collectGoal(context: VillagerContext): Goal {
         commitMs: 8_000,
         score: () => 0,
         eligible: view =>
-            context.board.get?.("activity") !== "hunt" && nearestDrop(view, context.id) !== null,
+            context.board.get?.("activity") !== "hunt" && nearestUsefulDrop(view, context) !== null,
         describe: ({ view }) => {
             const target =
                 activeTarget === null
-                    ? nearestDrop(view, context.id)
-                    : (view.objects.find(entry => entry.id === activeTarget) ?? nearestDrop(view, context.id));
+                    ? nearestUsefulDrop(view, context)
+                    : (view.objects.find(entry => entry.id === activeTarget) ?? nearestUsefulDrop(view, context));
             return {
                 base: target !== null ? 850 : 60,
                 factors: {
@@ -913,9 +1038,12 @@ function collectGoal(context: VillagerContext): Goal {
             };
         },
         enter: ctx => {
-            const drop = nearestDrop(ctx.view, context.id);
+            const drop = nearestUsefulDrop(ctx.view, context);
             if (drop === null || !reserveResource(drop.id, context.id, ctx.now)) return;
+            const decision = itemDecision(drop, context);
             activeTarget = drop.id;
+            activeEquip = decision.equip ? drop.prefab : null;
+            context.debug?.(`collect keep ${drop.prefab ?? drop.name}: ${decision.reason}`);
             context.publish("activity", "collect");
             ctx.log(`collect pickup ${drop.prefab ?? drop.name} (${drop.id})`);
             context.board.emit("activity:start", { activity: "collect", targetId: drop.id });
@@ -944,13 +1072,16 @@ function collectGoal(context: VillagerContext): Goal {
                 }
 
                 loadingAttempts = 0;
-                const next = nearestDrop(ctx.view, context.id, activeTarget);
+                const next = nearestUsefulDrop(ctx.view, context, activeTarget);
                 if (next === null) {
                     activeTarget = null;
                     return "success";
                 }
                 if (!reserveResource(next.id, context.id, ctx.now)) return "running";
+                const nextDecision = itemDecision(next, context);
                 activeTarget = next.id;
+                activeEquip = nextDecision.equip ? next.prefab : null;
+                context.debug?.(`collect keep ${next.prefab ?? next.name}: ${nextDecision.reason}`);
                 ctx.log(`collect retry ${next.prefab ?? next.name} (${next.id})`);
                 ctx.run([{ interact: { target: next.id, verb: "pickup" } }], {
                     timeoutMs: 30_000,
@@ -959,14 +1090,28 @@ function collectGoal(context: VillagerContext): Goal {
                 return "running";
             }
             loadingAttempts = 0;
-            const drop = nearestDrop(ctx.view, context.id);
+            if (activeEquip !== null) {
+                const inventory = context.actor.getInventory();
+                const item = inventory.items.find(candidate => candidate.prefab === activeEquip);
+                if (item !== undefined) {
+                    const equipped = inventory.equip(item);
+                    context.debug?.(
+                        `collect equip ${activeEquip}: ${equipped.ok ? "ok" : equipped.reason ?? "rejected"}`
+                    );
+                }
+                activeEquip = null;
+            }
+            const drop = nearestUsefulDrop(ctx.view, context);
             if (drop === null) {
                 clearResource(activeTarget, context.id);
                 activeTarget = null;
                 return "success";
             }
             if (!reserveResource(drop.id, context.id, ctx.now)) return "running";
+            const decision = itemDecision(drop, context);
             activeTarget = drop.id;
+            activeEquip = decision.equip ? drop.prefab : null;
+            context.debug?.(`collect keep ${drop.prefab ?? drop.name}: ${decision.reason}`);
             context.board.emit("activity:stage", { activity: "collect", targetId: drop.id });
             ctx.run([{ interact: { target: drop.id, verb: "pickup" } }], {
                 timeoutMs: 30_000,
@@ -982,6 +1127,7 @@ function collectGoal(context: VillagerContext): Goal {
                 targetId: activeTarget
             });
             activeTarget = null;
+            activeEquip = null;
         }
     };
 }
@@ -991,8 +1137,9 @@ export function createActivities(
     trees: Record<VillagerActivity, string>
 ): Goal[] {
     return [
-        treeActivity(context, trees, "wander", {
+        activityGoal(context, trees, "wander", {
             cooldownMs: 3_000,
+            commitMs: 3_000,
             describe: view => ({
                 base: 8,
                 factors: {
@@ -1004,8 +1151,9 @@ export function createActivities(
             })
         }),
 
-        treeActivity(context, trees, "inspect", {
+        activityGoal(context, trees, "inspect", {
             cooldownMs: 20_000,
+            commitMs: 4_000,
             satisfies: { curiosity: -0.35 },
             eligible: (view, ctx) =>
                 ctx.unknownObject(view) !== null && ctx.needs.curiosity > 0.55,
@@ -1022,8 +1170,9 @@ export function createActivities(
             }
         }),
 
-        treeActivity(context, trees, "socialize", {
+        activityGoal(context, trees, "socialize", {
             cooldownMs: 25_000,
+            commitMs: 5_000,
             satisfies: { social: -0.4 },
             eligible: (view, ctx) =>
                 ctx.nearbyPlayer(view) !== null && ctx.needs.social > 0.55,
@@ -1039,8 +1188,9 @@ export function createActivities(
             }
         }),
 
-        treeActivity(context, trees, "forage", {
+        activityGoal(context, trees, "forage", {
             cooldownMs: 20_000,
+            commitMs: 5_000,
             satisfies: { curiosity: -0.25 },
             eligible: (_view, ctx) => ctx.needs.energy > 0.35,
             describe: (view, ctx) => ({
@@ -1054,8 +1204,9 @@ export function createActivities(
             })
         }),
 
-        treeActivity(context, trees, "explore", {
+        activityGoal(context, trees, "explore", {
             cooldownMs: 25_000,
+            commitMs: 5_000,
             satisfies: { curiosity: -0.3 },
             eligible: (view, ctx) =>
                 ctx.needs.energy > 0.4 && ctx.unknownObject(view) === null,
@@ -1071,8 +1222,9 @@ export function createActivities(
             state: () => ({ waitSeconds: 3 })
         }),
 
-        treeActivity(context, trees, "seekHome", {
+        activityGoal(context, trees, "seekHome", {
             cooldownMs: 8_000,
+            commitMs: 3_000,
             eligible: (view, ctx) => ctx.findShelter(view) !== null,
             describe: (view, ctx) => {
                 const shelter = ctx.findShelter(view);
@@ -1086,8 +1238,9 @@ export function createActivities(
             }
         }),
 
-        treeActivity(context, trees, "return", {
+        activityGoal(context, trees, "return", {
             cooldownMs: 1_000,
+            commitMs: 3_000,
             eligible: (view, ctx) =>
                 ctx.homesick > 0.2 && ctx.distanceFromHome(view) > 4,
             describe: (view, ctx, stats) => {
@@ -1109,16 +1262,16 @@ export function createActivities(
             }
         }),
 
-        treeActivity(context, trees, "rest", {
-            cooldownMs: 3_000,
+        activityGoal(context, trees, "rest", {
+            cooldownMs: 20_000,
             hysteresis: 500,
             satisfies: { energy: 0.35 },
             describe: view => {
                 const night = view.environment?.isDay === false;
                 const stamina = context.actor.getStats().staminaRatio;
                 let base = 0;
-                if (stamina < 0.2) base = 800;
-                else if (context.needs.energy < 0.25) base = 800;
+                if (stamina < 0.15) base = 800;
+                else if (context.needs.energy < 0.2) base = 800;
                 else if (night && context.needs.energy < 0.9) {
                     base = 500 + (1 - context.needs.energy) * 200;
                 }
@@ -1128,10 +1281,10 @@ export function createActivities(
                     factors: { effort: 0.1 }
                 };
             },
-            state: () => ({ waitSeconds: 18 })
+            state: () => ({ waitSeconds: 25 })
         }),
 
-        treeActivity(context, trees, "flee", {
+        activityGoal(context, trees, "flee", {
             cooldownMs: 1_000,
             urgent: true,
             satisfies: { energy: -0.05 },
@@ -1149,7 +1302,7 @@ export function createActivities(
             state: () => ({ waitSeconds: 2 })
         }),
 
-        treeActivity(context, trees, "eat", {
+        activityGoal(context, trees, "eat", {
             cooldownMs: 30_000,
             urgent: true,
             eligible: (view, ctx) =>

@@ -194,6 +194,11 @@ npc.register(makeWanderer(), {
 `enemy` uses the game's faction matrix (`BaseAI.IsEnemy`), including tamed and group overrides.
 World objects are the same record shape with `isObject: true` and `kind` set to `pickable`,
 `tree`, `rock`, `container`, `door`, `bed`, `smelter`, `station`, `item` or `portal`.
+Item and pickable entries carry `item`: normalized type, quality, stack, durability, weight,
+armor, tool tier, damage channels, food values and equip slot. Containers carry a cheap
+`container` summary (slots, free space, category counts/amounts, best food, scan age), while full
+contents remain an explicit `npc.container(id).items` query. Characters carry `equipment` for
+their currently equipped hand/armor slots, not their backpack contents.
 `ready` is the harvestable flag for pickables (read from the ZDO even while culled), alive for
 characters, and `true` for other objects.
 
@@ -522,7 +527,8 @@ so YAML does not need `moveIssued`/`waitIssued` state.
 highest-scoring one, preempts with optional hysteresis, and applies optional cooldowns. It has no
 built-in goals or reactions; the plugin owns interpretation, priorities and callbacks.
 
-A goal starts a `Plan`: a linear, cancellable list of steps looked up in the action registry.
+`ctx.run` starts a host-owned plan: a linear, cancellable list of steps. The C# planner owns the
+cursor, timeouts, retries and native action settlement; `ctx.run` returns a `PlanHandle`.
 
 ```ts
 import { Planner, registerAction, type Goal } from "../../../sdk/index";
@@ -551,7 +557,11 @@ planner.setGoals([
 ```
 
 Built-in steps: `moveTo`, `wait`, `lookAt`, `face`, `pick`, `stop`, `idle`, `interact`, `attack`,
-`jump`, `follow`, `until`, `call`, and inventory steps `equip`, `unequip`, `consume`, `drop`.
+`jump`, `harvest`, `follow`, `until`, `call`, and inventory steps `equip`, `unequip`, `consume`,
+`drop`. `interact` and `harvest` approach their target by default; pass `approach: false` to
+disable it, or `{ distance, run }` to tune it. `follow` tracks a sensed target until within its
+distance. `harvest` is one-shot native execution; repeat it from a goal or behaviour tree, not an
+internal plan loop.
 Each accepts `timeoutMs` and `retry` at the step level. Inventory steps use the accessor passed to
 the plan:
 
@@ -576,8 +586,8 @@ registerAction<{ text: string }>("say", {
 ctx.run([{ action: "say", config: { text: "hello" } }]);
 ```
 
-The engine owns only timeouts, retries, action settlement by `seq`, pause grace and cancellation.
-It never chooses goals, reactions or priorities.
+The native host owns timeouts, retries, native action settlement by `seq`, pause grace,
+cancellation, goal cooldowns and preemption. It never chooses reactions or domain priorities.
 
 The same primitives support every policy without core changes:
 
@@ -601,7 +611,7 @@ signals or behaviour trees, and the selectable capability remains an ordinary `G
 | `Goal.describe` | Optional contextual facts for selection |
 | `Goal.eligible` | The existing availability conditions |
 | `ctx.run(steps)` / actions | Existing execution for native and JS steps |
-| `ai.instantiate` / `ai.tick` | Still available inside a goal's `enter`/`tick` for YAML behaviours |
+| A goal's `behaviour` block | Native YAML tree instantiated and ticked by the host |
 | Goal settlement + `utility.record` | Before/after state plus events that happened during the run |
 | Shared feedback rules | Plugin-defined, reusable stat adjustments |
 | `npc.memory` / `npc.setMemory` | Durable store supplied by the plugin |
@@ -770,10 +780,27 @@ selects that provider first and resumes the original objective afterwards. Repea
 bounded by `maxPrerequisiteAttempts` (default `2`) and cooled down by `prerequisiteCooldownMs`
 (default 30 s). This uses the same goal catalogue and execution; there is no second planner.
 
-`ai.available(view)` is the central "what can this NPC do now" query: Planner eligibility,
-cooldown, threshold and the activity's current prerequisites are already applied. For tree-backed
-activities, write a normal goal whose `enter` instantiates the compiled YAML and whose `tick`
-forwards `ai.tick`; `exit` releases it. The utility layer does not need to know the executor.
+`utility.available(view)` is the central "what can this NPC do now" query: eligibility, cooldown,
+threshold and the activity's current prerequisites are already applied. For tree-backed activities,
+attach a `behaviour` block to the goal instead of forwarding `ai.tick` yourself:
+
+```ts
+const activity: Goal = {
+    id: "wander",
+    score: () => 0,
+    describe: () => ({ base: 5 }),
+    behaviour: {
+        tree: wanderTree,
+        state: () => ({ home: this.home, target: null }),
+        action: (name, ctx) => this.runActivityAction(name, ctx),
+        condition: (name, ctx) => this.runActivityCondition(name, ctx)
+    }
+};
+```
+
+The host instantiates the tree when the goal starts, ticks plan -> behaviour -> optional goal
+`tick`, and releases the instance on success, failure or preemption. Omit `Goal.tick` for a pure
+behaviour goal.
 
 ## 9. Full plugin: a companion hunter
 
@@ -917,9 +944,9 @@ the tree instance from leaking after the entity is removed.
 `UtilityAI` drive them with different profiles.
 
 - **Definitions** (`definitions/`):
-  - `activities.ts` builds one ordinary `Goal` per YAML tree. Each goal supplies contextual
-    factors such as social exposure, novelty, exploration, effort and distance, plus the
-    `satisfies` effects it delivers on success. `wander`/`forage`/`explore` select points from
+  - `activities.ts` builds one ordinary `Goal` per activity. Each goal supplies contextual
+    factors such as social exposure, novelty, exploration, effort and distance, the `satisfies`
+    effects it delivers on success, and a `behaviour` block naming its compiled tree. `wander`/`forage`/`explore` select points from
     the current position, not permanently from home; `return` only pulls home beyond a wider
     distance or under night/low-energy pressure.
   - `profiles.ts` holds Bob's and Astrid's initial stats and needs, the shared selection
@@ -927,8 +954,9 @@ the tree instance from leaking after the entity is removed.
   - `index.ts` creates the `UtilityAI` for a named villager.
   - `VillagerRuntime.satisfy()` applies those effects to the fast needs state when an activity
     succeeds. Rest uses hysteresis so recovering energy does not make it preempt itself.
-- **Runtime** (`lib/villager.ts`) owns durable facts, needs, blackboard publication and YAML tree
-  lifecycle. It contains no activity selection.
+- **Runtime** (`lib/villager.ts`) owns durable facts, needs, blackboard publication and activity
+  bookkeeping. It contains no activity selection and no tree instance lifecycle; the C# planning
+  host compiles, instantiates and ticks the YAML.
 - **YAML behaviours** (`behaviours/*.yaml`) own *how* the activity runs. `wander`, `forage`,
   `return-home`, `rest`, `seek-home`, `inspect`, `socialize`, `flee` and `eat` compose the micro
   trees in `behaviours/micro/`.

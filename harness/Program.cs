@@ -24,6 +24,7 @@ if (args.Contains("--probe-world-manager")) return WorldManagerProbe.Run();
 if (args.Contains("--probe-signals")) return SignalProbe.Run();
 if (args.Contains("--probe-types")) return TypeProbe.Run();
 if (args.Contains("--probe-behaviour")) return BehaviourProbe.Run();
+if (args.Contains("--probe-planning")) return PlanningProbe.Run();
 if (args.Contains("--probe-ai")) return AiProbe.Run();
 if (args.Contains("--probe-ui")) return UiProbe.Run();
 if (args.Contains("--probe-life")) return LifeDemoProbe.Run();

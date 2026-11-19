@@ -1,23 +1,23 @@
 import {
     actions,
+    position,
     ActionRegistry,
     type ActionContext,
     type ActionHandler,
     type ActionOutcome,
-    type ActionSettlement,
     type ActionResultLike,
     type InventoryActions,
     type PlannerActor,
     type Vec3Like
 } from "./actions";
+import { context } from "./runtime";
 import type { CraftResult, NpcAffordances, NpcInteractOptions, NpcInteractionResult, NpcSensed, NpcView } from "./api/types";
 
-export { ActionRegistry, actions, registerAction } from "./actions";
+export { ActionRegistry, actions, position, registerAction } from "./actions";
 export type {
     ActionContext,
     ActionHandler,
     ActionOutcome,
-    ActionSettlement,
     ActionResultLike,
     InventoryActions,
     PlannerActor,
@@ -27,10 +27,10 @@ export type {
 /**
  * Policy-free planning primitives.
  *
- * `Planner` owns goal selection mechanics. `Plan` owns a linear, cancellable step sequence and
- * looks each step up in the action registry. Neither knows what a goal means, when it should
- * matter, or which reaction is correct. Built-in actions live in `sdk/actions/*`; plugins can
- * register more with `registerAction`.
+ * The native planning host owns plan cursors, timeouts, retries and goal selection. This module
+ * keeps the policy surface: goals, callbacks, step types and the `PlanHandle` facade. Neither the
+ * host nor the handle knows what a goal means or which reaction is correct. Built-in JS actions
+ * live in `sdk/actions/*`; plugins can register more with `registerAction`.
  */
 
 export type GoalStatus = "running" | "success" | "failure";
@@ -78,6 +78,28 @@ export interface GoalDescription {
     readonly satisfies?: Readonly<Record<string, number>>;
 }
 
+export interface BehaviourActionContext {
+    args: Record<string, unknown>;
+    state: Record<string, unknown>;
+    this: unknown;
+    deltaTime: number;
+    interrupted: boolean;
+}
+
+export type BehaviourOutcome = "success" | "failure" | "running";
+
+export interface BehaviourGoalOptions {
+    /** Tree id from `ai.compile` or `planning.behaviourCompile`. */
+    readonly tree: string;
+    /** Additional initial state merged over the tree defaults. */
+    readonly state?: Record<string, unknown> | (() => Record<string, unknown>);
+    action?(name: string, context: BehaviourActionContext): BehaviourOutcome;
+    condition?(name: string, context: BehaviourActionContext): boolean;
+    exec?(code: string, context: BehaviourActionContext): void;
+    random?(): number;
+    maxJumpsPerTick?: number;
+}
+
 export interface Goal {
     /** Stable plugin-defined id. */
     readonly id: string;
@@ -95,8 +117,10 @@ export interface Goal {
     /** Optional hard gate evaluated before `score`. */
     eligible?(view: NpcView): boolean;
     enter?(ctx: GoalContext): void;
-    /** Advance the goal. The planner never inspects why; the plugin decides. */
-    tick(ctx: GoalContext): GoalStatus;
+    /** Advance the goal. Omit for pure behaviour goals; the host owns the tree lifecycle. */
+    tick?(ctx: GoalContext): GoalStatus;
+    /** Native behaviour tree instantiated when this goal becomes active. */
+    behaviour?: BehaviourGoalOptions;
     exit?(ctx: GoalContext, reason: GoalExitReason): void;
     /** Optional pause after a finished or preempted goal, chosen by the plugin. */
     cooldownMs?: number;
@@ -134,266 +158,189 @@ export interface PlannerOptions {
 }
 
 export class Planner {
+    readonly id: string;
+
     private readonly actor: PlannerActor;
-    private readonly threshold: number;
-    private readonly replanMs: number;
     private readonly clock: () => number;
     private readonly log?: (message: string) => void;
     private readonly debug?: (message: string) => void;
     private readonly selectPolicy?: PlannerOptions["select"];
-    private readonly cooldownUntil = new Map<string, number>();
-    private goals: Goal[] = [];
-    private active: Goal | null = null;
-    private plan: Plan | null = null;
-    private activeSince = 0;
-    private lastReplan = 0;
-    private lastView: NpcView | null = null;
-    private requested: { id: string; until: number } | null = null;
+    private goalsValue: Goal[] = [];
+    private readonly goalsById = new Map<string, Goal>();
+    private activePlan: PlanHandle | null = null;
 
     constructor(actor: PlannerActor, options: PlannerOptions = {}) {
         this.actor = actor;
-        this.threshold = options.threshold ?? 0;
-        this.replanMs = options.replanMs ?? 500;
         this.clock = options.now ?? (() => Date.now());
         this.log = options.log;
         this.debug = options.debug;
         this.selectPolicy = options.select;
+        this.id = context().host.api.planning.plannerCreate(
+            actor,
+            {
+                threshold: options.threshold ?? 0,
+                replanMs: options.replanMs ?? 500,
+                select: options.select
+            },
+            ((kind: string, ...args: unknown[]) => this.dispatch(kind, args)) as unknown as (
+                ...args: unknown[]
+            ) => unknown
+        );
     }
 
     get current(): string | null {
-        return this.active?.id ?? null;
+        return context().host.api.planning.plannerCurrent(this.id);
     }
 
     get currentElapsedMs(): number {
-        return this.active === null ? 0 : this.lastReplan - this.activeSince;
+        return context().host.api.planning.plannerCurrentElapsedMs(this.id);
     }
 
     setGoals(goals: Goal[]): void {
-        if (this.active !== null) {
-            this.finish("preempted", this.clock());
-        }
+        const metadata = goals.map(goal => {
+            const behaviour = (goal as Goal & { behaviour?: unknown }).behaviour;
+            return {
+                id: goal.id,
+                hasTick: typeof goal.tick === "function",
+                cooldownMs: goal.cooldownMs,
+                hysteresis: goal.hysteresis,
+                commitMs: goal.commitMs,
+                urgent: goal.urgent,
+                behaviour
+            };
+        });
 
-        this.goals = goals.slice();
-        this.cooldownUntil.clear();
-        this.requested = null;
-        this.plan = null;
+        // Host finishes the old active goal through the dispatcher before the new catalogue is
+        // installed, so keep the old map alive until plannerSetGoals returns.
+        context().host.api.planning.plannerSetGoals(this.id, metadata);
+        this.goalsValue = goals.slice();
+        this.goalsById.clear();
+        for (const goal of goals) {
+            this.goalsById.set(goal.id, goal);
+        }
+        this.activePlan = null;
     }
 
     /** Forces one goal on the next eligible tick, bypassing its score. */
-    request(id: string, view: NpcView, untilMs = 30_000): void {
-        if (!this.goals.some(goal => goal.id === id)) return;
-        this.requested = { id, until: this.clock() + untilMs };
+    request(id: string, _view: NpcView, untilMs = 30_000): void {
+        if (!this.goalsById.has(id)) return;
+        context().host.api.planning.plannerRequest(this.id, id, this.clock() + untilMs);
     }
 
-    /** Drops active state and cooldowns; goals stay installed. */
     reset(): void {
-        if (this.active !== null) {
-            this.finish("preempted", this.clock());
-        }
-
-        this.cooldownUntil.clear();
-        this.requested = null;
-        this.plan = null;
+        context().host.api.planning.plannerReset(this.id);
+        this.activePlan = null;
     }
 
     tick(view: NpcView, now = this.clock()): string | null {
-        this.lastView = view;
-        if (this.active !== null && now - this.lastReplan >= this.replanMs) {
-            this.maybePreempt(view, now);
-        }
+        return context().host.api.planning.plannerTick(this.id, view, now);
+    }
 
-        if (this.active === null) {
-            this.select(view, now);
-        }
-
-        this.lastReplan = now;
-        if (this.active === null) {
-            return null;
-        }
-
-        this.plan?.tick(view, now);
-        const goal = this.active;
-        const context = this.context(view, goal, now);
-        const status = goal.tick(context);
-        if (status !== "running") {
-            this.finish(status, now);
-        }
-
-        return goal.id;
+    /** Scored goals that currently pass eligibility, cooldown and the plugin threshold. */
+    candidates(view: NpcView, now = this.clock()): readonly GoalCandidate[] {
+        const raw = context().host.api.planning.plannerCandidates(this.id, view, now) as {
+            goal: string;
+            score: number;
+        }[];
+        return raw
+            .map(candidate => {
+                const goal = this.goalsById.get(candidate.goal);
+                return goal === undefined ? null : { goal, score: candidate.score };
+            })
+            .filter((candidate): candidate is GoalCandidate => candidate !== null);
     }
 
     dispose(): void {
-        this.reset();
-        this.goals = [];
+        context().host.api.planning.plannerDispose(this.id);
+        this.goalsValue = [];
+        this.goalsById.clear();
+        this.activePlan = null;
     }
 
-    private maybePreempt(view: NpcView, now: number): void {
-        const current = this.active!;
-        const candidate = this.best(view, now, current.id);
-        if (candidate === null || candidate.goal.id === current.id) {
-            return;
-        }
-
-        if (now - this.activeSince < (current.commitMs ?? 0) && candidate.goal.urgent !== true) {
-            return;
-        }
-
-        const margin = current.hysteresis ?? 0;
-        const currentScore = current.score(view);
-        if (candidate.score > currentScore + margin) {
-            this.debug?.(
-                `preempt ${current.id}=${currentScore.toFixed(1)} -> ` +
-                    `${candidate.goal.id}=${candidate.score.toFixed(1)}`
-            );
-            this.finish("preempted", now);
-        }
-    }
-
-    private select(view: NpcView, now: number): void {
-        const requested = this.requested;
-        if (requested !== null) {
-            if (now > requested.until) {
-                this.requested = null;
-            } else {
-                const goal = this.goals.find(candidate => candidate.id === requested.id);
-                if (goal !== undefined && (goal.eligible?.(view) ?? true)) {
-                    this.start(goal, view, now);
-                    return;
+    private dispatch(kind: string, args: unknown[]): unknown {
+        switch (kind) {
+            case "score": {
+                const goal = this.goal(args[0]);
+                return goal?.score(args[1] as NpcView);
+            }
+            case "eligible": {
+                const goal = this.goal(args[0]);
+                return goal?.eligible?.(args[1] as NpcView) ?? true;
+            }
+            case "enter": {
+                const goal = this.goal(args[0]);
+                if (goal === undefined) return undefined;
+                this.activePlan = null;
+                goal.enter?.(this.goalContext(goal, args));
+                return undefined;
+            }
+            case "tick": {
+                const goal = this.goal(args[0]);
+                return goal?.tick?.(this.goalContext(goal, args)) ?? "running";
+            }
+            case "exit": {
+                const goal = this.goal(args[0]);
+                if (goal === undefined) return undefined;
+                try {
+                    goal.exit?.(this.goalContext(goal, args, args[3] as GoalExitReason), args[3] as GoalExitReason);
+                } finally {
+                    this.activePlan = null;
                 }
+                return undefined;
             }
-        }
-
-        const candidate = this.choose(view, now);
-        if (candidate === null) {
-            return;
-        }
-
-        this.start(candidate.goal, view, now);
-    }
-
-    /**
-     * Scored goals that currently pass eligibility, cooldown and the plugin threshold. This is the
-     * central "what can be done now" view; it never mutates selection state.
-     */
-    candidates(view: NpcView, now = this.clock()): readonly GoalCandidate[] {
-        return this.collectCandidates(view, now, null);
-    }
-
-    private choose(view: NpcView, now: number): GoalCandidate | null {
-        const candidates = this.collectCandidates(view, now, null);
-        if (candidates.length === 0) {
-            return null;
-        }
-
-        if (this.selectPolicy !== undefined) {
-            const selected = this.selectPolicy(candidates, view, now);
-            if (selected === null) {
-                return null;
+            case "select": {
+                if (this.selectPolicy === undefined) return null;
+                const raw = args[0] as { goal: string; score: number }[];
+                const candidates = raw
+                    .map(candidate => {
+                        const goal = this.goalsById.get(candidate.goal);
+                        return goal === undefined ? null : { goal, score: candidate.score };
+                    })
+                    .filter((candidate): candidate is GoalCandidate => candidate !== null);
+                return this.selectPolicy(candidates, args[1] as NpcView, args[2] as number)?.goal.id ?? null;
             }
-
-            return candidates.find(candidate => candidate.goal === selected.goal) ?? null;
-        }
-
-        return this.highest(candidates);
-    }
-
-    private collectCandidates(view: NpcView, now: number, exclude: string | null): GoalCandidate[] {
-        const candidates: GoalCandidate[] = [];
-        for (const goal of this.goals) {
-            if (goal.id === exclude) continue;
-            if ((this.cooldownUntil.get(goal.id) ?? 0) > now) continue;
-            if (!(goal.eligible?.(view) ?? true)) continue;
-
-            const score = goal.score(view);
-            if (!Number.isFinite(score) || score <= this.threshold) continue;
-            candidates.push({ goal, score });
-        }
-
-        return candidates;
-    }
-
-    private best(view: NpcView, now: number, exclude: string | null): GoalCandidate | null {
-        return this.highest(this.collectCandidates(view, now, exclude));
-    }
-
-    private highest(candidates: readonly GoalCandidate[]): GoalCandidate | null {
-        let best: GoalCandidate | null = null;
-        for (const candidate of candidates) {
-            if (best === null || candidate.score > best.score) {
-                best = candidate;
-            }
-        }
-
-        return best;
-    }
-
-    private start(goal: Goal, view: NpcView, now: number): void {
-        this.plan = null;
-        this.active = goal;
-        this.activeSince = now;
-        this.lastReplan = now;
-        this.requested = null;
-        const context = this.context(view, goal, now);
-        try {
-            goal.enter?.(context);
-        } catch (error) {
-            this.log?.(`goal '${goal.id}' enter failed: ${String(error)}`);
-            this.finish("failure", now);
+            case "debug":
+                this.debug?.(String(args[0] ?? ""));
+                return undefined;
+            case "log":
+                this.log?.(String(args[0] ?? ""));
+                return undefined;
+            default:
+                return undefined;
         }
     }
 
-    private finish(reason: GoalExitReason, now: number): void {
-        const goal = this.active;
-        if (goal === null) {
-            return;
-        }
-
-        const view = this.lastView;
-        this.active = null;
-        if (goal.cooldownMs !== undefined && goal.cooldownMs > 0) {
-            this.cooldownUntil.set(goal.id, now + goal.cooldownMs);
-        }
-
-        if (goal.exit !== undefined && view !== null) {
-            try {
-                goal.exit(this.context(view, goal, now), reason);
-            } catch (error) {
-                this.log?.(`goal '${goal.id}' exit failed: ${String(error)}`);
-            }
-        }
-
-        this.plan?.cancel("goal-finished");
-        this.plan = null;
+    private goal(id: unknown): Goal | undefined {
+        return typeof id === "string" ? this.goalsById.get(id) : undefined;
     }
 
-    private context(view: NpcView, goal: Goal, now: number): GoalContext {
-        const actor = this.actor;
+    private goalContext(goal: Goal, args: unknown[], exitReason?: GoalExitReason): GoalContext {
+        const view = args[1] as NpcView;
+        const now = args[2] as number;
+        const planStatus = (args[4] as PlanStatus | null | undefined) ?? null;
+        const planReason = (args[5] as string | null | undefined) ?? null;
         const planner = this;
         return {
             view,
-            actor,
+            actor: this.actor,
             now,
             goal: goal.id,
-            get planStatus() {
-                return planner.plan?.planStatus ?? null;
-            },
-            get planReason() {
-                return planner.plan?.reason ?? null;
-            },
+            planStatus,
+            planReason,
             log: message => this.log?.(`[${goal.id}] ${message}`),
-            moveTo: (x, y, z, run = false) => actor.moveTo(x, y, z, run),
-            wait: seconds => actor.wait(seconds),
-            face: id => actor.face(id),
-            pick: id => actor.pick(id),
+            moveTo: (x, y, z, run = false) => this.actor.moveTo(x, y, z, run),
+            wait: seconds => this.actor.wait(seconds),
+            face: id => this.actor.face(id),
+            pick: id => this.actor.pick(id),
             interact: (id, options = {}) => {
-                if (actor.interact === undefined) {
+                if (this.actor.interact === undefined) {
                     return { ok: false, reason: "unsupported", verb: options.verb ?? "", count: 0 };
                 }
 
-                return actor.interact(id, options);
+                return this.actor.interact(id, options);
             },
             affordances: id => {
-                if (actor.affordances === undefined) {
+                if (this.actor.affordances === undefined) {
                     return {
                         id,
                         kind: "",
@@ -412,16 +359,26 @@ export class Planner {
                     };
                 }
 
-                return actor.affordances(id);
+                return this.actor.affordances(id);
             },
             run: (steps, options = {}) => {
-                planner.plan?.cancel("replaced");
-                planner.plan = new Plan(actor, steps, options, planner.clock);
-                return planner.plan;
+                const planId = context().host.api.planning.planCreate(
+                    this.actor,
+                    steps,
+                    options,
+                    stepDispatch(this.actor, options) as unknown as (...values: unknown[]) => unknown
+                );
+                context().host.api.planning.plannerSetPlan(this.id, planId);
+                const handle = new PlanHandle(planId);
+                this.activePlan = handle;
+                return handle;
             },
             cancelPlan: reason => {
-                planner.plan?.cancel(reason);
-                planner.plan = null;
+                if (this.activePlan !== null) {
+                    this.activePlan.cancel(reason);
+                    this.activePlan = null;
+                }
+                context().host.api.planning.plannerSetPlan(this.id, null);
             },
             sense: id => nearestSense(view, id)
         };
@@ -455,6 +412,7 @@ type StepBase = { timeoutMs?: number; retry?: RetryOptions };
 
 export interface HarvestStep {
     target: string;
+    /** Approach into range first. Default true. */
     approach?: boolean | { distance?: number; run?: boolean };
 }
 
@@ -482,248 +440,84 @@ export type Step = StepBase &
         | { action: string; config?: unknown }
     );
 
-type Awaiting = {
-    kind: string;
-    pausedAt: number | null;
-};
+export class PlanHandle {
+    readonly id: string;
 
-export class Plan {
-    private readonly actor: PlannerActor;
-    private readonly steps: Step[];
-    private readonly options: PlanOptions;
-    private readonly clock: () => number;
-    private readonly registry: ActionRegistry;
-    private readonly state: Record<string, unknown> = {};
-    private local: Record<string, unknown> = {};
-    private index = 0;
-    private status: PlanStatus = "idle";
-    private reasonValue: string | null = null;
-    private startedAt = 0;
-    private stepStartedAt = 0;
-    private retries = 0;
-    private retryAt = 0;
-    private awaiting: Awaiting | null = null;
-    private settlement: ActionSettlement | null = null;
-
-    constructor(
-        actor: PlannerActor,
-        steps: Step[],
-        options: PlanOptions = {},
-        clock: () => number = () => Date.now(),
-        registry: ActionRegistry = actions
-    ) {
-        this.actor = actor;
-        this.steps = steps;
-        this.options = options;
-        this.clock = clock;
-        this.registry = registry;
+    constructor(id: string) {
+        this.id = id;
     }
 
     get stepIndex(): number {
-        return this.index;
+        return context().host.api.planning.planStepIndex(this.id);
     }
 
     get planStatus(): PlanStatus {
-        return this.status;
+        return context().host.api.planning.planStatus(this.id) as PlanStatus;
     }
 
     get reason(): string | null {
-        return this.reasonValue;
+        return context().host.api.planning.planReason(this.id);
     }
 
-    tick(view: NpcView, now = this.clock()): PlanStatus {
-        if (this.status === "idle") {
-            this.status = "running";
-            this.startedAt = now;
-            this.stepStartedAt = now;
-        }
-
-        if (this.status !== "running") {
-            return this.status;
-        }
-
-        if (this.options.timeoutMs !== undefined && now - this.startedAt > this.options.timeoutMs) {
-            return this.fail("plan-timeout", now);
-        }
-
-        if (now < this.retryAt) {
-            return this.status;
-        }
-
-        const step = this.steps[this.index];
-        if (step === undefined) {
-            this.status = "success";
-            return this.status;
-        }
-
-        if (step.timeoutMs !== undefined && now - this.stepStartedAt > step.timeoutMs) {
-            return this.fail("step-timeout", now);
-        }
-
-        this.pollAwaiting(view, now);
-        const action = this.resolve(step);
-        if (action === null) {
-            return this.fail("unknown-action", now);
-        }
-
-        const context = this.context(view, now);
-        const outcome = action.handler.tick(context, action.config);
-        return this.apply(outcome, now);
+    /** Advances the native plan. Called by the owning Planner. */
+    tick(view: NpcView, now: number): PlanStatus {
+        return context().host.api.planning.planTick(this.id, view, now).status;
     }
 
     cancel(reason = "cancelled"): void {
-        if (this.status === "success" || this.status === "failure" || this.status === "cancelled") {
-            return;
-        }
-
-        this.status = "cancelled";
-        this.reasonValue = reason;
-        this.awaiting = null;
-        this.settlement = null;
+        context().host.api.planning.planCancel(this.id, reason);
     }
 
-    private pollAwaiting(view: NpcView, now: number): void {
-        if (this.awaiting === null) {
-            return;
-        }
-
-        const action = view.action;
-        if (action === null) {
-            return;
-        }
-
-        if (action.kind !== this.awaiting.kind) {
-            this.settlement = { kind: this.awaiting.kind, status: "cancelled", reason: "superseded" };
-            return;
-        }
-
-        if (action.status === "arrived" || action.status === "failed" || action.status === "cancelled") {
-            this.settlement = { kind: action.kind, status: action.status, reason: action.reason };
-            return;
-        }
-
-        if (action.status === "paused") {
-            if (this.awaiting.pausedAt === null) {
-                this.awaiting.pausedAt = now;
-            }
-
-            if (this.options.pauseGraceMs !== undefined && now - this.awaiting.pausedAt > this.options.pauseGraceMs) {
-                this.settlement = { kind: action.kind, status: "failed", reason: action.reason ?? "paused" };
-            }
-
-            return;
-        }
-
-        this.awaiting.pausedAt = null;
+    release(): void {
+        context().host.api.planning.planRelease(this.id);
     }
+}
 
-    private resolve(step: Step): { handler: ActionHandler<unknown>; config: unknown } | null {
-        for (const key of Object.keys(step)) {
-            if (key === "timeoutMs" || key === "retry") continue;
-            if (this.registry.has(key)) {
-                return { handler: this.registry.get(key)!, config: step };
-            }
+/** Compatibility alias. Plans are created by `GoalContext.run`; they are no longer constructible. */
+export type Plan = PlanHandle;
+
+export function stepDispatch(actor: PlannerActor, options: PlanOptions) {
+    return (
+        _kind: string,
+        step: Step,
+        view: NpcView,
+        now: number,
+        state: Record<string, unknown>,
+        local: Record<string, unknown>
+    ): ActionOutcome => {
+        const resolved = resolveAction(step);
+        if (resolved === null) {
+            return { status: "failure", reason: "unknown-action" };
         }
 
-        if ("action" in step && this.registry.has(step.action)) {
-            return { handler: this.registry.get(step.action)!, config: step.config };
-        }
-
-        return null;
-    }
-
-    private context(view: NpcView, now: number): ActionContext {
-        const plan = this;
-        return {
+        const contextValue: ActionContext = {
             view,
-            actor: this.actor,
+            actor,
             now,
-            state: this.state,
-            local: this.local,
-            inventory: this.options.inventory ?? null,
-            craft: this.options.craft ?? null,
-            get awaiting() {
-                return plan.awaiting !== null;
-            },
-            log: message => this.options.log?.(`step ${this.index}: ${message}`),
-            sense: id => nearestSense(view, id),
-            issue: (kind, issue) => {
-                const result = issue();
-                if (result !== undefined && !result.ok) {
-                    return result;
-                }
-
-                this.awaiting = { kind, pausedAt: null };
-                return result;
-            },
-            takeSettled: () => {
-                const settlement = this.settlement;
-                if (settlement === null) {
-                    return null;
-                }
-
-                this.settlement = null;
-                this.awaiting = null;
-                return settlement;
-            }
+            state,
+            local,
+            inventory: options.inventory ?? null,
+            craft: options.craft ?? null,
+            log: message => options.log?.(message),
+            sense: id => nearestSense(view, id)
         };
-    }
+        return resolved.handler.tick(contextValue, resolved.config);
+    };
+}
 
-    private apply(outcome: ActionOutcome, now: number): PlanStatus {
-        if (outcome === "running") {
-            return this.status;
-        }
-
-        if (outcome === "success") {
-            this.advance(now);
-            return this.status;
-        }
-
-        if (outcome === "failure") {
-            return this.fail("action-failed", now);
-        }
-
-        if (outcome.status === "success") {
-            this.advance(now);
-        } else if (outcome.status === "failure") {
-            return this.fail(outcome.reason ?? "action-failed", now);
-        }
-
-        return this.status;
-    }
-
-    private advance(now: number): void {
-        this.index++;
-        this.stepStartedAt = now;
-        this.retries = 0;
-        this.local = {};
-        this.awaiting = null;
-        this.settlement = null;
-        if (this.index >= this.steps.length) {
-            this.status = "success";
+function resolveAction(step: Step): { handler: ActionHandler<unknown>; config: unknown } | null {
+    for (const key of Object.keys(step)) {
+        if (key === "timeoutMs" || key === "retry") continue;
+        if (actions.has(key)) {
+            return { handler: actions.get(key)!, config: step };
         }
     }
 
-    private fail(reason: string, now: number): PlanStatus {
-        const step = this.steps[this.index];
-        const retry = step?.retry;
-        if (retry !== undefined && this.retries < retry.attempts) {
-            this.retries++;
-            this.retryAt = now + (retry.delayMs ?? 0);
-            this.stepStartedAt = now;
-            this.local = {};
-            this.awaiting = null;
-            this.settlement = null;
-            return this.status;
-        }
-
-        this.status = "failure";
-        this.reasonValue = reason;
-        this.awaiting = null;
-        this.settlement = null;
-        this.options.log?.(`step ${this.index} failed: ${reason}`);
-        return this.status;
+    if ("action" in step && actions.has(step.action)) {
+        return { handler: actions.get(step.action)!, config: step.config };
     }
+
+    return null;
 }
 
 function nearestSense(view: NpcView, id: string): NpcSensed | null {

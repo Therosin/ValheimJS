@@ -18,21 +18,12 @@ import {
 } from "../../../sdk/index";
 import type { Inventory } from "../../../sdk/api/generated";
 import { compileBehaviours } from "../lib/behaviours";
-import type { BehaviorOutcome, BehaviorRuntime } from "../lib/behaviour";
 import { VillagerRuntime } from "../lib/villager";
 import {
     createVillagerAI,
     profileFor,
     type VillagerActivity
 } from "../definitions";
-
-const runtime: BehaviorRuntime = {
-    instantiate: (treeId, options) => ai.instantiate(treeId, options),
-    tick: (instanceId, deltaTime) => ai.tick(instanceId, deltaTime).status as BehaviorOutcome | "cancelled",
-    release: instanceId => {
-        ai.release(instanceId);
-    }
-};
 
 /** `home=x,y,z` keeps the villagers alive on a dedicated server with no players. */
 function configuredHome(config: (key: string) => string | null): NpcPos | null {
@@ -233,7 +224,6 @@ function makeVillager(trees: Record<VillagerActivity, string>, debug: boolean) {
             const profile = profileFor(this.name);
             const villager = new VillagerRuntime({
                 actor: this,
-                runtime,
                 home: view.home,
                 memory: npc.memory(this),
                 needs: profile.needs,

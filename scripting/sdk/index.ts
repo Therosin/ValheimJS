@@ -51,7 +51,8 @@ export {
 } from "./npc";
 export { ai, type AiActionOutcome, type AiContext, type AiInstantiateOptions, type AiLoadOptions, type AiStatus, type AiTickResult, type BlackboardChangeHandler, type BlackboardSignalHandler, type BoardMiddlewareHandler, type BoardOperationContext, BoardMembership, BoardScope, BoardSubscription } from "./ai";
 export {
-    Plan,
+    type Plan,
+    type PlanHandle,
     Planner,
     registerAction,
     ActionRegistry,
@@ -60,6 +61,9 @@ export {
     type ActionHandler,
     type ActionOutcome,
     type ActionResultLike,
+    type BehaviourActionContext,
+    type BehaviourGoalOptions,
+    type BehaviourOutcome,
     type Goal,
     type GoalCandidate,
     type GoalContext,

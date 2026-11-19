@@ -404,6 +404,7 @@ internal static class NpcInteraction
             return NpcInteractionResult.Fail("body-lost", verb);
         }
 
+        VjsInventory.EquipBestFor(humanoid, tree != null || log != null ? "chop" : "pickaxe");
         var tool = humanoid.RightItem;
         if (tool == null || (tool.m_shared.m_useDurability && tool.m_durability <= 0f))
         {

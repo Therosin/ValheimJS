@@ -140,7 +140,8 @@ internal sealed class VjsBodyStats : MonoBehaviour
         }
 
         var initialized = _zdo.GetBool(WorldKeys.InventoryInitialized, false);
-        var hasSaved = _zdo.GetString(WorldKeys.Inventory, out var saved) && !string.IsNullOrEmpty(saved);
+        var hasSaved = (_zdo.GetString(WorldKeys.InventoryBlob, out var blob) && !string.IsNullOrEmpty(blob)) ||
+                       (_zdo.GetString(WorldKeys.Inventory, out var saved) && !string.IsNullOrEmpty(saved));
         VjsInventory.Restore(_humanoid, _zdo);
         if (!initialized)
         {
@@ -160,16 +161,9 @@ internal sealed class VjsBodyStats : MonoBehaviour
             VjsInventory.Save(_humanoid, _zdo);
         }
 
-        if (!HasEquippedWeapon(_humanoid))
-        {
-            VjsInventory.EquipFirstWeapon(_humanoid);
-            VjsInventory.Save(_humanoid, _zdo);
-        }
+        VjsInventory.EquipBestFor(_humanoid, null);
+        VjsInventory.Save(_humanoid, _zdo);
     }
-
-    private static bool HasEquippedWeapon(Humanoid humanoid) =>
-        (humanoid.RightItem != null && humanoid.RightItem.IsWeapon()) ||
-        (humanoid.LeftItem != null && humanoid.LeftItem.IsWeapon());
 
     private void Update()
     {
@@ -406,10 +400,19 @@ internal sealed class VjsBodyStats : MonoBehaviour
             _stamina -= SwimStaminaDrain * dt;
             draining = true;
         }
-        else if (speed > Mathf.Max(0.1f, _humanoid.m_walkSpeed * 1.05f))
+        else
         {
-            _stamina -= RunStaminaDrain * dt;
-            draining = true;
+            // Companions uses the midpoint of walk/run speed (or Character.IsRunning) before
+            // charging stamina. Using m_walkSpeed alone treats ordinary pathing as sprinting and
+            // prevents NPCs from ever recovering while travelling.
+            var runThreshold = (_character.m_speed + _character.m_runSpeed) * 0.5f;
+            var running = _character.IsRunning() ||
+                (speed > Mathf.Max(0.5f, runThreshold) && _character.IsOnGround());
+            if (running && speed > 0.1f)
+            {
+                _stamina -= RunStaminaDrain * dt;
+                draining = true;
+            }
         }
 
         if (draining)

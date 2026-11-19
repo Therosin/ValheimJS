@@ -25,6 +25,9 @@
     <Compile Include="..\src\Entities\NpcInventoryPayload.cs" LinkBase="Shared\Entities" />
     <Compile Include="..\src\AI\AiSenses.cs" LinkBase="Shared\AI" />
     <Compile Include="..\src\AI\AiNative.cs" LinkBase="Shared\AI" />
+    <Compile Include="..\src\AI\BehaviourService.cs" LinkBase="Shared\AI" />
+    <Compile Include="..\src\Planning\**\*.cs" LinkBase="Shared\Planning" />
+    <Compile Include="..\src\Bindings\PlanningBindings.cs" LinkBase="Shared\Bindings" />
     <Compile Include="..\src\Core\Ui\UiCompiler.cs" LinkBase="Shared\Core\Ui" />
     <Compile Include="..\src\Core\Networking.cs" LinkBase="Shared\Core" />
     <Compile Include="..\src\Core\NetworkSync.cs" LinkBase="Shared\Core" />

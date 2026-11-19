@@ -237,6 +237,15 @@ internal sealed class VjsNpcAI : BaseAI
             return false;
         }
 
+        var inventoryUi = GetComponent<NpcInventoryUi>();
+        if (inventoryUi != null && inventoryUi.IsLocked)
+        {
+            // Freeze the body but keep its intent/status alive. Settling the action here would
+            // leave the scripted plan waiting for a native outcome that never arrives.
+            StopMoving();
+            return false;
+        }
+
         ApplyName();
         if (!base.UpdateAI(dt))
         {

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Planning: C# owns plan cursors, retries, timeouts, native action settlement, goal selection,
+  cooldowns, preemption and utility selection/feedback/prerequisites. JS keeps goal callbacks,
+  `PlanHandle`, and plugin actions.
+- Behaviour goals: goals can declare `behaviour: { tree, state, action, condition, exec }`; the
+  shared C# behaviour service instantiates and releases the tree. Life-demo no longer owns a tree
+  lifecycle.
+- Breaking: `new Plan(...)` is replaced by `ctx.run(...)` returning `PlanHandle`. `follow` and
+  implicit `approach` semantics are preserved; `interact`/`harvest` approach by default.
 - NPC lifecycle: goal `commitMs` and `urgent` preemption semantics.
 - Resource intents: bridge-authoritative reservations with per-actor ownership and TTL.
 - Collection: `target-missing` / `not-loaded` revalidation, loading hold and retry.

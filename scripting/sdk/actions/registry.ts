@@ -1,7 +1,7 @@
 import type { CraftResult, NpcAffordances, NpcInteractOptions, NpcInteractionResult, NpcSensed, NpcView } from "../api/types";
 
 /**
- * Action registry for `Plan` steps.
+ * Action registry for JS-dispatched plan steps.
  *
  * Built-in actions live in `sdk/actions/*` and register here. Plugins can register their own with
  * `registerAction` and use them as `{ action: "name", config: ... }` steps. The planner only
@@ -47,12 +47,6 @@ export type ActionOutcome =
     | ActionStatus
     | { status: ActionStatus; reason?: string };
 
-export interface ActionSettlement {
-    kind: string;
-    status: "arrived" | "failed" | "cancelled";
-    reason: string | null;
-}
-
 export interface ActionContext {
     readonly view: NpcView;
     readonly actor: PlannerActor;
@@ -65,17 +59,8 @@ export interface ActionContext {
     readonly inventory: InventoryActions | null;
     /** Crafting function supplied to the plan, or null. */
     readonly craft: ((recipe: string) => CraftResult) | null;
-    /** True while a native action issued through `issue` has not settled. */
-    readonly awaiting: boolean;
     log(message: string): void;
     sense(id: string): NpcSensed | null;
-    /**
-     * Issues one native action and tracks it. Returns the immediate acceptance result; settlement
-     * is read with `takeSettled`.
-     */
-    issue(kind: string, issue: () => ActionResultLike | undefined): ActionResultLike | undefined;
-    /** Last terminal action result, consumed once. */
-    takeSettled(): ActionSettlement | null;
 }
 
 export interface ActionHandler<TConfig = unknown> {
@@ -110,7 +95,7 @@ export class ActionRegistry {
     }
 }
 
-/** Default registry used by `Plan` and `Planner`. */
+/** Default registry used by plan/utility dispatch. */
 export const actions = new ActionRegistry();
 
 /** Registers a plugin action in the default registry. */

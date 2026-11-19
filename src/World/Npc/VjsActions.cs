@@ -96,6 +96,9 @@ internal static class VjsActions
 
         if (humanoid.Pickup(instance, autoequip: false, autoPickupDelay: false))
         {
+            // Only switch when the picked-up item improves the current hand; this is a
+            // pickup-time comparison, not a per-tick equipment pass.
+            VjsInventory.EquipBestFor(humanoid, null);
             return true;
         }
 

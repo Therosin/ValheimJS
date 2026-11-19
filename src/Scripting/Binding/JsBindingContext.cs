@@ -23,6 +23,7 @@ public sealed class JsBindingContext : IDisposable
     private readonly Func<bool>? _worldReady;
     private Scripting.Types.JsTypeRegistry? _types;
     private Jint.Engine? _engine;
+    private ValheimJS.AI.BehaviourService? _behaviours;
 
     public JsBindingContext(
         ProcessSide side,
@@ -79,6 +80,10 @@ public sealed class JsBindingContext : IDisposable
 
     /// <summary>Type registry when the runtime attached one; probes may run without it.</summary>
     internal Scripting.Types.JsTypeRegistry? TypesOrNull => _types;
+
+    /// <summary>Shared behaviour tree runtime; bindings must not create their own.</summary>
+    internal ValheimJS.AI.BehaviourService Behaviours =>
+        _behaviours ??= new ValheimJS.AI.BehaviourService(this);
 
     /// <summary>The live Jint engine, for bindings that build native payloads/classes.</summary>
     public Jint.Engine Engine => _engine ?? throw new InvalidOperationException("Engine was not supplied by the runtime.");
@@ -202,6 +207,8 @@ public sealed class JsBindingContext : IDisposable
         }
 
         _binders.Clear();
+        _behaviours?.Dispose();
+        _behaviours = null;
         lock (_gate)
         {
             _posted.Clear();

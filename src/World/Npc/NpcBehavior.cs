@@ -402,7 +402,15 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
     {
         var ai = obj.AI;
         SyncFromBody(obj);
+        if (command == "attack" && obj.Character is Humanoid attacker)
+        {
+            VjsInventory.EquipBestFor(attacker, "attack");
+        }
+
         var now = GameNow();
+        // A command can replace the intent immediately. Invalidate the perception cache so the
+        // caller observes the new action instead of the previous move/arrival snapshot.
+        _perceptionAt = -1f;
         switch (command)
         {
             case "moveTo" when args.Length >= 3:
@@ -753,7 +761,7 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
             entry.InRange = true;
             entry.LastSeenAt = _now;
             entry.SeenCount++;
-            DescribeCharacter(entry);
+            DescribeCharacter(entry, live);
 
             if (audible && !wasAudible)
             {
@@ -1071,7 +1079,7 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
         return distance <= 0.01f || !Physics.Raycast(eye, delta / distance, distance, ViewBlockMask);
     }
 
-    private static void DescribeCharacter(NpcSensedEntity entry)
+    private static void DescribeCharacter(NpcSensedEntity entry, Character? live)
     {
         ResetFacts(entry);
         AddTag(entry, "character");
@@ -1082,9 +1090,29 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
         AddVerb(entry, "attack");
         AddVerb(entry, "face");
         entry.Usable = true;
+        entry.Equipment = live is Humanoid humanoid ? EquipmentInfo(humanoid) : null;
     }
 
-    private static void DescribeObject(
+    private static NpcEquipmentInfo EquipmentInfo(Humanoid humanoid)
+    {
+        var equipment = VjsInventory.Equipment(humanoid);
+        return new NpcEquipmentInfo
+        {
+            Right = ItemInfoOrNull(equipment.GetValueOrDefault("right")),
+            Left = ItemInfoOrNull(equipment.GetValueOrDefault("left")),
+            Helmet = ItemInfoOrNull(equipment.GetValueOrDefault("helmet")),
+            Chest = ItemInfoOrNull(equipment.GetValueOrDefault("chest")),
+            Legs = ItemInfoOrNull(equipment.GetValueOrDefault("legs")),
+            Shoulder = ItemInfoOrNull(equipment.GetValueOrDefault("shoulder")),
+            Utility = ItemInfoOrNull(equipment.GetValueOrDefault("utility")),
+            Trinket = ItemInfoOrNull(equipment.GetValueOrDefault("trinket"))
+        };
+    }
+
+    private static NpcItemInfo? ItemInfoOrNull(ItemDrop.ItemData? item) =>
+        item?.m_shared == null ? null : ItemInfo(item);
+
+    private void DescribeObject(
         NpcSensedEntity entry,
         WorldObject actor,
         string kind,
@@ -1135,6 +1163,7 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
                 AddTag(entry, "storage");
                 AddVerb(entry, "store");
                 AddVerb(entry, "take");
+                entry.Container = ContainerInfo(entry, live, prefab);
                 break;
 
             case "smelter":
@@ -1186,11 +1215,14 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
             entry.Gives.Add(itemPrefab.name);
         }
 
-        var shared = itemPrefab.GetComponent<ItemDrop>()?.m_itemData.m_shared;
+        var data = itemPrefab.GetComponent<ItemDrop>()?.m_itemData;
+        var shared = data?.m_shared;
         if (shared == null)
         {
             return;
         }
+
+        entry.Item = ItemInfo(data!);
 
         var name = itemPrefab.name;
         if (shared.m_food > 0f || shared.m_foodStamina > 0f || shared.m_foodEitr > 0f)
@@ -1240,6 +1272,146 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
             AddTag(entry, "metal");
         }
     }
+
+    private NpcContainerInfo ContainerInfo(NpcSensedEntity entry, GameObject? live, GameObject prefab)
+    {
+        if (_now - entry.ContainerScannedAt < 2d && entry.Container != null)
+        {
+            return entry.Container;
+        }
+
+        entry.ContainerScannedAt = _now;
+        var container = (live != null ? live.GetComponent<Container>() : null) ??
+                        prefab.GetComponent<Container>();
+        var inventory = container?.GetInventory();
+        var info = new NpcContainerInfo { Available = inventory != null };
+        if (inventory == null)
+        {
+            return info;
+        }
+
+        info.Slots = inventory.GetWidth() * inventory.GetHeight();
+        info.ItemCount = inventory.NrOfItems();
+        info.FreeSlots = Mathf.Max(0, info.Slots - info.ItemCount);
+        info.Weight = inventory.GetTotalWeight();
+        var bestFoodScore = 0f;
+        foreach (var item in inventory.GetAllItems())
+        {
+            if (item?.m_shared == null) continue;
+            AddContainerCategory(info, VjsInventory.Kind(item), item.m_stack);
+            var prefabName = VjsInventory.PrefabName(item);
+            if (!string.IsNullOrWhiteSpace(prefabName))
+            {
+                info.Prefabs.TryGetValue(prefabName, out var prefabAmount);
+                info.Prefabs[prefabName] = prefabAmount + item.m_stack;
+            }
+
+            var name = item.m_shared.m_name;
+            if (item.m_shared.m_food > 0f || item.m_shared.m_foodStamina > 0f || item.m_shared.m_foodEitr > 0f)
+                AddContainerCategory(info, "food", item.m_stack);
+            if (name is "Wood" or "FineWood" or "RoundLog" or "ElderBark")
+                AddContainerCategory(info, "wood", item.m_stack);
+            if (name.Contains("Stone", StringComparison.OrdinalIgnoreCase))
+                AddContainerCategory(info, "stone", item.m_stack);
+            if (name.EndsWith("Ore", StringComparison.OrdinalIgnoreCase))
+                AddContainerCategory(info, "ore", item.m_stack);
+            if (name.Contains("Ingot", StringComparison.OrdinalIgnoreCase))
+                AddContainerCategory(info, "metal", item.m_stack);
+            if (name.Contains("Seed", StringComparison.OrdinalIgnoreCase))
+                AddContainerCategory(info, "seed", item.m_stack);
+
+            var foodScore = item.m_shared.m_food + item.m_shared.m_foodStamina + item.m_shared.m_foodEitr + item.m_shared.m_foodRegen;
+            if (foodScore > bestFoodScore)
+            {
+                bestFoodScore = foodScore;
+                info.BestFood = ItemInfo(item);
+            }
+        }
+
+        entry.Container = info;
+        return info;
+    }
+
+    private static void AddContainerCategory(NpcContainerInfo info, string kind, int amount)
+    {
+        info.Categories.TryGetValue(kind, out var count);
+        info.Categories[kind] = count + 1;
+        info.Amounts.TryGetValue(kind, out var total);
+        info.Amounts[kind] = total + amount;
+    }
+
+    private static NpcItemInfo ItemInfo(ItemDrop.ItemData data)
+    {
+        var info = new NpcItemInfo
+        {
+            Type = VjsInventory.Kind(data),
+            TypeName = data.m_shared.m_itemType.ToString(),
+            EquipSlot = EquipSlot(data.m_shared.m_itemType),
+            Quality = data.m_quality,
+            MaxQuality = data.m_shared.m_maxQuality,
+            Stack = data.m_stack,
+            MaxStack = data.m_shared.m_maxStackSize,
+            Durability = data.m_durability,
+            MaxDurability = data.GetMaxDurability(),
+            DurabilityRatio = data.GetDurabilityPercentage(),
+            Weight = data.GetWeight(),
+            UnitWeight = data.GetNonStackedWeight(),
+            Armor = data.GetArmor(),
+            ToolTier = data.m_shared.m_toolTier,
+            CanRepair = data.m_shared.m_canBeReparied
+        };
+
+        var damage = data.GetDamage();
+        AddDamage(info, "blunt", damage.m_blunt);
+        AddDamage(info, "slash", damage.m_slash);
+        AddDamage(info, "pierce", damage.m_pierce);
+        AddDamage(info, "chop", damage.m_chop);
+        AddDamage(info, "pickaxe", damage.m_pickaxe);
+        AddDamage(info, "fire", damage.m_fire);
+        AddDamage(info, "frost", damage.m_frost);
+        AddDamage(info, "lightning", damage.m_lightning);
+        AddDamage(info, "poison", damage.m_poison);
+        AddDamage(info, "spirit", damage.m_spirit);
+
+        if (data.m_shared.m_food > 0f || data.m_shared.m_foodStamina > 0f || data.m_shared.m_foodEitr > 0f)
+        {
+            info.IsFood = true;
+            info.Food["health"] = data.m_shared.m_food;
+            info.Food["stamina"] = data.m_shared.m_foodStamina;
+            info.Food["eitr"] = data.m_shared.m_foodEitr;
+            info.Food["burnTime"] = data.m_shared.m_foodBurnTime;
+            info.Food["regen"] = data.m_shared.m_foodRegen;
+        }
+
+        return info;
+    }
+
+    private static void AddDamage(NpcItemInfo info, string key, float value)
+    {
+        if (value > 0f)
+        {
+            info.Damage[key] = value;
+        }
+    }
+
+    private static string EquipSlot(ItemDrop.ItemData.ItemType type) => type switch
+    {
+        ItemDrop.ItemData.ItemType.Helmet => "head",
+        ItemDrop.ItemData.ItemType.Chest => "chest",
+        ItemDrop.ItemData.ItemType.Legs => "legs",
+        ItemDrop.ItemData.ItemType.Shoulder => "shoulder",
+        ItemDrop.ItemData.ItemType.Utility => "utility",
+        ItemDrop.ItemData.ItemType.Trinket => "trinket",
+        ItemDrop.ItemData.ItemType.Shield => "left",
+        ItemDrop.ItemData.ItemType.Ammo => "ammo",
+        ItemDrop.ItemData.ItemType.OneHandedWeapon => "right",
+        ItemDrop.ItemData.ItemType.TwoHandedWeapon => "right",
+        ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft => "left",
+        ItemDrop.ItemData.ItemType.Bow => "right",
+        ItemDrop.ItemData.ItemType.Torch => "right",
+        ItemDrop.ItemData.ItemType.Tool => "right",
+        _ => ""
+    };
 
     private static void AddDrops(NpcSensedEntity entry, DropTable? table)
     {

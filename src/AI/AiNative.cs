@@ -10,23 +10,25 @@ namespace ValheimJS.AI;
 /// </summary>
 internal readonly struct AiNativeResult
 {
-    internal AiNativeResult(bool handled, bool success, object? output, bool running = false)
+    internal AiNativeResult(bool handled, bool success, object? output, bool running = false, bool paused = false)
     {
         Handled = handled;
         Success = success;
         Output = output;
         Running = running;
+        Paused = paused;
     }
 
     internal bool Handled { get; }
     internal bool Success { get; }
     internal object? Output { get; }
     internal bool Running { get; }
+    internal bool Paused { get; }
 
     internal static AiNativeResult NotHandled => new(false, false, null);
     internal static AiNativeResult Ok(object? output = null) => new(true, true, output);
     internal static AiNativeResult Fail(object? output = null) => new(true, false, output);
-    internal static AiNativeResult Pending() => new(true, false, null, true);
+    internal static AiNativeResult Pending(bool paused = false) => new(true, false, null, running: true, paused);
 }
 
 internal delegate AiNativeResult AiNativeAction(

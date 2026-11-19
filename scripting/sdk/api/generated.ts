@@ -3,7 +3,7 @@
 // Do not edit by hand; run `task declarations:check` to verify drift.
 // </auto-generated>
 
-import type { Account, ActionResult, AiTickResult, ChatCommandDefinition, CraftCheck, CraftResult, GameSnapshot, InventoryItem, KeyState, NpcAction, NpcAffordances, NpcEquipment, NpcInteractionResult, NpcSensed, NpcStats, NpcView, PeerInfo, SyncEntity, WorldCharacter, WorldContainer } from "./types";
+import type { Account, ActionResult, AiTickResult, ChatCommandDefinition, CraftCheck, CraftResult, GameSnapshot, InventoryItem, KeyState, NpcAction, NpcAffordances, NpcEquipment, NpcInteractionResult, NpcSensed, NpcStats, NpcView, PeerInfo, PlanTickResult, SyncEntity, WorldCharacter, WorldContainer } from "./types";
 
 /**
  * A ZDO-backed scripted NPC.
@@ -732,6 +732,144 @@ export interface InputApi {
 }
 
 /**
+ * Native plan execution and goal scheduling mechanics.
+ */
+export interface PlanningApi {
+    /**
+     * Compiles a shared behaviour tree for planning goals; returns a tree id.
+     */
+    behaviourCompile(yaml: string, options: unknown): string;
+    /**
+     * Compiles a behaviour YAML file confined to this plugin's folder.
+     */
+    behaviourLoad(relativePath: string, options: unknown): string;
+    /**
+     * Cancels a running plan; terminal plans are unchanged.
+     */
+    planCancel(id: string, reason: string | null): void;
+    /**
+     * Creates a native plan. Steps are advanced by planTick; dispatch handles non-native steps.
+     */
+    planCreate(actor: unknown, steps: unknown, options: unknown, dispatch: (...args: unknown[]) => unknown): string;
+    /**
+     * Terminal plan reason, or null.
+     */
+    planReason(id: string): string | null;
+    /**
+     * Cancels and drops a plan.
+     */
+    planRelease(id: string): boolean;
+    /**
+     * Current plan status.
+     */
+    planStatus(id: string): string;
+    /**
+     * Zero-based step index.
+     */
+    planStepIndex(id: string): number;
+    /**
+     * Advances a plan and returns its current status, reason and step index.
+     */
+    planTick(id: string, view: unknown, now: number): PlanTickResult;
+    /**
+     * Eligible, non-cooled goals with their current scores. Does not mutate selection.
+     */
+    plannerCandidates(id: string, view: unknown, now: number): { goal: string; score: number }[];
+    /**
+     * Creates a host-owned goal scheduler. Goal callbacks cross through dispatch.
+     */
+    plannerCreate(actor: unknown, options: unknown, dispatch: (...args: unknown[]) => unknown): string;
+    /**
+     * The active goal id, or null.
+     */
+    plannerCurrent(id: string): string | null;
+    /**
+     * Milliseconds the active goal has been running.
+     */
+    plannerCurrentElapsedMs(id: string): number;
+    /**
+     * Releases a planner and its active plan.
+     */
+    plannerDispose(id: string): boolean;
+    /**
+     * Forces a known goal on the next eligible tick until an absolute clock value.
+     */
+    plannerRequest(id: string, goalId: string, until: number): void;
+    /**
+     * Drops active state, plan and cooldowns; goals stay installed.
+     */
+    plannerReset(id: string): void;
+    /**
+     * Replaces goal metadata. Goal callbacks remain in JS and are addressed by id.
+     */
+    plannerSetGoals(id: string, goals: unknown): void;
+    /**
+     * Associates the active goal with a plan created by planCreate; null clears it.
+     */
+    plannerSetPlan(id: string, planId: string | null): void;
+    /**
+     * Selects, preempts and ticks the active goal. Returns the active goal id or null.
+     */
+    plannerTick(id: string, view: unknown, now: number): string | null;
+    /**
+     * Goals whose current prerequisites are satisfied.
+     */
+    utilityAvailable(id: string, view: unknown, now: number): { goal: string; score: number }[];
+    /**
+     * Creates a host-owned utility policy over the same goal scheduler.
+     */
+    utilityCreate(actor: unknown, options: unknown, dispatch: (...args: unknown[]) => unknown): string;
+    /**
+     * The active utility goal id, or null.
+     */
+    utilityCurrent(id: string): string | null;
+    /**
+     * Milliseconds the active utility goal has been running.
+     */
+    utilityCurrentElapsedMs(id: string): number;
+    /**
+     * Releases a utility host and its active plan.
+     */
+    utilityDispose(id: string): boolean;
+    /**
+     * The latest settled feedback context, or null.
+     */
+    utilityLastOutcome(id: string): Record<string, unknown> | null;
+    /**
+     * Records an observation while a utility goal is active.
+     */
+    utilityRecord(id: string, name: string, data: unknown, view: unknown): boolean;
+    /**
+     * Forces a known utility goal until an absolute clock value.
+     */
+    utilityRequest(id: string, goalId: string, until: number): void;
+    /**
+     * Drops active state, plan, prerequisites and cooldowns.
+     */
+    utilityReset(id: string): void;
+    /**
+     * Replaces utility goal metadata. Descriptions and rules stay in JS callbacks.
+     */
+    utilitySetGoals(id: string, goals: unknown): void;
+    /**
+     * Associates the active utility goal with a native plan; null clears it.
+     */
+    utilitySetPlan(id: string, planId: string | null): void;
+    /**
+     * Merges partial stats, clamps them and saves through the plugin callback.
+     */
+    utilitySetStats(id: string, stats: unknown): void;
+    /**
+     * Normalized utility stats.
+     */
+    utilityStats(id: string): Record<string, number>;
+    /**
+     * Selects, preempts and ticks the active utility goal.
+     */
+    utilityTick(id: string, view: unknown, now: number): string | null;
+}
+
+/**
  * Authoritative account queries and publisher-owned shared metadata. No account management API.
  */
 export interface AccountServiceApi {
@@ -887,6 +1025,7 @@ export interface Api {
     ai: AiApi;
     /** Availability: client only. */
     input: InputApi;
+    planning: PlanningApi;
     AccountService: AccountServiceApi;
     net: NetApi;
     /** Availability: client only. */

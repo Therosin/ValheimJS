@@ -111,6 +111,106 @@ internal sealed class NpcActionView
     }
 }
 
+
+/// <summary>Native item facts attached to an item/pickable perception entry.</summary>
+internal sealed class NpcItemInfo
+{
+    internal string Type = "";
+    internal string TypeName = "";
+    internal string EquipSlot = "";
+    internal int Quality;
+    internal int MaxQuality;
+    internal int Stack;
+    internal int MaxStack;
+    internal float Durability;
+    internal float MaxDurability;
+    internal float DurabilityRatio;
+    internal float Weight;
+    internal float UnitWeight;
+    internal float Armor;
+    internal int ToolTier;
+    internal bool CanRepair;
+    internal bool IsFood;
+    internal readonly Dictionary<string, double> Damage = new(StringComparer.Ordinal);
+    internal readonly Dictionary<string, double> Food = new(StringComparer.Ordinal);
+
+    internal Dictionary<string, object?> ToPlain() => new()
+    {
+        ["type"] = Type,
+        ["typeName"] = TypeName,
+        ["equipSlot"] = EquipSlot,
+        ["quality"] = Quality,
+        ["maxQuality"] = MaxQuality,
+        ["stack"] = Stack,
+        ["maxStack"] = MaxStack,
+        ["durability"] = Durability,
+        ["maxDurability"] = MaxDurability,
+        ["durabilityRatio"] = DurabilityRatio,
+        ["weight"] = Weight,
+        ["unitWeight"] = UnitWeight,
+        ["armor"] = Armor,
+        ["toolTier"] = ToolTier,
+        ["canRepair"] = CanRepair,
+        ["isFood"] = IsFood,
+        ["damage"] = Damage,
+        ["food"] = Food
+    };
+}
+
+
+/// <summary>Cheap container facts exposed at perception range. Full contents stay opt-in.</summary>
+internal sealed class NpcContainerInfo
+{
+    internal bool Available;
+    internal int Slots;
+    internal int FreeSlots;
+    internal int ItemCount;
+    internal float Weight;
+    internal readonly Dictionary<string, int> Categories = new(StringComparer.Ordinal);
+    internal readonly Dictionary<string, double> Amounts = new(StringComparer.Ordinal);
+    internal readonly Dictionary<string, double> Prefabs = new(StringComparer.Ordinal);
+    internal NpcItemInfo? BestFood;
+
+    internal Dictionary<string, object?> ToPlain(double lastScanned) => new()
+    {
+        ["available"] = Available,
+        ["slots"] = Slots,
+        ["freeSlots"] = FreeSlots,
+        ["itemCount"] = ItemCount,
+        ["weight"] = Weight,
+        ["categories"] = Categories,
+        ["amounts"] = Amounts,
+        ["prefabs"] = Prefabs,
+        ["bestFood"] = BestFood?.ToPlain(),
+        ["lastScanned"] = lastScanned
+    };
+}
+
+/// <summary>Currently equipped items for a sensed character; not its backpack.</summary>
+internal sealed class NpcEquipmentInfo
+{
+    internal NpcItemInfo? Right;
+    internal NpcItemInfo? Left;
+    internal NpcItemInfo? Helmet;
+    internal NpcItemInfo? Chest;
+    internal NpcItemInfo? Legs;
+    internal NpcItemInfo? Shoulder;
+    internal NpcItemInfo? Utility;
+    internal NpcItemInfo? Trinket;
+
+    internal Dictionary<string, object?> ToPlain() => new()
+    {
+        ["right"] = Right?.ToPlain(),
+        ["left"] = Left?.ToPlain(),
+        ["helmet"] = Helmet?.ToPlain(),
+        ["chest"] = Chest?.ToPlain(),
+        ["legs"] = Legs?.ToPlain(),
+        ["shoulder"] = Shoulder?.ToPlain(),
+        ["utility"] = Utility?.ToPlain(),
+        ["trinket"] = Trinket?.ToPlain()
+    };
+}
+
 /// <summary>
 /// One recognized entity in an NPC's perception store. Records persist after the entity leaves
 /// range so behaviours can remember last-known positions, recognition counts and interactions.
@@ -142,6 +242,13 @@ internal sealed class NpcSensedEntity
     internal bool InRange { get; set; }
     internal bool Ready { get; set; }
     internal bool Food { get; set; }
+    /// <summary>Native item facts for item/pickable entries; null for other targets.</summary>
+    internal NpcItemInfo? Item { get; set; }
+    /// <summary>Cheap container summary; full contents require the container inventory accessor.</summary>
+    internal NpcContainerInfo? Container { get; set; }
+    internal double ContainerScannedAt { get; set; } = -1000d;
+    /// <summary>Equipped hand/armor slots for characters; not the character's inventory.</summary>
+    internal NpcEquipmentInfo? Equipment { get; set; }
     /// <summary>Stable lower-case tags projected from the prefab/item data.</summary>
     internal List<string> Tags { get; } = new();
     /// <summary>Verbs this target supports for a scripted body.</summary>
@@ -190,6 +297,9 @@ internal sealed class NpcSensedEntity
             ["inRange"] = InRange,
             ["ready"] = Ready,
             ["food"] = Food,
+            ["item"] = Item?.ToPlain(),
+            ["container"] = Container?.ToPlain(now - ContainerScannedAt),
+            ["equipment"] = Equipment?.ToPlain(),
             ["noise"] = Noise,
             ["audible"] = Audible,
             ["enemy"] = Enemy,

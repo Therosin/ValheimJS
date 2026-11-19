@@ -100,6 +100,20 @@ public static class JsPayload
             return FromPlainDictionary(engine, dictionary);
         }
 
+        if (value is System.Collections.IDictionary plainDictionary)
+        {
+            var builder = new JsObjectBuilder(engine);
+            foreach (System.Collections.DictionaryEntry entry in plainDictionary)
+            {
+                if (entry.Key is string key)
+                {
+                    builder.Set(key, FromPlain(engine, entry.Value));
+                }
+            }
+
+            return builder.Build();
+        }
+
         if (value is IEnumerable<object?> items)
         {
             var values = new List<JsValue>();

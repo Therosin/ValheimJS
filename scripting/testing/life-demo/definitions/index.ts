@@ -42,6 +42,6 @@ export function createVillagerAI(options: VillagerAIOptions): UtilityAI {
         store: options.store,
         random: options.random,
         debug: options.debug ? message => options.log?.(`[utility] ${message}`) : undefined,
-        planner: { log: options.log }
+        planner: { log: options.log, replanMs: 1_000 }
     });
 }

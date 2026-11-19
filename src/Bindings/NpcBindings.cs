@@ -167,7 +167,7 @@ internal sealed class NpcBindings : JsBindings
 
             default:
             {
-                var target = ArgString(args, "target") ?? ArgString(args, "id");
+                var target = ArgTarget(args, "target") ?? ArgTarget(args, "id");
                 if (string.IsNullOrWhiteSpace(target))
                 {
                     return AiNativeResult.Fail("target-required");
@@ -201,7 +201,7 @@ internal sealed class NpcBindings : JsBindings
         }
 
         state[key] = action.Seq;
-        return AiNativeResult.Pending();
+        return AiNativeResult.Pending(action.Status == "paused");
     }
 
     private static AiNativeResult ObserveIntent(
@@ -230,7 +230,7 @@ internal sealed class NpcBindings : JsBindings
                 state.Remove(key);
                 return AiNativeResult.Fail(action.Reason ?? action.Status);
             default:
-                return AiNativeResult.Pending();
+                return AiNativeResult.Pending(action.Status == "paused");
         }
     }
 
@@ -323,7 +323,7 @@ internal sealed class NpcBindings : JsBindings
             return AiNativeResult.Fail();
         }
 
-        var target = ArgString(args, "target") ?? ArgString(args, "id");
+        var target = ArgTarget(args, "target") ?? ArgTarget(args, "id");
         if (string.IsNullOrWhiteSpace(target))
         {
             return AiNativeResult.Fail("target-required");
@@ -382,7 +382,7 @@ internal sealed class NpcBindings : JsBindings
                 plugin,
                 handle,
                 "attack",
-                ArgString(args, "target") ?? ArgString(args, "id") ?? string.Empty,
+                ArgTarget(args, "target") ?? ArgTarget(args, "id") ?? string.Empty,
                 ArgBool(args, "secondary") ?? false),
             "jump" => manager.Command(plugin, handle, "jump"),
             "stop" => manager.Command(plugin, handle, "stop"),
@@ -400,6 +400,28 @@ internal sealed class NpcBindings : JsBindings
 
     private static string? ArgString(IReadOnlyDictionary<string, object?> args, string key) =>
         args.TryGetValue(key, out var value) ? value as string : null;
+
+    private static string? ArgTarget(IReadOnlyDictionary<string, object?> args, string key)
+    {
+        if (!args.TryGetValue(key, out var value))
+        {
+            return null;
+        }
+
+        if (value is string text)
+        {
+            return text;
+        }
+
+        if (value is IReadOnlyDictionary<string, object?> map &&
+            map.TryGetValue("id", out var id) &&
+            id is string target)
+        {
+            return target;
+        }
+
+        return null;
+    }
 
     private static int? ArgInt(IReadOnlyDictionary<string, object?> args, string key) =>
         args.TryGetValue(key, out var value) && value is long number ? (int)number :
@@ -926,7 +948,7 @@ internal sealed class NpcBindings : JsBindings
     {
         var plain = options.IsUndefined() || options.IsNull()
             ? null
-            : ToPlain(options) as IReadOnlyDictionary<string, object?>;
+            : JsPlain.From(options) as IReadOnlyDictionary<string, object?>;
         var query = NpcFindQuery.FromPlain(plain, string.IsNullOrWhiteSpace(kind) ? null : kind);
         query.Max = Math.Max(1, limit);
         return query;
@@ -1569,55 +1591,6 @@ internal sealed class NpcBindings : JsBindings
         blueprint = null!;
         instance = null!;
         return false;
-    }
-
-    private static object? ToPlain(JsValue value)
-    {
-        if (value.IsNull() || value.IsUndefined())
-        {
-            return null;
-        }
-
-        if (value.IsString())
-        {
-            return value.AsString();
-        }
-
-        if (value.IsBoolean())
-        {
-            return value.AsBoolean();
-        }
-
-        if (value.IsNumber())
-        {
-            return value.AsNumber();
-        }
-
-        if (value.IsArray())
-        {
-            var array = value.AsArray();
-            var list = new List<object?>((int)array.Length);
-            for (var index = 0; index < array.Length; index++)
-            {
-                list.Add(ToPlain(array.Get(index)));
-            }
-
-            return list;
-        }
-
-        if (value is ObjectInstance obj)
-        {
-            var map = new Dictionary<string, object?>(StringComparer.Ordinal);
-            foreach (var key in obj.GetOwnPropertyKeys(Jint.Runtime.Types.String))
-            {
-                var name = key.ToString();
-                map[name] = ToPlain(obj.Get(name));
-            }
-
-            return map;
-        }
-
-        throw new ArgumentException($"npc: query value of type '{value.Type}' is not supported.");
     }
 
     private static ZDOID ResolveId(string handle) =>

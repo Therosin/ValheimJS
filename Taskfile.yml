@@ -141,6 +141,7 @@ tasks:
       - task: probe:signals
       - task: probe:types
       - task: probe:behaviour
+      - task: probe:planning
       - task: probe:ai
       - task: probe:ui
       - task: probe:life
@@ -175,6 +176,11 @@ tasks:
   probe:behaviour:
     desc: Verify the YAML parser and behaviour tree engine
     cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-behaviour
+
+  probe:planning:
+    desc: Verify native plan execution, retries, timeouts and scoping
+    deps: [build]
+    cmd: dotnet run --project harness/Harness.csproj -c Release -- --probe-planning
 
   probe:ai:
     desc: Verify the ai binding over compiled behaviour trees

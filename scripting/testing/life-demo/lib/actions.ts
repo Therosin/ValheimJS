@@ -51,6 +51,8 @@ export interface VillagerActionHost {
     activeTarget: NpcSensed | null;
     activeDestination: NpcPos | null;
     readonly log?: (message: string) => void;
+    /** Gated debug detail; the runtime only supplies this when config debug=true. */
+    debug?(message: string): void;
     markDirty(): void;
     publish(key: string, value: unknown): void;
     setHome(home: NpcPos, shelterId: string): void;
@@ -241,8 +243,19 @@ function action(host: VillagerActionHost, name: string, ctx: BehaviorActionConte
 
     if (name === "face") {
         const target = state.target as NpcSensed | undefined;
-        if (!target) return "failure";
-        return host.actor.face(target.id).ok ? "success" : "failure";
+        if (!target) {
+            host.debug?.("face missing target");
+            return "failure";
+        }
+        // Reference companions face a sensed point with LookAt; resolving a player ZDO by handle
+        // is not guaranteed to succeed from a dedicated server. Use the sensed position.
+        const result = host.actor.lookAt(target.pos.x, target.pos.y, target.pos.z);
+        host.debug?.(
+            `face target=${target.name || target.id} distance=${target.distance.toFixed(1)} ` +
+                `pos=${target.pos.x.toFixed(1)},${target.pos.z.toFixed(1)} ok=${result.ok} ` +
+                `reason=${result.reason ?? "-"}`
+        );
+        return result.ok ? "success" : "failure";
     }
 
     if (name === "claim-home") {
@@ -295,7 +308,11 @@ function selectTarget(
             (kind !== "object" || entry.isObject) &&
             (entry.isObject ? !host.visited.has(entry.id) && (host.blocked.get(entry.id) ?? 0) <= Date.now() : true)
     );
-    if (!target) return "failure";
+    if (!target) {
+        host.debug?.(`select-target none kind=${kind} max=${maxDistance}`);
+        return "failure";
+    }
+    host.debug?.(`select-target ${target.name || target.id} kind=${kind} dist=${target.distance.toFixed(1)}`);
     host.activeTarget = target;
     state.target = target;
     state.destination = target.pos;
@@ -314,17 +331,32 @@ function moveAction(
         const current = view.action;
         if (current?.kind === "moveTo") {
             if (current.status === "arrived") return "success";
-            if (current.status === "failed" || current.status === "cancelled") return "failure";
+            if (current.status === "failed" || current.status === "cancelled") {
+                host.debug?.(`move-to ${current.status} reason=${current.reason ?? "-"}`);
+                return "failure";
+            }
             return "running";
         }
         return "running";
     }
 
     const destination = state.destination as NpcPos | undefined;
-    if (!isPosition(destination)) return "failure";
-    if (!host.actor.moveTo(destination.x, destination.y, destination.z, state.run === true).ok) {
+    if (!isPosition(destination)) {
+        host.debug?.("move-to missing destination");
         return "failure";
     }
+    const result = host.actor.moveTo(destination.x, destination.y, destination.z, state.run === true);
+    if (!result.ok) {
+        host.debug?.(
+            `move-to failed target=${destination.x.toFixed(1)},${destination.z.toFixed(1)} ` +
+                `run=${state.run === true} reason=${result.reason ?? "rejected"}`
+        );
+        return "failure";
+    }
+    host.debug?.(
+        `move-to target=${destination.x.toFixed(1)},${destination.y.toFixed(1)},${destination.z.toFixed(1)} ` +
+            `run=${state.run === true}`
+    );
     state.moveIssued = true;
     return "running";
 }
@@ -340,14 +372,23 @@ function waitAction(
         const current = view.action;
         if (current?.kind === "wait") {
             if (current.status === "arrived") return "success";
-            if (current.status === "failed" || current.status === "cancelled") return "failure";
+            if (current.status === "failed" || current.status === "cancelled") {
+                host.debug?.(`wait ${current.status} reason=${current.reason ?? "-"}`);
+                return "failure";
+            }
             return "running";
         }
+        host.debug?.(`wait not active action=${current?.kind ?? "none"} status=${current?.status ?? "none"}`);
         return "running";
     }
 
     const seconds = numberOr(ctx.args.seconds, numberOr(state.waitSeconds, 2));
-    if (!host.actor.wait(seconds).ok) return "failure";
+    const result = host.actor.wait(seconds);
+    host.debug?.(
+        `wait issue seconds=${seconds.toFixed(2)} args=${String(ctx.args.seconds ?? "missing")} ` +
+            `state=${String(state.waitSeconds ?? "missing")} ok=${result.ok} reason=${result.reason ?? "-"}`
+    );
+    if (!result.ok) return "failure";
     state.waitIssued = true;
     return "running";
 }

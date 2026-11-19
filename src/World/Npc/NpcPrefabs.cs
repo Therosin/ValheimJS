@@ -102,9 +102,11 @@ internal static class NpcPrefabs
             characterPart.m_name = definition.Kind;
         }
 
-        if (clone.GetComponent<Humanoid>() != null)
+        var humanoid = clone.GetComponent<Humanoid>();
+        if (humanoid != null)
         {
-            ConfigureHumanoid(clone.GetComponent<Humanoid>(), definition);
+            ConfigureHumanoid(humanoid, definition);
+            ConfigureInventoryContainer(clone, definition);
         }
 
         ConfigureNetworking(clone);
@@ -216,6 +218,31 @@ internal static class NpcPrefabs
         humanoid.m_turnSpeed = 100f;
         humanoid.m_runTurnSpeed = 160f;
         humanoid.m_canSwim = true;
+    }
+
+    private static void ConfigureInventoryContainer(GameObject clone, NpcDefinition definition)
+    {
+        var container = clone.GetComponent<Container>();
+        if (container == null)
+        {
+            container = clone.AddComponent<Container>();
+        }
+
+        // The container is a UI adapter, not a networked chest. Its inventory is the local mirror
+        // shown by InventoryGui; persistence remains on the NPC's own inventory.
+        container.m_name = definition.Kind;
+        container.m_width = 8;
+        container.m_height = 4;
+        container.m_privacy = Container.PrivacySetting.Public;
+        container.m_checkGuardStone = false;
+        container.m_autoDestroyEmpty = false;
+        container.m_openEffects = new EffectList();
+        container.m_closeEffects = new EffectList();
+
+        if (clone.GetComponent<NpcInventoryUi>() == null)
+        {
+            clone.AddComponent<NpcInventoryUi>();
+        }
     }
 
     private static void ConfigureNetworking(GameObject clone)
