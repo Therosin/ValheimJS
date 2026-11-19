@@ -585,6 +585,16 @@ function needsStoredFood(context: VillagerContext, view: NpcView): boolean {
     );
 }
 
+function needsFireWood(context: VillagerContext, view: NpcView): boolean {
+    const fire = fireplace(view);
+    return (
+        fire !== null &&
+        fire.state === "empty" &&
+        !hasWood(context) &&
+        storedPrefab(storageEntries(view), "Wood") !== null
+    );
+}
+
 function withdrawGoal(context: VillagerContext): Goal {
     let activeTarget: string | null = null;
 
