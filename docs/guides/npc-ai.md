@@ -115,6 +115,9 @@ interface NpcSensed {
     health: number; maxHealth: number;
     firstSeen: number; lastSeen: number;        // seconds since first/last contact (in range)
     seenCount: number;
+    /** Object capabilities; populated for world objects. */
+    tags?: string[]; verbs?: string[]; requires?: string[]; inputs?: string[];
+    gives?: string[]; state?: string | null; usable?: boolean;
 }
 ```
 
@@ -193,7 +196,8 @@ npc.register(makeWanderer(), {
 
 `enemy` uses the game's faction matrix (`BaseAI.IsEnemy`), including tamed and group overrides.
 World objects are the same record shape with `isObject: true` and `kind` set to `pickable`,
-`tree`, `rock`, `container`, `door`, `bed`, `smelter`, `station`, `item` or `portal`.
+`tree`, `rock`, `container`, `fireplace`, `door`, `bed`, `smelter`, `station`, `cooking`, `item`
+or `portal`.
 Item and pickable entries carry `item`: normalized type, quality, stack, durability, weight,
 armor, tool tier, damage channels, food values and equip slot. Containers carry a cheap
 `container` summary (slots, free space, category counts/amounts, best food, scan age), while full
@@ -323,14 +327,15 @@ this.interact(chest.id, { verb: "take", name: "$item_cookedmeat", count: 1 });
 ```
 
 Supported verbs: `pick` (pickables), `store`/`take` (containers, direct item transfer),
-`addOre`/`addFuel` (smelters via their native RPCs), and `use`/`open`/`close`/`toggle` for native
-interactables such as doors, fireplaces, beehives, item stands, armor stands, chairs and vagons.
-`hoverName`/`hoverText` are included for UI parity.
+`addOre`/`addFuel` (smelters) and `addFuel` (fireplaces), `cook` (cooking stations via the native
+adapter), and `use`/`open`/`close`/`toggle` for native interactables such as doors, beehives, item
+stands, armor stands, chairs and vagons. `hoverName`/`hoverText` are included for UI parity.
 
 Player/UI-only components are refused with `player-only` rather than opening a GUI: beds,
-crafting stations, cooking stations, portals and traders. `Bed.Interact`,
-`CraftingStation.Interact`, `Container.Interact` and `TeleportWorld.Interact` assume
-`Player.m_localPlayer`, `InventoryGui` or `TextInput`, so a plain NPC body must not call them.
+crafting stations, portals and traders. `Bed.Interact`, `CraftingStation.Interact`,
+`Container.Interact` and `TeleportWorld.Interact` assume `Player.m_localPlayer`, `InventoryGui` or
+`TextInput`, so a plain NPC body must not call them. Cooking stations and fireplaces have native
+adapters and do not use the player UI path.
 Interactions run server-side, require 3.5 m range and claim ZDO ownership first. Failures carry a
 reason: `out-of-range`, `not-loaded`, `no-access`, `rejected`, `no-item`, `no-room`,
 `verb-required`.
@@ -523,12 +528,13 @@ so YAML does not need `moveIssued`/`waitIssued` state.
 
 ## 8. Planning is plugin policy
 
-`Planner` is an optional, policy-free scheduler: it scores plugin-supplied goals, runs the
-highest-scoring one, preempts with optional hysteresis, and applies optional cooldowns. It has no
-built-in goals or reactions; the plugin owns interpretation, priorities and callbacks.
+`Planner` is a thin JS facade over the native planner. The C# `PlannerHost` owns goal metadata,
+selection, cooldowns, hysteresis, active-plan state, preemption and callback ordering. The plugin
+owns goal definitions, callbacks and interpretation; there is no JS selection loop.
 
-`ctx.run` starts a host-owned plan: a linear, cancellable list of steps. The C# planner owns the
-cursor, timeouts, retries and native action settlement; `ctx.run` returns a `PlanHandle`.
+`ctx.run` starts a host-owned plan: a linear, cancellable list of steps. C# owns the cursor,
+timeouts, retries and native action settlement; `ctx.run` returns a `PlanHandle` with read-only
+`planStatus`/`reason`/`stepIndex` accessors. `PlanHandle.cancel(reason?)` is the plugin mutator.
 
 ```ts
 import { Planner, registerAction, type Goal } from "../../../sdk/index";
@@ -557,11 +563,9 @@ planner.setGoals([
 ```
 
 Built-in steps: `moveTo`, `wait`, `lookAt`, `face`, `pick`, `stop`, `idle`, `interact`, `attack`,
-`jump`, `harvest`, `follow`, `until`, `call`, and inventory steps `equip`, `unequip`, `consume`,
-`drop`. `interact` and `harvest` approach their target by default; pass `approach: false` to
-disable it, or `{ distance, run }` to tune it. `follow` tracks a sensed target until within its
-distance. `harvest` is one-shot native execution; repeat it from a goal or behaviour tree, not an
-internal plan loop.
+`jump`, `harvest`, `until`, `call`, and inventory steps `equip`, `unequip`, `consume`, `drop`.
+`moveTo` is explicit: neither `interact` nor `harvest` hides an approach loop. `harvest` is one-shot
+native execution; repeat it from a goal or behaviour tree, not an internal plan loop.
 Each accepts `timeoutMs` and `retry` at the step level. Inventory steps use the accessor passed to
 the plan:
 
@@ -572,8 +576,9 @@ ctx.run([
 ], { inventory: npc.inventory(this), timeoutMs: 10_000 });
 ```
 
-Built-in actions live in `sdk/actions/*` and register themselves. New actions register the same
-way and are used as named steps:
+Native steps resolve directly through the host. The plug-in action registry now contains only
+non-native steps (`inventory`, `craft` and flow helpers) plus actions your plugin registers. New
+actions register the same way and are used as named steps:
 
 ```ts
 registerAction<{ text: string }>("say", {
@@ -775,6 +780,17 @@ access failures are not resource failures: skip that container and revalidate an
 The adapter adds raw food, watches the station, takes finished items and publishes the per-NPC
 `cook` board event. JS should wait for that event; it should not poll station slots.
 
+A cooking station has no fuel of its own on the vanilla prefab. It requires a nearby burning fire.
+The `Fireplace` adapter exposes `addFuel`, `inputs: ["Wood"]` and `state` (`empty`, `burning`,
+`full`); a plugin can refuel from the NPC inventory, or withdraw wood from storage first. The
+life-demo does both: it prefers cooked food, treats only the station’s declared `inputs` as
+cookable, and adds a `refuel` goal for an empty fire.
+
+The NPC inventory UI is native, not a plugin panel. A humanoid NPC’s `Container` opens the vanilla
+`InventoryGui` container grid; the client edits a mirror snapshot and the server applies it. JS
+inventory access (`npc.inventory`, `npc.container`) remains the script-facing surface. Do not build
+a parallel inventory panel.
+
 When `describe` reports a missing requirement and another known goal `provides` it, UtilityAI
 selects that provider first and resumes the original objective afterwards. Repeated attempts are
 bounded by `maxPrerequisiteAttempts` (default `2`) and cooled down by `prerequisiteCooldownMs`
@@ -934,9 +950,10 @@ export default definePlugin({
 });
 ```
 
-The tree and the NPC have separate lifetimes: `ai` owns the compiled definition and instance,
-`npc` owns movement, ZDO persistence and the perception store. `ai.release` on despawn prevents
-the tree instance from leaking after the entity is removed.
+The tree and the NPC have separate lifetimes: the shared C# `BehaviourService` owns compiled
+definitions and instances; the `ai` binding is a thin facade over it. `npc` owns movement, ZDO
+persistence and the perception store. `ai.release` on despawn prevents an instance from leaking
+after the entity is removed. Planner behaviour goals use the same service.
 
 ## Example: two villagers with different lives
 
@@ -960,6 +977,9 @@ the tree instance from leaking after the entity is removed.
 - **YAML behaviours** (`behaviours/*.yaml`) own *how* the activity runs. `wander`, `forage`,
   `return-home`, `rest`, `seek-home`, `inspect`, `socialize`, `flee` and `eat` compose the micro
   trees in `behaviours/micro/`.
+- **Native goals**: `cook` uses the station board event; `refuel` adds wood to an empty fireplace.
+  The food policy prefers cooked items, uses the station’s declared `inputs` for raw food, and
+  withdraws stored wood before trying to cook with an empty fire.
 - **Loader** (`lib/behaviours.ts`) reads the YAML text through `importText` and compiles each
   activity once in setup.
 
@@ -997,11 +1017,10 @@ village.onSignal("threat:seen", (_name, data) => {
 });
 ```
 
-Tests: `scripting/test/life-demo.test.ts` covers the Bob/Astrid profile divergence, rest and flee
-selection; `scripting/test/utility.test.ts` covers shared considerations, event context, feedback
-and a feedback-driven selection flip; `scripting/test/board.test.ts` covers scope/membership
-lifetime; `task probe:life` compiles the real YAML files and asserts each activity's composed
-action sequence.
+Tests: `task probe:planning` covers the native plan/planner/utility path; `task probe:life`
+compiles the real YAML files and asserts their composed action sequences; `scripting/test/board.test.ts`
+covers board scope/membership lifetime. The old JS engine tests for `Plan`, `Planner` and
+`UtilityAI` are intentionally gone because those engines no longer own execution state.
 
 ## Authority, cadence and limits
 

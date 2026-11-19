@@ -54,5 +54,7 @@ queries, `signals`, and the first game facade: `players` + `ValheimPlayer` and `
 NPCs now expose a perception store (`npc.sensed`), durable per-entity memory, intent lifecycle and
 the YAML `ai` bridge with automatic `ctx.state.senses` injection.
 
-Next: NPC dormancy/combat/interaction surfaces, then containers. See `docs/api-roadmap.md` and
+Implemented after that: native plan/planner/utility hosts, behaviour-goal execution, NPC inventory
+and the vanilla NPC container UI, and cooking/fireplace interaction adapters. Next: NPC dormancy
+records and broader player-owned inventory APIs. See `docs/api-roadmap.md` and
 `docs/guides/npc-ai.md`.

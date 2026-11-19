@@ -20,13 +20,14 @@ are design sketches, not functions a plugin can call.
 | Administration | Private `!manage:roles`, `!manage:permission` and `!manage:user` commands; Valheim admin recovery and delegated management permission |
 | Networking | Native channel/event scopes over RpcBus, notifications and synchronous request responders; explicit transient binary sync |
 | World | Existing networked prefab spawning, session handles, ZDO data, object and prefab queries |
-| NPC / AI | Server-simulated NPCs with perception store, memory, intents and YAML behaviour trees |
-| UI | Client-only declarative YAML panels with components, imports, bindings and events |
+| NPC / AI | Server-simulated NPCs with perception store, memory, inventories/stats, native plans, planner/utility hosts and YAML behaviour goals |
+| UI | Client-only declarative YAML panels; humanoid NPCs open the vanilla `InventoryGui` container grid |
 | Input | Client keyboard bindings and callbacks; no mouse API |
 | Events | Coarse heartbeat, routed chat, peer/character changes and read-only damage observation |
 
-These support rules, storage, private commands, coordination and client panels. They do not yet
-expose player inventory, stats, teleports, item grants or custom UI assets.
+These support rules, storage, private commands, coordination, NPC bodies/inventories and client
+panels. They do not yet expose player-owned inventory/stats, teleports, item grants or custom UI
+assets. NPC inventory access and the vanilla NPC container UI are separate from player inventory.
 `ChatService` is retained but dormant; command replies use the separate active `CommandService`.
 
 ## Binding gaps for NPCs and containers
@@ -43,11 +44,12 @@ Added:
 Outstanding:
 - [ ] `world.object(id)` — resolve a ZDO id to position, prefab and owner (the inverse of `idOf`)
 - [ ] authority-gated `world.setData(id, key, value)` / `world.removeData(id, key)` for non-spawned ZDOs
-- [ ] container contents: decode the ZDO `items` blob into item records (prefab, stack, quality, durability)
-- [ ] container mutation: ownership claim, add/remove/move, slot limits (the `Container` abstraction)
+- [x] container contents through `npc.container(id).items` and the NPC inventory accessor
+- [ ] container mutation: ownership claim, add/remove/move, slot limits for arbitrary world containers
 - [ ] character stats/mutations: owned health/stamina/eitr writes through the owner-op primitive
 - [ ] inventory handles: player inventory query/grant/remove behind the same async contract
-- [ ] interactable discovery: pickables, pieces, smelters, cooking stations near a point
+- [x] interactable discovery through the NPC perception store (`view.objects`)
+- [x] NPC cooking/fire adapters with conversion inputs and fuel state
 - [ ] character ZDO ownership and authority helpers for plugin-driven entities
 - [x] NPC base: server-authoritative `WorldManager`/`NpcBehavior`, prefab registration, perception,
       intents, durable state, rehydrate, relevance subscriptions
@@ -56,8 +58,9 @@ Outstanding:
 - [x] Per-NPC durable memory (`npc.memory`) and YAML behaviour-tree binding (`ai`) with automatic
       `ctx.state.senses` injection
 - [x] World-space `draw` API for lines/meshes; server calls replicate to clients
-- [ ] NPC dormancy records and combat/interaction surfaces
-- [ ] hearing/noise, stealth, status-effect, equipment and per-NPC damage events as perception sources
+- [x] NPC combat/interaction surfaces and native action settlement
+- [ ] NPC dormancy records
+- [x] hearing/noise, equipment and per-NPC damage events as perception sources
 - [ ] entity state: declared fields mapped to ZDO keys vs coalesced sync, with join snapshots
 
 ## Next gameplay APIs
@@ -65,7 +68,7 @@ Outstanding:
 | Candidate | Why it matters | Source/integration question |
 |---|---|---|
 | Player stats and movement | Rewards, moderation, world rules | Verify authoritative paths and object ownership before exposing health, stamina or teleport operations |
-| Inventory snapshots and mutations | Shops, quests, crafting | Inventory is normally client-owned; no inventory mirror currently exists in ValheimJS |
+| Player inventory snapshots and mutations | Shops, quests, crafting | NPC inventory and the vanilla NPC container UI exist; player inventory remains client-owned and needs an authority/mirror decision |
 | Item queries and grants | Rewards and shops | Wrap existing ObjectDB prefabs; distinguish item data from creating new assets |
 | Build/interaction/crafting hooks | Regions, automation and quests | Choose funnels that run on the deciding process rather than assuming every client UI hook is authoritative |
 | Opt-in damage cancellation | PvP rules and safe areas | Current damage hooks observe after the call; vetoing requires a different interception contract |
@@ -93,12 +96,14 @@ management commands provide administrative editing today.
 
 - NPC dialogs and richer presentation; the renderer, relevance subscription and server-owned simulation exist.
 - Asset/content registration, deciding whether to integrate an established mod library or own the pipeline.
-- Client UI beyond keyboard callbacks, with server-authorized actions sent through networking.
+- Additional client UI beyond declarative panels and the native NPC container UI, with
+  server-authorized actions sent through networking.
 - Optional scheduling and localization helpers driven by demonstrated plugin needs.
 
 A dedicated server cannot draw client UI. Existing networked prefabs can replicate through ZDOs;
 new models and textures require an asset pipeline. Binary sync is an explicit codec/transport path,
-not automatic replication, a client inventory mirror or an unreliable priority channel.
+not automatic replication, an automatic player-inventory mirror or an unreliable priority channel.
+The NPC inventory UI uses an explicit server-authoritative snapshot, not generic sync replication.
 
 ## Verification required for new APIs
 

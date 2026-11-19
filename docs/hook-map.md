@@ -31,6 +31,8 @@ should offer. Not modder-facing — see `guides/` for that.
 | `onDamage` | `Character.Damage` postfix | read-only observation on the process receiving the call; this hook does not veto damage |
 | UI input | `Player.TakeInput` / `PlayerController.TakeInput` postfix | blocks game input while a plugin modal is open or a panel text field is focused |
 | UI cursor | `GameCamera.UpdateMouseCapture` postfix | holding Alt while any plugin panel is open releases the cursor |
+| NPC inventory adapter | `Container.Interact` / `GetHoverText` / `GetHoverName` / `IsOwner` / `SetInUse` / `Save` / `Load` prefixes for marked NPC containers | opens the vanilla `InventoryGui` container grid against a client mirror while the server keeps NPC inventory authority |
+| Cooking/fire adapters | `CookingStation` conversion and `Fireplace` interaction adapters | native `cook`, `addFuel`, station board events and fuel state |
 | Native private commands | `Chat.InputText` prefix (client-only) | consumes `!` input and submits it through `CommandService`; ordinary chat and `/` input continue normally |
 | `game.*` | `ProcessPolicy` (executable/override), `ZNet.IsServer()` | side detection at startup and at runtime |
 
@@ -51,7 +53,8 @@ should offer. Not modder-facing — see `guides/` for that.
 ## Avoid
 
 - `InventoryGui.*`, `Hud.*`, `TextInput.*` — client UI. Meaningless headless, and the mined mods
-  patch them only to draw things.
+  patch them only to draw things. The NPC inventory adapter is the exception: it deliberately calls
+  `InventoryGui.Show` from the client and only patches the marked `Container` adapter, not the GUI.
 - `*::Awake` / `*::Update` of gameplay classes — per-frame or one-shot during scene load; the
   mined mods use them to grab singletons; `Container` can retain captured references when wired to appropriate hooks.
 - Patching `UnityEngine.*` internals — not game code, breaks across versions.

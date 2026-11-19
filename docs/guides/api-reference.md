@@ -20,9 +20,10 @@ has the exact signatures.
 | [`AccountService`](accounts.md) | account queries and publisher-owned shared data |
 | [`PermissionService`](accounts.md#roles-and-permissions) | live role and permission queries |
 | [`input`](#input) | keyboard bindings and phase callbacks |
-| [`npc`](#npc) | scripted NPCs, perception store, intents and memory |
+| [`npc`](#npc) | scripted NPCs, perception store, intents, memory and inventory |
 | [`signals`](#signals) | host-sampled observed conditions |
 | [`ai`](#ai) | YAML behaviour trees for scripted AI |
+| [`planning`](#planning) | native plan execution, planner, utility policy and behaviour-goal hosts |
 | [`ui`](#ui) | client-side YAML panels with bound values and events |
 | [`fs`](#fs) | sandboxed data files |
 | [`assets`](#assets) | read-only files shipped with the plugin |
@@ -182,8 +183,13 @@ npc.defineRecipe(id, { recipe?, conditions? }): void
 npc.registerCondition(name, handler): void
 npc.canCraft(entity, recipe): CraftCheck
 npc.craft(entity, recipe): CraftResult
+npc.stats(entity): NpcStats | null
+npc.inventory(entity): Inventory               // owned NPC body inventory
+npc.container(handle): Inventory               // world container inventory
 npc.memory(entity): Record<string, unknown>     // durable plugin-owned memory
 npc.setMemory(entity, value): boolean
+npc.reserve(handle, owner, ttlMs?): boolean
+npc.release(handle, owner): void
 npcBase(): new (handle: string) => ValheimBaseNPC
 ```
 
@@ -208,6 +214,12 @@ setState(key, value): boolean;
 removeState(key): boolean;
 stateKeys(): string[];
 ```
+
+`npc.inventory(entity)` and `npc.container(handle)` return the same `Inventory` facade. Body
+inventories allow query/mutation/equipment verbs; world containers are read-only. The humanoid NPC
+also exposes a native vanilla `InventoryGui` container to nearby players; that UI is not a plugin
+panel and is not controlled through this API. `npc.stats(entity)` returns food slots, stamina,
+health and status effects.
 
 Registration is per kind (kind matches `^[a-z0-9_-]{1,32}$`; the vanilla prefab is cloned as
 `vjs_npc_<kind>`). `faction` selects the clone's stance (`"Players"` for friendly companions);
@@ -261,7 +273,9 @@ interface NpcSensed {
     tags?: string[];              // wood, stone, food, container, loot, ...
     verbs?: string[];             // harvest, pick, pickup, store, take, cook, ...
     requires?: string[];          // chop, pickaxe, player
+    inputs?: string[];            // prefab/item names consumed by this target
     gives?: string[];             // prefab/item names
+    state?: string | null;        // empty, burning, full, ...
     usable?: boolean;             // this NPC satisfies requires with its current gear
     health: number; maxHealth: number;
     firstSeen: number; lastSeen: number;        // seconds since first/last in-range contact
@@ -297,9 +311,10 @@ npc.sensed(this, { remembered: true, max: 64 });
 
 `dir` defaults to the NPC facing and `angle` is a half-angle. `kinds` accepts `player`, `npc`,
 `creature`, `tamed`, `enemy`, `dead`, or an exact kind/prefab/object class. World objects
-(`container`, `door`, `bed`, `smelter`, `station`, `item`, `portal`) enter the same store when
-`perception.objectRadius > 0`; they appear in `view.objects` and in `npc.sensed` results
-(`isObject: true`).
+(`container`, `fireplace`, `door`, `bed`, `smelter`, `station`, `cooking`, `item`, `portal`) enter
+the same store when `perception.objectRadius > 0`; they appear in `view.objects` and in
+`npc.sensed` results (`isObject: true`). Cooking stations expose `inputs` from their native
+conversion list; fireplaces expose `inputs`/`state` and an `addFuel` verb.
 
 For selection, prefer the declarative query instead of filtering arrays in JS:
 
@@ -512,6 +527,22 @@ function makeHunter() {
     };
 }
 ```
+
+## `planning`
+
+Plugins normally use the SDK facades rather than calling `host.api.planning` directly:
+
+```ts
+new Planner(actor, options?): Planner
+new UtilityAI({ actor, goals, stats?, considerations?, feedback?, snapshot?, store?, random?, debug?, planner? }): UtilityAI
+ctx.run(steps, { timeoutMs?, retry?, inventory?, craft?, log? }): PlanHandle
+```
+
+`PlanHandle` exposes `planStatus`, `reason`, `stepIndex` and `cancel(reason?)`. `release()` is for
+host lifecycle cleanup; plugins should normally let the owning planner release it. Plans, planner
+selection, cooldowns, utility math, behaviour instances and native action settlement are owned by
+C#; JS supplies goal callbacks, descriptions and custom action handlers. A plan does not run a JS
+timer or polling loop. See [Planning is plugin policy](npc-ai.md#8-planning-is-plugin-policy).
 
 ## `ui`
 
@@ -840,14 +871,15 @@ See [Process branches](process-branches.md) for player-host semantics and exampl
 
 Use [AccountService](accounts.md) to resolve verified platform identities to stable account ids.
 `fromPeer(String(uid))` maps a live connection to its account; the event peer `uid` is not stable
-across sessions. C# game adapters use `ValheimJS.Core.PlayerIdentity`. Player stats/inventory APIs
-remain future work; profile and policy editing are host-owned.
+across sessions. C# game adapters use `ValheimJS.Core.PlayerIdentity`. General player stat/inventory
+APIs remain future work; NPC body and world-container inventories are available through `npc`.
+Profile and policy editing are host-owned.
 
 ## Not available yet
 
 Do not work around these by guessing:
 
-- player stats, inventory and teleporting APIs
+- player-owned stats/inventory and teleporting APIs (NPC inventory access is separate)
 - JS profile/policy editing (use the native management commands)
 - item catalogue access and item grants
 - general chat output outside command replies
