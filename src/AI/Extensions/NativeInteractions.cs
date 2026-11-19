@@ -24,7 +24,8 @@ internal static class NativeInteractions
 {
     private static readonly INpcInteractionExtension[] Extensions =
     {
-        new CookingStationExtension()
+        new CookingStationExtension(),
+        new FireplaceExtension()
     };
 
     internal static bool TryDescribe(GameObject instance, NpcAffordances result)

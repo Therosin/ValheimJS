@@ -1171,6 +1171,30 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
                 AddVerb(entry, "addFuel");
                 break;
 
+            case "fireplace":
+                AddVerb(entry, "addFuel");
+                AddTag(entry, "fuel");
+                var fireplace = (live != null ? live : prefab).GetComponent<Fireplace>();
+                if (fireplace != null)
+                {
+                    if (fireplace.m_fuelItem != null)
+                    {
+                        AddInput(entry, fireplace.m_fuelItem.gameObject.name);
+                    }
+
+                    var fuelZdo = (live != null ? live : prefab).GetComponent<ZNetView>()?.GetZDO();
+                    var fuel = fuelZdo != null ? fuelZdo.GetFloat("fuel") : 0f;
+                    entry.State = !fireplace.m_canRefill || fireplace.m_infiniteFuel
+                        ? "unsupported"
+                        : fuel <= 0f
+                            ? "empty"
+                            : fuel >= fireplace.m_maxFuel
+                                ? "full"
+                                : "burning";
+                }
+
+                break;
+
             case "door":
                 AddVerb(entry, "open");
                 AddVerb(entry, "close");
@@ -1192,6 +1216,24 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
             case "cooking":
                 AddTag(entry, "station");
                 AddVerb(entry, "cook");
+                var stationObject = live != null ? live : prefab;
+                var cookingStation = stationObject.GetComponent<CookingStation>();
+                if (cookingStation != null)
+                {
+                    foreach (var conversion in cookingStation.m_conversion)
+                    {
+                        if (conversion?.m_from != null)
+                        {
+                            AddInput(entry, conversion.m_from.gameObject.name);
+                        }
+
+                        if (conversion?.m_to != null)
+                        {
+                            AddDrop(entry, conversion.m_to.gameObject.name);
+                        }
+                    }
+                }
+
                 break;
 
             case "portal":
@@ -1481,7 +1523,9 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
         entry.Tags.Clear();
         entry.Verbs.Clear();
         entry.Requires.Clear();
+        entry.Inputs.Clear();
         entry.Gives.Clear();
+        entry.State = null;
         entry.Usable = false;
     }
 
@@ -1509,6 +1553,22 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
         }
     }
 
+    private static void AddInput(NpcSensedEntity entry, string prefab)
+    {
+        if (!entry.Inputs.Contains(prefab))
+        {
+            entry.Inputs.Add(prefab);
+        }
+    }
+
+    private static void AddDrop(NpcSensedEntity entry, string prefab)
+    {
+        if (!entry.Gives.Contains(prefab))
+        {
+            entry.Gives.Add(prefab);
+        }
+    }
+
     private static string? Classify(GameObject prefab)
     {
         if (prefab.GetComponent<Pickable>() != null)
@@ -1529,6 +1589,11 @@ internal sealed class NpcBehavior : IWorldBehavior, INpcSenses, INpcActions, INp
         if (prefab.GetComponent<MineRock>() != null || prefab.GetComponent<MineRock5>() != null)
         {
             return "rock";
+        }
+
+        if (prefab.GetComponent<Fireplace>() != null)
+        {
+            return "fireplace";
         }
 
         if (prefab.GetComponent<Container>() != null)

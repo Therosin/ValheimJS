@@ -257,6 +257,10 @@ internal sealed class NpcSensedEntity
     internal List<string> Requires { get; } = new();
     /// <summary>Prefab/item names this target can yield.</summary>
     internal List<string> Gives { get; } = new();
+    /// <summary>Prefab/item names this target consumes, for example raw food at a cooking station.</summary>
+    internal List<string> Inputs { get; } = new();
+    /// <summary>Coarse native state such as <c>empty</c>, <c>burning</c> or <c>full</c>.</summary>
+    internal string? State { get; set; }
     /// <summary>True when the owning NPC can currently satisfy <see cref="Requires"/>.</summary>
     internal bool Usable { get; set; }
     /// <summary>Current native noise radius emitted by a character; 0 for objects.</summary>
@@ -313,7 +317,9 @@ internal sealed class NpcSensedEntity
             ["tags"] = Tags,
             ["verbs"] = Verbs,
             ["requires"] = Requires,
+            ["inputs"] = Inputs,
             ["gives"] = Gives,
+            ["state"] = State,
             ["usable"] = Usable,
             ["health"] = Health,
             ["maxHealth"] = MaxHealth,

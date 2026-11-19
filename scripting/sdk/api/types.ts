@@ -342,6 +342,10 @@ export interface NpcSensed {
     requires?: string[];
     /** Prefab/item names this target can yield. */
     gives?: string[];
+    /** Prefab/item names this target consumes, such as raw food at a cooking station. */
+    inputs?: string[];
+    /** Coarse native state such as `empty`, `burning` or `full`. */
+    state?: string | null;
     /** True when the owning NPC currently satisfies `requires`. */
     usable?: boolean;
     health: number;

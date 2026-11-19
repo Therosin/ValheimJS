@@ -442,21 +442,21 @@ function stored(entries: readonly StoredEntry[], type: InventoryItem["type"]): S
     return entries.find(entry => entry.item.type === type) ?? null;
 }
 
-function storedRawFood(entries: readonly StoredEntry[], requires?: readonly string[]): StoredEntry | null {
+function storedRawFood(entries: readonly StoredEntry[], inputs?: readonly string[]): StoredEntry | null {
     return entries.find(
         entry =>
             entry.item.type === "food" &&
             !entry.item.prefab.startsWith("Cooked") &&
-            (requires === undefined || requires.includes(entry.item.prefab))
+            (inputs === undefined || inputs.includes(entry.item.prefab))
     ) ?? null;
 }
 
-function isCookableRaw(item: InventoryItem, requires?: readonly string[]): boolean {
+function isCookableRaw(item: InventoryItem, inputs?: readonly string[]): boolean {
     return (
         item.type === "food" &&
         item.stack > 0 &&
         !item.prefab.startsWith("Cooked") &&
-        (requires === undefined || requires.includes(item.prefab))
+        (inputs === undefined || inputs.includes(item.prefab))
     );
 }
 
@@ -581,7 +581,7 @@ function needsStoredFood(context: VillagerContext, view: NpcView): boolean {
     return (
         station !== null &&
         cookableFood(context, station) === 0 &&
-        storedRawFood(storageEntries(view), station.requires) !== null
+        storedRawFood(storageEntries(view), station.inputs) !== null
     );
 }
 
@@ -611,7 +611,7 @@ function withdrawGoal(context: VillagerContext): Goal {
             const entries = storageEntries(ctx.view);
             const station = cookingStation(ctx.view);
             const wanted = context.hasFood()
-                ? storedRawFood(entries, station?.requires)
+                ? storedRawFood(entries, station?.inputs)
                 : stored(entries, "food");
             const target = wanted ?? storedPrefab(entries, "Wood") ?? entries[0] ?? null;
             if (target === null) return;
@@ -642,7 +642,7 @@ function withdrawGoal(context: VillagerContext): Goal {
                 const entries = storageEntries(ctx.view);
                 const station = cookingStation(ctx.view);
                 const food = context.hasFood()
-                    ? storedRawFood(entries, station?.requires)
+                    ? storedRawFood(entries, station?.inputs)
                     : stored(entries, "food");
                 if (food !== null) {
                     activeTarget = food.item.prefab;
@@ -948,11 +948,72 @@ function cookingStation(view: NpcView): NpcSensed | null {
     );
 }
 
+function fireplace(view: NpcView): NpcSensed | null {
+    return (
+        view.objects
+            .filter(entry => entry.visible && !entry.isDead && entry.kind === "fireplace")
+            .filter(entry => entry.state !== "full" && entry.state !== "unsupported")
+            .filter(entry => entry.distance <= 40)
+            .sort((left, right) => left.distance - right.distance)[0] ?? null
+    );
+}
+
+function hasWood(context: VillagerContext): boolean {
+    return context.actor.getInventory().count("Wood") > 0;
+}
+
 export function cookableFood(context: VillagerContext, station: NpcSensed | null = null): number {
-    const requires = station?.requires;
+    const inputs = station?.inputs;
     return context.actor
         .getInventory()
-        .items.filter(item => isCookableRaw(item, requires)).length;
+        .items.filter(item => isCookableRaw(item, inputs)).length;
+}
+
+function refuelGoal(context: VillagerContext): Goal {
+    let activeFire: string | null = null;
+
+    return {
+        id: "refuel",
+        cooldownMs: 5_000,
+        urgent: true,
+        score: () => 0,
+        eligible: view => {
+            const fire = fireplace(view);
+            return fire !== null && hasWood(context) && fire.state !== "burning";
+        },
+        describe: ({ view }) => {
+            const fire = fireplace(view);
+            return {
+                base: 700,
+                factors: {
+                    distance: fire ? Math.min(1, fire.distance / 20) : 1
+                }
+            };
+        },
+        enter: ctx => {
+            const fire = fireplace(ctx.view);
+            if (fire === null) return;
+            activeFire = fire.id;
+            context.publish("activity", "refuel");
+            ctx.log(`refuel ${fire.prefab ?? fire.name} (${fire.id})`);
+            ctx.run(
+                [{ interact: { target: fire.id, verb: "addFuel" } }],
+                { timeoutMs: 15_000, log: message => ctx.log(message) }
+            );
+        },
+        tick: ctx => {
+            if (ctx.planStatus === "running") return "running";
+            return ctx.planStatus === "failure" ? "failure" : "success";
+        },
+        exit: (_ctx, reason) => {
+            context.publish("activity", "idle");
+            context.board.emit(reason === "success" ? "activity:complete" : "activity:failed", {
+                activity: "refuel",
+                targetId: activeFire
+            });
+            activeFire = null;
+        }
+    };
 }
 
 function cookGoal(context: VillagerContext): Goal {
@@ -1338,7 +1399,10 @@ export function createActivities(
                         inventory.canConsume(item)
                 );
                 const station = cookingStation(view);
-                const shouldCook = !hasCooked && station !== null && cookableFood(ctx, station) > 0;
+                const fire = fireplace(view);
+                const canHeat = fire === null || fire.state !== "empty" || hasWood(ctx);
+                const shouldCook =
+                    !hasCooked && station !== null && canHeat && cookableFood(ctx, station) > 0;
                 return !shouldCook && (ctx.hasFood() || ctx.hasFoodSource(view));
             },
             describe: (view, ctx) => ({
@@ -1355,6 +1419,7 @@ export function createActivities(
         collectGoal(context),
         storeGoal(context),
         withdrawGoal(context),
+        refuelGoal(context),
         cookGoal(context),
         huntGoal(context)
     ];
