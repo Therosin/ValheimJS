@@ -1,6 +1,6 @@
 /**
  * Bundles shared/main.ts, server/main.ts and client/main.ts into independent plain
- * scripts under dist/<name> (Jint has no ES-module loader).
+ * modules under dist/<name>.
  *
  *   bun run build.ts                 # build all
  *   bun run build.ts hello           # build one
@@ -12,7 +12,6 @@ import { join, resolve } from "node:path";
 const here = import.meta.dir;
 let pluginsDir = join(here, "plugins");
 let distDir = join(here, "dist");
-let tmpDir = join(distDir, ".tmp");
 
 const argv = process.argv.slice(2);
 let deployRoot: string | null = null;
@@ -26,7 +25,6 @@ for (let index = 0; index < argv.length; index++) {
         pluginsDir = resolve(argv[++index] ?? "");
     } else if (arg === "--out") {
         distDir = resolve(argv[++index] ?? "");
-        tmpDir = join(distDir, ".tmp");
     } else if (!arg.startsWith("-")) {
         names.push(arg);
     }
@@ -53,7 +51,6 @@ if (targets.length === 0) {
     process.exit(0);
 }
 
-mkdirSync(tmpDir, { recursive: true });
 
 let failed = false;
 
@@ -77,22 +74,12 @@ for (const name of targets) {
             continue;
         }
 
-        // A generated entry keeps the plugin source a normal ES module while the emitted
-        // bundle stays a plain script that only mutates a global.
-        const wrapper = join(tmpDir, `${name}-${entry.side}.entry.ts`);
-        writeFileSync(
-            wrapper,
-            `import plugin from ${JSON.stringify(source.replaceAll("\\", "/"))};\n` +
-            `(globalThis as { __vjs_plugin?: unknown }).__vjs_plugin = plugin;\n`,
-            "utf8"
-        );
-
         const targetDir = outdir;
         const result = await Bun.build({
-            entrypoints: [wrapper],
+            entrypoints: [source],
             outdir: targetDir,
             target: "browser",
-            format: "iife",
+            format: "esm",
             naming: `${entry.side}.js`,
             minify: false,
             // Keep positions usable in the game log: Jint reads the linked map next to the bundle.
@@ -112,8 +99,8 @@ for (const name of targets) {
 
         const bundlePath = join(targetDir, `${entry.side}.js`);
         const code = readFileSync(bundlePath, "utf8");
-        if (/^\s*(import|export)\s/m.test(code)) {
-            console.error(`✗ ${name} (${entry.source}): bundle still contains ESM syntax`);
+        if (/^\s*import\s/m.test(code)) {
+            console.error(`✗ ${name} (${entry.source}): bundle contains external imports`);
             failed = true;
             pluginFailed = true;
             continue;
@@ -176,5 +163,4 @@ for (const name of targets) {
     }
 }
 
-rmSync(tmpDir, { recursive: true, force: true });
 process.exit(failed ? 1 : 0);

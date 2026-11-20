@@ -78,8 +78,7 @@ internal sealed class PluginComponent
 /// Isolation is per plugin instead: a throwing handler disables only that plugin.
 /// <para>
 /// Lifecycle — class instantiation, context, dependency exports, hook discovery, timers and
-/// teardown — is owned here. Bundles are plain scripts that set
-/// <c>globalThis.__vjs_plugin</c> to a descriptor produced by the SDK trampoline.
+/// teardown — is owned here. Bundles are ES modules with a default plugin descriptor.
 /// </para>
 /// </summary>
 internal sealed class JsRuntime : IDisposable
@@ -198,10 +197,22 @@ internal sealed class JsRuntime : IDisposable
                 {
                     Run(name, () =>
                     {
-                        _engine.SetValue("__vjs_plugin", JsValue.Undefined);
-                        _engine.Execute(File.ReadAllText(fullPath), fullPath);
-                        var module = _engine.GetValue("__vjs_plugin");
-                        _engine.SetValue("__vjs_plugin", JsValue.Undefined);
+                        var source = File.ReadAllText(fullPath);
+                        JsValue module;
+                        // Existing API v1 bundles used this legacy script handoff. Keep them
+                        // loadable while new bundles use real module default exports.
+                        if (source.Contains("globalThis.__vjs_plugin") &&
+                            !System.Text.RegularExpressions.Regex.IsMatch(source, @"\bexport\s*(?:default\b|\{|\*)"))
+                        {
+                            _engine.SetValue("__vjs_plugin", JsValue.Undefined);
+                            try { _engine.Execute(source, fullPath); module = _engine.GetValue("__vjs_plugin"); }
+                            finally { _engine.SetValue("__vjs_plugin", JsValue.Undefined); }
+                        }
+                        else
+                        {
+                            _engine.Modules.Add(fullPath, source);
+                            module = _engine.Modules.Import(fullPath).Get("default");
+                        }
                         if (module is not ObjectInstance descriptor)
                             throw new InvalidOperationException("Entry must export definePlugin(...).");
                         var kind = descriptor.Get(DescriptorMarker);
@@ -247,7 +258,6 @@ internal sealed class JsRuntime : IDisposable
             Unregister(name);
             throw;
         }
-        finally { _engine.SetValue("__vjs_plugin", JsValue.Undefined); }
     }
 
     /// <summary>Invokes one hook for one plugin; returns JSON when the handler produced a value.</summary>

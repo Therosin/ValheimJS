@@ -10,12 +10,16 @@ live authority still determine which operations work.
 
 ## 1. Package it
 
+For a plugin developed in this repository's `scripting/plugins/` folder, the local build helper is:
+
 ```bash
 cd scripting
 bun run typecheck
 bun run build.ts myplugin
 ```
 
+This command is repository development tooling. Independent plugin projects can bundle their
+entries using the SDK package and a standard bundler; see [Getting started](getting-started.md).
 Take `scripting/dist/myplugin/` with its manifest and built shared/server/client entries. Keep the
 folder name aligned with the manifest name; changing plugin identity also changes its data/config
 namespace. `build.ts` rejects a manifest `name` that differs from the source folder:

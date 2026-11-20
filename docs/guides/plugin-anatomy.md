@@ -19,6 +19,10 @@ behaviours/     YAML behaviour trees copied with the plugin (optional)
 `assets` binding (`importText`, `importYaml`, `importToml`). They are not part of the JS bundle, so
 you can ship YAML trees and edit them without rebuilding the scripts.
 
+Each deployed JS entry is a self-contained ES module whose default export is the descriptor from
+`definePlugin`. Bundle dependencies into the entry; the host does not resolve npm packages. Older
+API v1 script bundles remain supported, but module bundles require a host with module support.
+
 ## manifest.ini
 
 ```ini

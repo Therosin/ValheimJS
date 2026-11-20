@@ -69,11 +69,10 @@ internal static class ProcessProbe
         WritePlugin(scenario, "combined", new Dictionary<string, string>
         {
             ["shared.js"] = """
-                (function () {
                     var initial = globalThis.__vjs_context;
                     initial.state.order = ['shared-eval'];
                     initial.host.log('info', 'shared-eval');
-                    globalThis.__vjs_plugin = { __vjsPlugin: 'object', value: {
+                    export default { __vjsPlugin: 'object', value: {
                         exports: { common: 'ready' },
                         setup: function (ctx) {
                             if (ctx !== initial || ctx.exports.common !== 'ready') throw Error('shared context');
@@ -84,10 +83,8 @@ internal static class ProcessProbe
                         status: function (ctx) { return [ctx.host.api.game.side(), ctx.host.api.game.sessionReady(), ctx.host.api.game.isServer()]; },
                         teardown: function (ctx) { ctx.host.log('info', 'shared-stop'); }
                     }};
-                })();
                 """,
             [side + ".js"] = """
-                (function () {
                     var initial = globalThis.__vjs_context;
                     if (initial.state.order.join(',') !== 'shared-eval,shared-setup') throw Error('side loaded too early');
                     function Branch() { this.exports = { branch: 'ready' }; this.marker = 7; }
@@ -101,8 +98,7 @@ internal static class ProcessProbe
                         return this.ctx.state.order;
                     };
                     Branch.prototype.teardown = function () { this.ctx.host.log('info', 'side-stop'); };
-                    globalThis.__vjs_plugin = { __vjsPlugin: 'class', ctor: Branch };
-                })();
+                    export default { __vjsPlugin: 'class', ctor: Branch };
                 """,
             [(side == "server" ? "client" : "server") + ".js"] = "throw Error('OPPOSITE BRANCH EXECUTED');"
         });
@@ -126,9 +122,14 @@ internal static class ProcessProbe
             Assert(host.DispatchTo("combined", "status", "{}") == $"[\"{side}\",false,false]", "authority persisted after session");
             Assert(host.LoadedNames.SequenceEqual(new[] { "combined", "dependent" }), "eligibility/disabled filtering");
             Assert(host.DispatchTo("combined", "event", "{}") == "[\"shared-eval\",\"shared-setup\",\"shared-hook\",\"side-hook\"]", "hook order and result");
+            var sharedPath = Path.Combine(scenario, "plugins", "combined", "shared.js");
+            File.WriteAllText(sharedPath, File.ReadAllText(sharedPath).Replace("shared-eval", "updated-eval"));
+            // The side component expects the shared setup's state; update its expectation too.
+            var sidePath = Path.Combine(scenario, "plugins", "combined", side + ".js");
+            File.WriteAllText(sidePath, File.ReadAllText(sidePath).Replace("shared-eval", "updated-eval"));
             host.Reload();
             Assert(!host.HasErrors, "reload errors");
-            Assert(host.DispatchTo("combined", "event", "{}") == "[\"shared-eval\",\"shared-setup\",\"shared-hook\",\"side-hook\"]", "state not reset");
+            Assert(host.DispatchTo("combined", "event", "{}") == "[\"updated-eval\",\"shared-setup\",\"shared-hook\",\"side-hook\"]", "module reload did not load updated source");
         }
         finally { host.Dispose(); }
         Assert(log.Messages.Count(message => message == "side-stop") == 2, "side teardown count");

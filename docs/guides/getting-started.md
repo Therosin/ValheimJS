@@ -4,19 +4,40 @@ title: Getting started
 
 # Getting started
 
-You need ValheimJS installed under BepInEx, plus [Bun](https://bun.sh) for building scripts.
-`ValheimJS/` next to the game executable is the default scripting/data root; the runtime DLLs
-belong under `BepInEx/plugins/ValheimJS/`. Writing a JS plugin does not require compiling C#.
+Create a separate Bun project for your plugin. You need ValheimJS installed under BepInEx on
+the process that will run it. The SDK is a build-time dependency; the game runs the bundled JS
+with Jint, not Bun. Use a ValheimJS host that supports ES module plugin entries.
 
-## 1. Create a plugin
+## Create a project
 
 ```bash
-cd scripting
-bun install                 # once
-mkdir -p plugins/greeter/shared
+mkdir greeter
+cd greeter
+bun init -y
+bun add github:Therosin/ValheimJS#main
+mkdir -p src dist/greeter
 ```
 
-`scripting/testing/greeter/manifest.ini` (or `scripting/plugins/` for a shipped plugin)
+Pin a commit or release instead of `main` when you want reproducible builds.
+
+Create `src/shared.ts`:
+
+```ts
+import { definePlugin, log } from "@valheimjs/sdk";
+
+export default definePlugin({
+    setup(ctx) {
+        log(`greeter started; data: ${ctx.paths.data}`);
+    },
+    onServerTick(ctx, snapshot) {
+        if (ctx.state.announced) return;
+        ctx.state.announced = true;
+        log(`world: ${snapshot.world ?? "(loading)"}`);
+    }
+});
+```
+
+Create `dist/greeter/manifest.ini`:
 
 ```ini
 name=greeter
@@ -25,94 +46,25 @@ apiVersion=1
 enabled=true
 ```
 
-`scripting/testing/greeter/shared/main.ts`
-
-```ts
-import { definePlugin, game, log } from "../../../sdk/index";
-
-export default definePlugin({
-    version: "1.0.0",
-
-    setup(ctx) {
-        log(`greeter started; my data folder is ${ctx.paths.data}`);
-    },
-
-    onServerTick(ctx, snapshot) {
-        if (ctx.state.ticks === undefined) {
-            log(`world "${snapshot.world ?? "(loading)"}", day ${snapshot.day}`);
-        }
-
-        const ticks = Number(ctx.state.ticks ?? 0) + 1;
-        ctx.state.ticks = ticks;
-        if (ticks % 60 === 0) {
-            log(`${game().peers()} peer(s) online`);
-        }
-    }
-});
-```
-
-`definePlugin` only produces the descriptor the host expects; it does not run your code.
-
-## 2. Check it and build it
+## Build and install
 
 ```bash
-bun run typecheck                    # catches typos before the host sees them
-bun run build.ts greeter --source testing --out dist-testing   # → scripting/dist-testing/greeter/…
+bun build ./src/shared.ts --target=browser --format=esm --outfile=./dist/greeter/shared.js --sourcemap=linked
 ```
 
-Bundling flattens imports into a plain script for each entry. Use local source modules or bundled
-packages; there is no module loader, Bun runtime, Node filesystem API or browser DOM in the game.
+The output must be a self-contained ES module whose default export is the descriptor from
+`definePlugin`. Bundle imported dependencies; Jint does not provide Bun, Node's filesystem API,
+the browser DOM, or npm package resolution. Other bundlers can be used if they produce the same
+output contract.
 
-## 3. Deploy it
+Copy the `dist/greeter` folder to `<game root>/ValheimJS/plugins/greeter/`, then restart the game
+process. Check the BepInEx log for the host's loaded plugin count and
+`ValheimJS/logs/greeter.log` for your message. You can enable `Dev/WatchForChanges` in the host
+configuration to reload while developing; reload clears in-memory state and registrations.
 
-```bash
-bun run build.ts greeter --deploy "<server>/ValheimJS/plugins"
-```
+To add process-specific code, bundle separate entries to `server.js` and `client.js`. The host
+loads `shared.js` first and then the matching side entry; a player host uses the client branch.
+See [Process branches](process-branches.md) and [Plugin anatomy](plugin-anatomy.md).
 
-or copy `scripting/dist/greeter/` into `<server>/ValheimJS/plugins/greeter/`. The folder must
-contain `shared.js` and `manifest.ini`.
-
-## 4. Restart and look
-
-Restart the process (or enable live reload below), then check:
-
-- the console for `loaded N plugin(s)` and your `[greeter] …` lines
-- `ValheimJS/logs/greeter.log` — your own `log()` lines
-- `ValheimJS/data/greeter/` — your writable folder
-
-## Live reload while developing
-
-The mod's settings file path is printed in the log as `settings file: …`. Add:
-
-```ini
-[Dev]
-WatchForChanges = true
-```
-
-Changing bundles under `ValheimJS/plugins/` requests a reload of every plugin. Reload drops
-in-memory state, timers, command registrations and pending plugin requests. Files, documents,
-accounts, policy and published metadata persist. Keep this development setting off when a
-reload would interrupt players' work.
-
-## Where things live
-
-| What | Where |
-|---|---|
-| Your sources | `scripting/testing/<name>/shared/main.ts` (or `scripting/plugins/` to ship) |
-| Built bundle | `scripting/dist-testing/<name>/shared.js` |
-| Installed plugin | `<root>/ValheimJS/plugins/<name>/` |
-| Your files at runtime | `<root>/ValheimJS/data/<name>/` |
-| Your database | `<root>/ValheimJS/data/<name>/db/` |
-| Your config | `<root>/ValheimJS/config/<name>/config.ini` |
-| Your logs | `<root>/ValheimJS/logs/<name>.log` |
-
-Next: [Process branches](process-branches.md) for shared/client/server structure, or [Plugin anatomy](plugin-anatomy.md) for hooks and context.
-
-For an interactive first plugin, the bundled `commands` example registers `!hello` and
-`!demo:hello`. Both peers need ValheimJS. Try `!hello name="Test Player" welcome home`, then
-`!help hello name`. Commands and their replies are private. See [Chat commands](chat-commands.md).
-
-## Next
-
-- [NPCs and AI](npc-ai.md) — register scripted NPCs, read the perception store, drive intents
-  and run YAML behaviour trees.
+The SDK is built from TypeScript source. The GitHub dependency requires a toolchain that can
+consume TypeScript from dependencies; Bun supports the workflow above.

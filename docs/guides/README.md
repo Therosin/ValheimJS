@@ -7,6 +7,10 @@ title: ValheimJS guides
 Write server and client logic for Valheim in TypeScript. A plugin is a folder with a bundled
 script and a manifest; the host loads it, builds its context and calls your hooks.
 
+Install the SDK from GitHub into your own project as described in [Getting started](getting-started.md).
+Examples with relative `sdk/index` imports are repository-local examples; replace those imports with
+`@valheimjs/sdk` in an independent plugin project.
+
 | Guide | Read it when |
 |---|---|
 | [Getting started](getting-started.md) | First plugin, build, deploy, see it run |
@@ -27,12 +31,13 @@ script and a manifest; the host loads it, builds its context and calls your hook
 
 ```
 ValheimJS/
-  plugins/<name>/     shipped plugins only; empty by default
-  testing/<name>/     development/test plugins; bundled separately and never packaged
+  plugins/<name>/     installed plugin bundles
   data/<name>/        sandboxed files + db
   config/<name>/      config.ini read at runtime
   logs/<name>.log     your log lines
 ```
+
+The example below and its build command use the repository's `scripting/plugins/` source tree.
 
 ```ts
 // scripting/plugins/greeter/shared/main.ts

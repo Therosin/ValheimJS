@@ -1,7 +1,7 @@
 /**
  * ValheimJS plugin SDK.
  *
- * A bundle is a plain script evaluated by the host inside one shared Jint engine. It only has
+ * A bundle is an ES module evaluated by the host inside one shared Jint engine. It only has
  * to export a descriptor; `definePlugin(...)` produces one. Everything after that — context,
  * class instantiation, hook discovery, timers, dependency exports and teardown — belongs to the
  * host, not to this file.
@@ -176,7 +176,7 @@ export abstract class JsPlugin {
     teardown(): void {}
 }
 
-/** Descriptor the bundle assigns to `globalThis.__vjs_plugin`. */
+/** Descriptor exported as the module's default. */
 export type PluginExport =
     | { readonly __vjsPlugin: "class"; readonly ctor: new () => object }
     | { readonly __vjsPlugin: "object"; readonly value: Record<string, unknown> };

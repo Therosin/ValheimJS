@@ -21,8 +21,8 @@ Check, in order:
 ## "did not export a descriptor"
 
 Your entry file must `export default definePlugin({...})` or `definePlugin(MyClass)`. Rebuild it
-with this project's bundler so each plain script installs the descriptor expected by API version 1.
-Raw ES modules and scripts that never install a descriptor are not valid deployed entries.
+so each entry has a default export containing the descriptor expected by API version 1.
+An entry without a valid default descriptor is not a valid deployed module.
 
 ## The plugin loaded, then went silent
 
@@ -143,7 +143,9 @@ part only.
 
 ## Building fails
 
-- `cannot find module '.../sdk/index'` — run `bun run build.ts` from `scripting/`.
+- `cannot find module '.../sdk/index'` — repository examples use relative imports into
+  `scripting/sdk/`; check the example's location and import path. Running the bundler does not
+  install a standalone SDK package.
 - TypeScript errors from `bun run typecheck` — fix them; Bun emits code that fails at runtime
   otherwise.
 - `setInterval` returns `Timeout` in the editor — `bun-types` sees Node-style globals. The host

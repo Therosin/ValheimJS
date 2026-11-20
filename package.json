@@ -1,0 +1,21 @@
+{
+  "name": "@valheimjs/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for ValheimJS plugins",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./scripting/sdk/index.ts",
+      "default": "./scripting/sdk/index.ts"
+    },
+    "./sync": {
+      "types": "./scripting/lib/sync.ts",
+      "default": "./scripting/lib/sync.ts"
+    }
+  },
+  "files": ["scripting/sdk", "scripting/lib", "README.md"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Therosin/ValheimJS.git"
+  }
+}

@@ -29,11 +29,11 @@ test("builds independent entries and removes deleted branch output", async () =>
     const output = join(root, "dist", "sample");
     for (const side of ["shared", "server", "client"]) {
         const code = readFileSync(join(output, `${side}.js`), "utf8");
-        expect(code).not.toMatch(/^\s*(import|export)\s/m);
+        expect(code).not.toMatch(/^\s*import\s/m);
+        expect(code).toMatch(/export\s*\{/);
         expect(existsSync(join(output, `${side}.js.map`))).toBe(true);
-        const target: { __vjs_plugin?: { value: { exports: { branch: string } } } } = {};
-        new Function("globalThis", code)(target);
-        expect(target.__vjs_plugin?.value.exports.branch).toBe(side);
+        const module = await import(join(output, `${side}.js`));
+        expect(module.default.value.exports.branch).toBe(side);
     }
     expect(readFileSync(join(output, "manifest.ini"), "utf8")).toContain("apiVersion=1");
     expect(readFileSync(join(output, "manifest.ini"), "utf8")).not.toContain("entry=");
