@@ -18,7 +18,13 @@ bun add github:Therosin/ValheimJS#main
 mkdir -p src/shared src/server src/client
 ```
 
-Pin a commit or release instead of `main` when you want reproducible builds.
+Keep the SDK current with the ValheimJS host you intend players and servers to use. After host
+updates, update the SDK dependency and rebuild your plugin; Bun's lockfile records the installed
+revision, so installing again alone does not necessarily fetch a newer SDK.
+
+```bash
+bun update @valheimjs/sdk
+```
 
 Create `src/shared/main.ts`:
 
