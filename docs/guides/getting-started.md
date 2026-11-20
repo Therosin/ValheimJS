@@ -27,8 +27,9 @@ bun remove @valheimjs/sdk
 bun add github:Therosin/ValheimJS#main
 ```
 
-For this GitHub dependency, removing and adding it refreshes the revision in Bun's lockfile;
-`bun update @valheimjs/sdk` may leave the existing revision in place.
+For this GitHub dependency, `bun update @valheimjs/sdk` may leave the existing revision in place.
+Removing and adding it requests `main` again; check `bun.lock` against GitHub's current revision,
+because cached GitHub responses can temporarily resolve to an older commit.
 
 Create `src/shared/main.ts`:
 
