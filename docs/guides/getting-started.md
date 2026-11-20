@@ -15,12 +15,12 @@ mkdir greeter
 cd greeter
 bun init -y
 bun add github:Therosin/ValheimJS#main
-mkdir -p src dist/greeter
+mkdir -p src/shared src/server src/client
 ```
 
 Pin a commit or release instead of `main` when you want reproducible builds.
 
-Create `src/shared.ts`:
+Create `src/shared/main.ts`:
 
 ```ts
 import { definePlugin, log } from "@valheimjs/sdk";
@@ -37,7 +37,7 @@ export default definePlugin({
 });
 ```
 
-Create `dist/greeter/manifest.ini`:
+Create `src/manifest.ini`:
 
 ```ini
 name=greeter
@@ -49,7 +49,7 @@ enabled=true
 ## Build and install
 
 ```bash
-bun build ./src/shared.ts --target=browser --format=esm --outfile=./dist/greeter/shared.js --sourcemap=linked
+bun build ./src/shared/main.ts --target=browser --format=esm --outdir=dist --entry-naming=shared.js --sourcemap=linked
 ```
 
 The output must be a self-contained ES module whose default export is the descriptor from
@@ -57,12 +57,14 @@ The output must be a self-contained ES module whose default export is the descri
 the browser DOM, or npm package resolution. Other bundlers can be used if they produce the same
 output contract.
 
-Copy the `dist/greeter` folder to `<game root>/ValheimJS/plugins/greeter/`, then restart the game
+Your build must also include `src/manifest.ini` and any assets in `dist/`, preserving their
+relative paths. Copy the contents of `dist/` to `<game root>/ValheimJS/plugins/greeter/`, then restart the game
 process. Check the BepInEx log for the host's loaded plugin count and
 `ValheimJS/logs/greeter.log` for your message. You can enable `Dev/WatchForChanges` in the host
 configuration to reload while developing; reload clears in-memory state and registrations.
 
-To add process-specific code, bundle separate entries to `server.js` and `client.js`. The host
+To add process-specific code, bundle `src/server/main.ts` and `src/client/main.ts` to `server.js`
+and `client.js`. The host
 loads `shared.js` first and then the matching side entry; a player host uses the client branch.
 See [Process branches](process-branches.md) and [Plugin anatomy](plugin-anatomy.md).
 
