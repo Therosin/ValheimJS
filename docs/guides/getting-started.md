@@ -23,8 +23,12 @@ updates, update the SDK dependency and rebuild your plugin; Bun's lockfile recor
 revision, so installing again alone does not necessarily fetch a newer SDK.
 
 ```bash
-bun update @valheimjs/sdk
+bun remove @valheimjs/sdk
+bun add github:Therosin/ValheimJS#main
 ```
+
+For this GitHub dependency, removing and adding it refreshes the revision in Bun's lockfile;
+`bun update @valheimjs/sdk` may leave the existing revision in place.
 
 Create `src/shared/main.ts`:
 
